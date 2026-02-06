@@ -1,1 +1,3 @@
-// Config module - settings and theme management
+pub mod settings;
+
+pub use settings::Settings;
