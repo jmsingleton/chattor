@@ -1,0 +1,10 @@
+/target/
+Cargo.lock
+*.db
+*.db-*
+.env
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
