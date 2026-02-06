@@ -1,1 +1,3 @@
-// Crypto module - identity keys, ratchet, signing
+pub mod identity;
+
+pub use identity::IdentityKeypair;
