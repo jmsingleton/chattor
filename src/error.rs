@@ -1,0 +1,39 @@
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum TorrentChatError {
+    #[error("Tor error: {0}")]
+    Tor(String),
+
+    #[error("Database error: {0}")]
+    Database(String),
+
+    #[error("Crypto error: {0}")]
+    Crypto(String),
+
+    #[error("Network error: {0}")]
+    Network(String),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+pub type Result<T> = std::result::Result<T, TorrentChatError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display() {
+        let err = TorrentChatError::Tor("connection failed".to_string());
+        assert_eq!(err.to_string(), "Tor error: connection failed");
+    }
+
+    #[test]
+    fn test_io_error_conversion() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err: TorrentChatError = io_err.into();
+        assert!(matches!(err, TorrentChatError::Io(_)));
+    }
+}
