@@ -12,9 +12,13 @@ mod ui;
 use clap::Parser;
 use cli::Cli;
 use error::Result;
+use ui::AppUI;
 
 fn main() -> Result<()> {
     let _cli = Cli::parse();
-    println!("torrent-chat v0.1.0");
+
+    let mut ui = AppUI::new();
+    ui.run()?;
+
     Ok(())
 }
