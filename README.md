@@ -18,6 +18,16 @@ Privacy-first TUI chat application over Tor.
 - [x] Basic TUI with ratatui
 - [x] Component integration
 
+## Phase 2 (In Progress)
+Phase 2 adds Tor integration and basic P2P messaging:
+- ✅ Tor hidden service support (stubs)
+- ✅ Friend code ↔ .onion address mapping
+- ✅ Message queue for offline delivery
+- ✅ Signal Protocol integration (stubs)
+- ✅ Integration tests for Phase 2 components
+
+See `docs/Phase2-Progress.md` for detailed status.
+
 ## Building
 
 ```bash
