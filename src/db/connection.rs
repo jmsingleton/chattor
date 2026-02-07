@@ -53,6 +53,12 @@ impl Database {
     pub fn connection(&self) -> &Connection {
         &self.conn
     }
+
+    /// Create a Database instance from an existing connection (for testing)
+    #[cfg(test)]
+    pub fn from_connection(conn: Connection) -> Self {
+        Database { conn }
+    }
 }
 
 #[cfg(test)]

@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS message_queue (
     to_onion TEXT NOT NULL,
     conversation_id INTEGER NOT NULL,
     encrypted_message BLOB NOT NULL,
-    message_uuid TEXT NOT NULL,
+    message_uuid TEXT,
     created_at INTEGER NOT NULL,
     retry_count INTEGER DEFAULT 0,
     last_retry_at INTEGER,
