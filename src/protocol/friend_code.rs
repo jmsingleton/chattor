@@ -2,7 +2,7 @@ use rand::{Rng, thread_rng};
 use crate::error::{Result, TorrentChatError};
 
 // Word list for pronounceable codes (subset for demo)
-const WORDS: &[&str] = &[
+pub const WORDS: &[&str] = &[
     "happy", "tiger", "river", "cloud", "flame", "crystal", "shadow", "lotus",
     "storm", "ocean", "forest", "mountain", "solar", "lunar", "cosmic", "stellar",
 ];
