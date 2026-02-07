@@ -24,6 +24,12 @@ impl AppUI {
         }
     }
 
+    fn tor_status(&self) -> &str {
+        // TODO: Get actual status from app state
+        // For now, return stub status
+        "Not Connected"
+    }
+
     pub fn run(&mut self) -> Result<()> {
         // Setup terminal
         enable_raw_mode()?;
@@ -79,19 +85,23 @@ impl AppUI {
             .split(f.size());
 
         // Header
-        let header = Paragraph::new("torrent-chat v0.1.0")
+        let header_text = format!(
+            "torrent-chat v0.1.0  [Tor: {}]",
+            self.tor_status()
+        );
+        let header = Paragraph::new(header_text)
             .style(Style::default().fg(Color::Cyan))
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(header, chunks[0]);
 
         // Main area
-        let main = Paragraph::new("Press 'q' or ESC to quit")
+        let main = Paragraph::new("Welcome to torrent-chat! (Phase 2: Core Foundation)\n\nPress '?' for help")
             .style(Style::default().fg(Color::White))
             .block(Block::default().borders(Borders::ALL).title("Welcome"));
         f.render_widget(main, chunks[1]);
 
         // Footer
-        let footer = Paragraph::new("Phase 1: Core Foundation")
+        let footer = Paragraph::new("Press 'q' to quit | Phase 2: Core Foundation + Tor Integration")
             .style(Style::default().fg(Color::Gray))
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(footer, chunks[2]);
