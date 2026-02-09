@@ -1,0 +1,131 @@
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    Frame,
+};
+
+/// Render "Add Friend" modal
+pub fn render_add_friend_modal(
+    f: &mut Frame,
+    input: &str,
+    error: Option<&str>,
+) {
+    let area = centered_rect(60, 40, f.size());
+
+    // Clear background
+    f.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title("Add New Friend")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    // Prompt
+    let prompt = Paragraph::new("Enter friend code:");
+    f.render_widget(prompt, chunks[0]);
+
+    // Input field
+    let input_widget = Paragraph::new(format!("{}_", input))
+        .block(Block::default().borders(Borders::ALL))
+        .style(Style::default().fg(Color::White));
+    f.render_widget(input_widget, chunks[1]);
+
+    // Help text or error
+    let help = if let Some(err) = error {
+        Paragraph::new(err).style(Style::default().fg(Color::Red))
+    } else {
+        Paragraph::new("Format: word-NNNN-word-NNNN")
+            .style(Style::default().fg(Color::Gray))
+    };
+    f.render_widget(help, chunks[2]);
+
+    // Controls
+    let controls = Paragraph::new("[Enter] Send    [Esc] Cancel")
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::Gray));
+    f.render_widget(controls, chunks[3]);
+
+    f.render_widget(block, area);
+}
+
+/// Render friend request notification modal
+pub fn render_friend_request_modal(
+    f: &mut Frame,
+    from_onion: &str,
+    friend_code: &str,
+) {
+    let area = centered_rect(60, 40, f.size());
+
+    f.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(format!("Friend Request from {}", &from_onion[..10]))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(2),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    // Friend code
+    let code = Paragraph::new(format!("Friend code: {}", friend_code));
+    f.render_widget(code, chunks[0]);
+
+    // Timestamp (simplified)
+    let time = Paragraph::new("Received: just now")
+        .style(Style::default().fg(Color::Gray));
+    f.render_widget(time, chunks[1]);
+
+    // Message
+    let msg = Paragraph::new("This person wants to connect with you.")
+        .wrap(Wrap { trim: true });
+    f.render_widget(msg, chunks[2]);
+
+    // Controls
+    let controls = Paragraph::new("[A]ccept    [R]eject    [Esc] Back")
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::Gray));
+    f.render_widget(controls, chunks[3]);
+
+    f.render_widget(block, area);
+}
+
+/// Helper to center a rect
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
