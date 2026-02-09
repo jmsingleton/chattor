@@ -86,6 +86,18 @@ impl MessageSender {
 
         Ok(message_id)
     }
+
+    /// Handle received delivery receipt
+    pub fn handle_delivery_receipt(&self, receipt: &DeliveryReceiptMessage) -> Result<()> {
+        let conn = self.db.connection();
+
+        conn.execute(
+            "UPDATE messages SET status = 'delivered' WHERE message_id = ?1",
+            [receipt.message_id.to_string()],
+        ).map_err(|e| TorrentChatError::Database(format!("Failed to update status: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

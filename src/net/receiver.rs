@@ -75,6 +75,17 @@ impl MessageReceiver {
 
         Ok(())
     }
+
+    /// Create delivery receipt for message
+    pub fn create_delivery_receipt(&self, message_id: uuid::Uuid) -> DeliveryReceiptMessage {
+        DeliveryReceiptMessage {
+            message_id,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -123,5 +134,19 @@ mod tests {
 
         let decrypted = result.unwrap();
         assert_eq!(decrypted.content, "Hello!");
+    }
+
+    #[test]
+    fn test_send_delivery_receipt() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = crate::db::Database::open(temp_db.path()).unwrap();
+
+        let receiver = MessageReceiver::new(Arc::new(db));
+
+        let message_id = uuid::Uuid::new_v4();
+        let receipt = receiver.create_delivery_receipt(message_id);
+
+        assert_eq!(receipt.message_id, message_id);
+        assert!(receipt.timestamp > 0);
     }
 }
