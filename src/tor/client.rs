@@ -41,6 +41,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore] // Requires real Tor network connection
     async fn test_tor_client_bootstrap() {
         let client = TorClient::new().await.unwrap();
         assert!(client.is_bootstrapped());

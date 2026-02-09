@@ -71,6 +71,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires real Tor network connection
     async fn test_service_creation() {
         let tor_client = crate::tor::client::TorClient::new().await.unwrap();
         let identity = crate::crypto::IdentityKeypair::generate().unwrap();
@@ -79,6 +80,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires real Tor network connection
     async fn test_service_address() {
         let tor_client = crate::tor::client::TorClient::new().await.unwrap();
         let identity = crate::crypto::IdentityKeypair::generate().unwrap();
@@ -87,6 +89,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires real Tor network connection
     async fn test_service_stop() {
         let tor_client = crate::tor::client::TorClient::new().await.unwrap();
         let identity = crate::crypto::IdentityKeypair::generate().unwrap();
