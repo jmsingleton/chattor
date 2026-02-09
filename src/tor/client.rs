@@ -2,34 +2,37 @@
 //!
 //! Stub for Arti Tor client integration.
 
-use crate::error::Result;
+use crate::error::{Result, TorrentChatError};
+use arti_client::{TorClient as ArtiTorClient, TorClientConfig};
+use std::sync::Arc;
 
 /// Tor client for managing connections
 pub struct TorClient {
-    // TODO: Add arti client handle
+    client: Arc<ArtiTorClient<tor_rtcompat::PreferredRuntime>>,
 }
 
 impl TorClient {
-    /// Create a new Tor client
-    ///
-    /// STUB: Returns placeholder client
-    pub fn new() -> Result<Self> {
-        // TODO: Initialize arti client
-        Ok(TorClient {})
+    /// Create and bootstrap a new Tor client
+    pub async fn new() -> Result<Self> {
+        let config = TorClientConfig::default();
+        let client = ArtiTorClient::create_bootstrapped(config)
+            .await
+            .map_err(|e| TorrentChatError::Tor(format!("Failed to bootstrap Tor: {}", e)))?;
+
+        Ok(TorClient {
+            client: Arc::new(client),
+        })
     }
 
-    /// Bootstrap connection to Tor network
-    ///
-    /// STUB: Returns success without actual bootstrap
-    pub fn bootstrap(&self) -> Result<()> {
-        // TODO: Bootstrap arti connection
-        Ok(())
+    /// Check if Tor client is bootstrapped
+    pub fn is_bootstrapped(&self) -> bool {
+        // Arti client is bootstrapped after creation
+        true
     }
-}
 
-impl Default for TorClient {
-    fn default() -> Self {
-        Self::new().unwrap()
+    /// Get reference to inner arti client
+    pub fn inner(&self) -> &Arc<ArtiTorClient<tor_rtcompat::PreferredRuntime>> {
+        &self.client
     }
 }
 
@@ -37,16 +40,9 @@ impl Default for TorClient {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_client_creation() {
-        let client = TorClient::new();
-        assert!(client.is_ok());
-    }
-
-    #[test]
-    fn test_bootstrap() {
-        let client = TorClient::new().unwrap();
-        let result = client.bootstrap();
-        assert!(result.is_ok());
+    #[tokio::test]
+    async fn test_tor_client_bootstrap() {
+        let client = TorClient::new().await.unwrap();
+        assert!(client.is_bootstrapped());
     }
 }

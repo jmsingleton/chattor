@@ -57,8 +57,7 @@ impl App {
             return Ok(()); // Already initialized
         }
 
-        let client = TorClient::new()?;
-        client.bootstrap()?;
+        let client = TorClient::new().await?;
         self.tor_client = Some(Arc::new(client));
 
         Ok(())
