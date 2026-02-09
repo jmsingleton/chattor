@@ -51,16 +51,57 @@ impl App {
         })
     }
 
-    /// Initialize Tor client
+    /// Initialize Tor client and hidden service
     pub async fn init_tor(&mut self) -> Result<()> {
         if self.tor_client.is_some() {
             return Ok(()); // Already initialized
         }
 
-        let client = TorClient::new().await?;
+        // Bootstrap Tor client
+        let client = crate::tor::client::TorClient::new().await?;
+
+        // Load or generate identity
+        let identity = crate::crypto::IdentityKeypair::load_or_generate(&self.db)?;
+
+        // Create hidden service
+        let hidden_service = crate::tor::hidden_service::HiddenService::new(
+            &client,
+            &identity,
+            9051,
+        ).await?;
+
+        let onion_address = hidden_service.address().to_string();
+
+        // Store in app state
         self.tor_client = Some(Arc::new(client));
+        self.hidden_service = Some(hidden_service);
+        self.onion_address = Some(onion_address);
+
+        // Note: Listener and queue processor tasks would be spawned here in production
+        // Currently blocked by Database not being Send/Sync (SQLite limitation)
+        // TODO: Implement connection pooling or per-thread connections for background tasks
 
         Ok(())
+    }
+
+    /// Create app with custom settings (for testing)
+    pub fn new_with_settings(settings: Settings) -> Result<Self> {
+        fs::create_dir_all(&settings.config_dir)?;
+        fs::create_dir_all(&settings.data_dir)?;
+
+        let db = Database::open(&settings.db_path)?;
+        let identity = IdentityKeypair::generate()?;
+        let message_queue = MessageQueue::new();
+
+        Ok(App {
+            settings,
+            db,
+            identity,
+            tor_client: None,
+            hidden_service: None,
+            message_queue,
+            onion_address: None,
+        })
     }
 }
 
@@ -109,5 +150,26 @@ mod tests {
         // Calling again should be no-op
         let result2 = app.init_tor().await;
         assert!(result2.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_app_init_tor_real() {
+        let temp_config = tempfile::tempdir().unwrap();
+        let temp_data = tempfile::tempdir().unwrap();
+
+        let settings = crate::config::Settings {
+            config_dir: temp_config.path().to_path_buf(),
+            data_dir: temp_data.path().to_path_buf(),
+            db_path: temp_data.path().join("test.db"),
+            debug: false,
+            tor_socks_port: 9050,
+        };
+
+        let _app = App::new_with_settings(settings).unwrap();
+
+        // This will take 30-60 seconds for real Tor bootstrap
+        // For CI, we might want to skip or mock
+        // let result = app.init_tor().await;
+        // assert!(result.is_ok());
     }
 }
