@@ -1,6 +1,8 @@
 pub mod app_ui;
+pub mod bootstrap;
 
 pub use app_ui::AppUI;
+pub use bootstrap::render_bootstrap;
 
 use crate::app::App;
 
