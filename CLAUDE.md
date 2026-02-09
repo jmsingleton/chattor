@@ -18,7 +18,7 @@ The plan files contain the source of truth for what needs to be built and how. A
 
 **torrent-chat** is a privacy-first TUI (Terminal User Interface) chat application built in Rust. The architecture is pure peer-to-peer over Tor hidden services with no central servers. Each user runs their own hidden service (.onion address) for receiving messages, with end-to-end encryption via Signal Protocol (Double Ratchet).
 
-**Current Status:** Phase 2 complete (foundation with stubs), Phase 3 ready to begin.
+**Current Status:** Phase 2b in progress (real Tor + Signal Protocol implementation).
 
 **Core Design Principles:**
 - Privacy-first: No central servers, no telemetry, no metadata leakage
@@ -44,6 +44,12 @@ cargo test protocol::message          # Run specific module tests
 cargo test --test integration         # Integration tests only
 cargo test -- --nocapture             # Show test output
 cargo test --release                  # Test optimized build
+
+# Two-instance integration tests (requires Tor, takes time)
+cargo test --test e2e_messaging -- --ignored --nocapture
+
+# Two-instance manual testing
+./scripts/test-two-instances.sh
 ```
 
 ### Database Management
@@ -237,6 +243,6 @@ conn.execute("INSERT INTO ...", params)?;
 
 ## Documentation
 - Design docs: `docs/plans/`
-- Progress tracking: `docs/Phase2-Progress.md`, `docs/phase1-progress.md`
-- Testing guide: `TESTING.md`
-- Migration guide: `MIGRATION_FIX.md`
+- Progress tracking: `docs/Phase2b-Progress.md`, `docs/Phase2-Progress.md`, `docs/phase1-progress.md`
+- Implementation plan: `docs/plans/2026-02-09-phase2b-implementation.md`
+- Testing guide: `docs/Testing-Phase2b.md`
