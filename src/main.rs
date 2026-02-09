@@ -15,11 +15,22 @@ use error::Result;
 use app::App;
 use ui::AppUI;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let _cli = Cli::parse();
 
     // Initialize application
-    let _app = App::new()?;
+    let mut app = App::new()?;
+
+    // Initialize Tor in background
+    // TODO: Make App Clone or use Arc for proper async sharing
+    tokio::spawn(async move {
+        println!("Bootstrapping Tor connection...");
+        match app.init_tor().await {
+            Ok(_) => println!("Tor connected!"),
+            Err(e) => eprintln!("Tor initialization failed: {}", e),
+        }
+    });
 
     // Run TUI
     let mut ui = AppUI::new();
