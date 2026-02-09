@@ -64,7 +64,9 @@ impl IdentityKeypair {
             return Err(TorrentChatError::Crypto("Invalid identity key length".into()));
         }
 
-        let signing_key = SigningKey::from_bytes(bytes.try_into().unwrap());
+        let signing_key = SigningKey::from_bytes(
+            bytes[..32].try_into().expect("length validated above")
+        );
         let verifying_key = signing_key.verifying_key();
 
         Ok(IdentityKeypair {
