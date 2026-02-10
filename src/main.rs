@@ -160,11 +160,88 @@ async fn main() -> Result<()> {
                         }
                         drop(app_lock);
                     }
-                    Some(AppAction::SelectFriend(_idx)) => {
-                        // TODO: Load conversation for selected friend
+                    Some(AppAction::SelectFriend(idx)) => {
+                        let app_lock = app.lock().await;
+                        let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+                        if let Some(friend) = friends.get(idx) {
+                            let conv_id = db::queries::get_or_create_conversation(
+                                &app_lock.db, friend.friend_id
+                            ).unwrap_or(0);
+
+                            if conv_id > 0 {
+                                db::queries::mark_conversation_read(&app_lock.db, conv_id).ok();
+                            }
+
+                            if let AppState::Normal { conversation_id, .. } = &mut app_state {
+                                *conversation_id = Some(conv_id);
+                            }
+                        }
+                        drop(app_lock);
                     }
-                    Some(AppAction::SendMessage(_msg)) => {
-                        // TODO: Send message to selected friend
+                    Some(AppAction::SendMessage(content)) => {
+                        let app_lock = app.lock().await;
+
+                        if let AppState::Normal {
+                            conversation_id: Some(conv_id),
+                            selected_friend_idx: Some(idx),
+                            ..
+                        } = &app_state {
+                            let conv_id = *conv_id;
+                            let idx = *idx;
+
+                            // Get friend info
+                            let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+                            if let Some(friend) = friends.get(idx) {
+                                let peer_onion = friend.onion_address.clone();
+                                let own_onion = app_lock.onion_address.clone()
+                                    .unwrap_or_default();
+                                let msg_id = uuid::Uuid::new_v4().to_string();
+
+                                // Store locally first
+                                db::queries::store_outgoing_message(
+                                    &app_lock.db, conv_id, &own_onion, &content, &msg_id
+                                ).ok();
+
+                                // Try to send directly, queue on failure
+                                match try_send_direct(&*app_lock, &peer_onion, &protocol::message::Message::TextMessage(
+                                    protocol::message::TextMessage {
+                                        from_onion: own_onion.clone(),
+                                        to_onion: peer_onion.clone(),
+                                        signal_ciphertext: content.clone(),
+                                        signal_type: protocol::message::SignalMessageType::Message,
+                                        timestamp: std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_secs() as i64,
+                                        message_id: uuid::Uuid::parse_str(&msg_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                                    }
+                                )).await {
+                                    Ok(_) => {
+                                        db::queries::update_message_status(&app_lock.db, &msg_id, "sent").ok();
+                                    }
+                                    Err(_) => {
+                                        // Queue for later delivery
+                                        let text_msg = protocol::message::Message::TextMessage(
+                                            protocol::message::TextMessage {
+                                                from_onion: own_onion.clone(),
+                                                to_onion: peer_onion.clone(),
+                                                signal_ciphertext: content,
+                                                signal_type: protocol::message::SignalMessageType::Message,
+                                                timestamp: std::time::SystemTime::now()
+                                                    .duration_since(std::time::UNIX_EPOCH)
+                                                    .unwrap_or_default()
+                                                    .as_secs() as i64,
+                                                message_id: uuid::Uuid::parse_str(&msg_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                                            }
+                                        );
+                                        app_lock.message_queue.enqueue(&app_lock.db, &peer_onion, &text_msg, "normal").ok();
+                                        db::queries::update_message_status(&app_lock.db, &msg_id, "queued").ok();
+                                    }
+                                }
+                            }
+                        }
+
+                        drop(app_lock);
                     }
                     Some(AppAction::Quit) => break Ok(()),
                     None => {} // Just state change
@@ -432,8 +509,19 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
         protocol::message::Message::FriendRequestReject(reject) => {
             eprintln!("Friend request rejected by {}", reject.from_onion);
         }
-        _ => {
-            // TextMessage, DeliveryReceipt - not implemented yet
+        protocol::message::Message::TextMessage(text_msg) => {
+            let from_onion = &text_msg.from_onion;
+            let content = &text_msg.signal_ciphertext; // MVP: plaintext
+            let msg_id = text_msg.message_id.to_string();
+
+            // Find friend and conversation
+            if let Some(friend_id) = db::queries::find_friend_by_onion(&app.db, from_onion)? {
+                let conv_id = db::queries::get_or_create_conversation(&app.db, friend_id)?;
+                db::queries::store_incoming_message(&app.db, conv_id, from_onion, content, &msg_id)?;
+            }
+        }
+        protocol::message::Message::DeliveryReceipt(_) => {
+            // Not implemented yet
         }
     }
 
