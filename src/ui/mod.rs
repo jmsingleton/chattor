@@ -6,7 +6,7 @@ pub mod error;
 
 pub use app_ui::{AppUI, render_app};
 pub use bootstrap::render_bootstrap;
-pub use modals::{render_add_friend_modal, render_friend_request_modal};
+pub use modals::{render_add_friend_modal, render_friend_request_modal, render_identity_modal};
 pub use state::{AppState, AppAction};
 pub use error::format_error_for_user;
 

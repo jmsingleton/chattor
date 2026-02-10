@@ -15,6 +15,10 @@ pub enum AppState {
         friend_code: String,
         timestamp: i64,
     },
+    ViewingMyIdentity {
+        friend_code: String,
+        onion_address: String,
+    },
 }
 
 impl Default for AppState {
@@ -28,6 +32,7 @@ pub enum AppAction {
     SendFriendRequest(String),
     AcceptFriendRequest(i64),
     RejectFriendRequest(i64),
+    ViewMyIdentity,
     Quit,
 }
 
@@ -48,6 +53,9 @@ impl AppState {
                             error: None,
                         };
                         Ok(None)
+                    }
+                    KeyCode::Char('i') => {
+                        return Ok(Some(AppAction::ViewMyIdentity));
                     }
                     KeyCode::Char('q') => Ok(Some(AppAction::Quit)),
                     _ => Ok(None),
@@ -105,6 +113,16 @@ impl AppState {
                         Ok(Some(AppAction::RejectFriendRequest(*request_id)))
                     }
                     KeyCode::Esc => {
+                        *self = AppState::Normal;
+                        Ok(None)
+                    }
+                    _ => Ok(None),
+                }
+            }
+
+            AppState::ViewingMyIdentity { .. } => {
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('i') => {
                         *self = AppState::Normal;
                         Ok(None)
                     }
@@ -344,6 +362,38 @@ mod tests {
     #[test]
     fn test_default_state_is_normal() {
         let state = AppState::default();
+        assert!(matches!(state, AppState::Normal));
+    }
+
+    #[test]
+    fn test_view_my_identity() {
+        let mut state = AppState::Normal;
+        let key = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
+        let result = state.handle_key(key).unwrap();
+        assert!(matches!(result, Some(AppAction::ViewMyIdentity)));
+    }
+
+    #[test]
+    fn test_identity_modal_escape() {
+        let mut state = AppState::ViewingMyIdentity {
+            friend_code: "test-1234-code-5678".to_string(),
+            onion_address: "test.onion".to_string(),
+        };
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let result = state.handle_key(key).unwrap();
+        assert!(result.is_none());
+        assert!(matches!(state, AppState::Normal));
+    }
+
+    #[test]
+    fn test_identity_modal_close_with_i() {
+        let mut state = AppState::ViewingMyIdentity {
+            friend_code: "test-1234-code-5678".to_string(),
+            onion_address: "test.onion".to_string(),
+        };
+        let key = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
+        let result = state.handle_key(key).unwrap();
+        assert!(result.is_none());
         assert!(matches!(state, AppState::Normal));
     }
 }

@@ -121,6 +121,24 @@ async fn main() -> Result<()> {
                         }
                         drop(app_lock);
                     }
+                    Some(AppAction::ViewMyIdentity) => {
+                        let app_lock = app.lock().await;
+                        if let Some(onion) = &app_lock.onion_address {
+                            let friend_code = crate::tor::address::onion_to_friend_code(onion)
+                                .unwrap_or_else(|_| "unknown".to_string());
+                            app_state = AppState::ViewingMyIdentity {
+                                friend_code,
+                                onion_address: onion.clone(),
+                            };
+                        } else {
+                            // Tor not ready yet - can't show identity
+                            app_state = AppState::ViewingMyIdentity {
+                                friend_code: "(Waiting for Tor...)".to_string(),
+                                onion_address: "(Waiting for Tor...)".to_string(),
+                            };
+                        }
+                        drop(app_lock);
+                    }
                     Some(AppAction::Quit) => break Ok(()),
                     None => {} // Just state change
                 }

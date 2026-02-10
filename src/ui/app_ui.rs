@@ -13,7 +13,7 @@ use ratatui::{
 use std::io;
 use crate::error::Result;
 use crate::app::App;
-use super::{AppState, render_add_friend_modal, render_friend_request_modal};
+use super::{AppState, render_add_friend_modal, render_friend_request_modal, render_identity_modal};
 
 pub struct AppUI {
     should_quit: bool,
@@ -137,7 +137,8 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, app: &App) {
     // Main area - base UI
     let main_text = match app_state {
         AppState::Normal => {
-            "Welcome to torrent-chat! (Phase 2b: Interactive UI)\n\n\
+            "Welcome to torrent-chat!\n\n\
+             Press 'i' to view your identity\n\
              Press 'a' to add a friend\n\
              Press 'q' to quit"
         }
@@ -150,9 +151,10 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, app: &App) {
 
     // Footer - show keyboard shortcuts based on state
     let footer_text = match app_state {
-        AppState::Normal => "Press 'a' to add friend | 'q' or Ctrl+C to quit | Phase 2b: Interactive UI",
+        AppState::Normal => "[i] My Identity | [a] Add Friend | [q] Quit",
         AppState::AddingFriend { .. } => "Enter friend code | [Enter] Send | [Esc] Cancel",
         AppState::ViewingFriendRequest { .. } => "[A]ccept | [R]eject | [Esc] Back",
+        AppState::ViewingMyIdentity { .. } => "[i/Esc] Close identity",
     };
     let footer = Paragraph::new(footer_text)
         .style(Style::default().fg(Color::Gray))
@@ -166,6 +168,9 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, app: &App) {
         }
         AppState::ViewingFriendRequest { from_onion, friend_code, .. } => {
             render_friend_request_modal(f, from_onion, friend_code);
+        }
+        AppState::ViewingMyIdentity { friend_code, onion_address } => {
+            render_identity_modal(f, friend_code, onion_address);
         }
         AppState::Normal => {}
     }

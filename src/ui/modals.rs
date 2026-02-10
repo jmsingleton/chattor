@@ -109,6 +109,67 @@ pub fn render_friend_request_modal(
     f.render_widget(block, area);
 }
 
+/// Render "My Identity" modal showing friend code and onion address
+pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &str) {
+    use ratatui::style::Modifier;
+
+    let area = centered_rect(60, 50, f.size());
+
+    // Clear area first
+    f.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" My Identity ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(1),  // Label
+            Constraint::Length(3),  // Friend code box
+            Constraint::Length(1),  // Spacer
+            Constraint::Length(1),  // Label
+            Constraint::Length(3),  // Onion address box
+            Constraint::Length(1),  // Spacer
+            Constraint::Length(1),  // Help text
+        ])
+        .split(inner);
+
+    // Friend code label
+    let label1 = Paragraph::new("Share this with friends:")
+        .style(Style::default().fg(Color::White));
+    f.render_widget(label1, chunks[0]);
+
+    // Friend code value
+    let code_widget = Paragraph::new(friend_code)
+        .block(Block::default().borders(Borders::ALL))
+        .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        .wrap(Wrap { trim: false });
+    f.render_widget(code_widget, chunks[1]);
+
+    // Onion address label
+    let label2 = Paragraph::new("Onion Address:")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(label2, chunks[3]);
+
+    // Onion address value
+    let onion_widget = Paragraph::new(onion_address)
+        .block(Block::default().borders(Borders::ALL))
+        .style(Style::default().fg(Color::Yellow))
+        .wrap(Wrap { trim: false });
+    f.render_widget(onion_widget, chunks[4]);
+
+    // Help text
+    let help = Paragraph::new("[Esc/i] Close")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(help, chunks[6]);
+}
+
 /// Helper to center a rect
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
