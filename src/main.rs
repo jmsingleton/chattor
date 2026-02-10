@@ -272,3 +272,37 @@ fn handle_reject_friend_request(app: &App, request_id: i64) -> Result<()> {
 
     Ok(())
 }
+
+/// Result of attempting to send a message
+pub enum SendResult {
+    SentImmediately,
+    Queued,
+}
+
+/// Try to send a message directly to peer via Tor with timeout
+async fn try_send_direct(
+    app: &App,
+    peer_onion: &str,
+    message: &protocol::message::Message,
+) -> Result<()> {
+    let tor_client = app.tor_client.as_ref()
+        .ok_or_else(|| error::TorrentChatError::Tor("Tor not initialized".into()))?;
+
+    // Connect with 5-second timeout
+    let mut conn = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::tor::connection::TorConnection::connect(tor_client.as_ref(), peer_onion)
+    )
+    .await
+    .map_err(|_| error::TorrentChatError::Network("Connection timed out (5s)".into()))??;
+
+    // Send with 5-second timeout
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        conn.send(message)
+    )
+    .await
+    .map_err(|_| error::TorrentChatError::Network("Send timed out (5s)".into()))??;
+
+    Ok(())
+}
