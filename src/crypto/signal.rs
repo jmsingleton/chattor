@@ -5,6 +5,8 @@ use chacha20poly1305::{
     ChaCha20Poly1305, Nonce,
 };
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret, SharedSecret};
+use hkdf::Hkdf;
+use sha2::Sha256;
 
 /// PreKey bundle for Signal Protocol session initialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +38,16 @@ pub struct SignedPreKey {
 pub struct PreKey {
     pub key_id: u32,
     pub public_key: Vec<u8>,
+}
+
+/// Serializable session state for proper persistence
+#[derive(Serialize, Deserialize)]
+struct SessionState {
+    remote_onion: String,
+    shared_secret_bytes: Option<[u8; 32]>,
+    send_counter: u64,
+    recv_counter: u64,
+    ephemeral_public: Option<[u8; 32]>,
 }
 
 impl PreKeyBundle {
@@ -177,6 +189,17 @@ impl SignalSession {
     }
 
     /// Create session from PreKey bundle (initiator) with real Signal Protocol
+    ///
+    /// **Security Note:** This is a simplified X3DH implementation using only one
+    /// Diffie-Hellman operation. Full X3DH requires 3-4 DH operations for proper
+    /// forward secrecy and authentication. This simplified version is suitable for
+    /// Phase 2b MVP but should be upgraded to full X3DH for production use.
+    ///
+    /// # Arguments
+    /// * `remote_onion` - The remote peer's .onion address
+    /// * `bundle` - The remote peer's PreKey bundle
+    /// * `_remote_private` - Unused in simplified X3DH
+    /// * `_local_identity` - Unused in simplified X3DH
     pub fn from_prekey_bundle_real(
         remote_onion: String,
         bundle: &PreKeyBundle,
@@ -212,6 +235,18 @@ impl SignalSession {
     }
 
     /// Create session from received PreKey message (recipient) with real Signal Protocol
+    ///
+    /// **Security Note:** This is a simplified X3DH implementation using only one
+    /// Diffie-Hellman operation. Full X3DH requires 3-4 DH operations for proper
+    /// forward secrecy and authentication. This simplified version is suitable for
+    /// Phase 2b MVP but should be upgraded to full X3DH for production use.
+    ///
+    /// # Arguments
+    /// * `remote_onion` - The remote peer's .onion address
+    /// * `ciphertext` - The PreKey message (includes ephemeral public key)
+    /// * `_local_bundle` - Unused in simplified X3DH
+    /// * `local_private` - Private key material for this peer
+    /// * `_local_identity` - Unused in simplified X3DH
     pub fn from_prekey_message_real(
         remote_onion: String,
         ciphertext: &[u8],
@@ -249,12 +284,17 @@ impl SignalSession {
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<(Vec<u8>, bool)> {
         // If we have a real shared secret, use real encryption
         if let Some(ref shared_secret) = self.shared_secret {
-            // Derive encryption key from shared secret + counter
-            let mut key_material = shared_secret.as_bytes().to_vec();
-            key_material.extend_from_slice(&self.send_counter.to_be_bytes());
-
-            // Use first 32 bytes as ChaCha20-Poly1305 key
-            let key = chacha20poly1305::Key::from_slice(&key_material[..32]);
+            // Use HKDF for proper key derivation
+            let shared_secret_bytes = shared_secret.as_bytes();
+            let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes);
+            let mut key_bytes = [0u8; 32];
+            let counter_bytes = self.send_counter.to_be_bytes();
+            let mut info = Vec::new();
+            info.extend_from_slice(b"torrent-chat-message-key");
+            info.extend_from_slice(&counter_bytes);
+            hk.expand(&info, &mut key_bytes)
+                .map_err(|_| TorrentChatError::Crypto("HKDF expand failed".into()))?;
+            let key = chacha20poly1305::Key::from_slice(&key_bytes);
             let cipher = ChaCha20Poly1305::new(key);
 
             // Generate nonce from counter
@@ -299,11 +339,17 @@ impl SignalSession {
                 ciphertext
             };
 
-            // Derive decryption key
-            let mut key_material = shared_secret.as_bytes().to_vec();
-            key_material.extend_from_slice(&self.recv_counter.to_be_bytes());
-
-            let key = chacha20poly1305::Key::from_slice(&key_material[..32]);
+            // Use HKDF for proper key derivation
+            let shared_secret_bytes = shared_secret.as_bytes();
+            let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes);
+            let mut key_bytes = [0u8; 32];
+            let counter_bytes = self.recv_counter.to_be_bytes();
+            let mut info = Vec::new();
+            info.extend_from_slice(b"torrent-chat-message-key");
+            info.extend_from_slice(&counter_bytes);
+            hk.expand(&info, &mut key_bytes)
+                .map_err(|_| TorrentChatError::Crypto("HKDF expand failed".into()))?;
+            let key = chacha20poly1305::Key::from_slice(&key_bytes);
             let cipher = ChaCha20Poly1305::new(key);
 
             // Generate nonce
@@ -327,18 +373,42 @@ impl SignalSession {
 
     /// Serialize session state for storage
     pub fn to_bytes(&self) -> Vec<u8> {
-        self.session_data.clone()
+        let state = SessionState {
+            remote_onion: self.remote_onion.clone(),
+            shared_secret_bytes: self.shared_secret.as_ref().map(|s| s.to_bytes()),
+            send_counter: self.send_counter,
+            recv_counter: self.recv_counter,
+            ephemeral_public: self.ephemeral_public,
+        };
+        bincode::serialize(&state).expect("Failed to serialize session state")
     }
 
     /// Deserialize session state from storage
     pub fn from_bytes(remote_onion: String, bytes: Vec<u8>) -> Result<Self> {
+        let state: SessionState = bincode::deserialize(&bytes)
+            .map_err(|e| TorrentChatError::Crypto(format!("Failed to deserialize session: {}", e)))?;
+
+        // Reconstruct SharedSecret from raw bytes
+        // Note: SharedSecret is an opaque type without a public constructor from bytes.
+        // For MVP purposes, we use unsafe transmute since we control the serialization
+        // on both sides and know the internal representation is [u8; 32].
+        // In production, Signal Protocol would use a different session persistence strategy.
+        let shared_secret = state.shared_secret_bytes.map(|secret_bytes| {
+            // SAFETY: SharedSecret is a wrapper around [u8; 32] with the same memory layout.
+            // This is safe because:
+            // 1. We serialized it from SharedSecret.to_bytes() which gives us the raw [u8; 32]
+            // 2. We're reconstructing the exact same type
+            // 3. SharedSecret has no invariants beyond being 32 bytes
+            unsafe { std::mem::transmute::<[u8; 32], SharedSecret>(secret_bytes) }
+        });
+
         Ok(SignalSession {
-            remote_onion,
-            session_data: bytes,
-            shared_secret: None,
-            send_counter: 0,
-            recv_counter: 0,
-            ephemeral_public: None,
+            remote_onion: state.remote_onion,
+            shared_secret,
+            send_counter: state.send_counter,
+            recv_counter: state.recv_counter,
+            ephemeral_public: state.ephemeral_public,
+            session_data: bytes,  // Keep for backward compatibility
         })
     }
 }
@@ -412,5 +482,56 @@ mod tests {
         // Bob decrypts
         let decrypted = bob_session.decrypt(&ciphertext).unwrap();
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_session_serialization_prevents_nonce_reuse() {
+        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+
+        // Bob generates PreKey bundle
+        let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_identity).unwrap();
+
+        // Alice creates session and sends two messages
+        let mut alice_session = SignalSession::from_prekey_bundle_real(
+            "bob.onion".into(),
+            &bob_bundle,
+            &bob_private,
+            &alice_identity,
+        ).unwrap();
+
+        let (msg1, _) = alice_session.encrypt(b"Message 1").unwrap();
+        let (msg2, _) = alice_session.encrypt(b"Message 2").unwrap();
+
+        // Serialize Alice's session after sending two messages
+        let serialized = alice_session.to_bytes();
+
+        // Deserialize into a new session
+        let mut alice_restored = SignalSession::from_bytes("bob.onion".into(), serialized).unwrap();
+
+        // Verify counters were preserved (send_counter should be 2)
+        // Send another message - this should use counter 2, not reuse 0 or 1
+        let (msg3, is_prekey) = alice_restored.encrypt(b"Message 3").unwrap();
+
+        // Third message should NOT be a PreKey message (counter != 0)
+        assert!(!is_prekey);
+
+        // Verify all messages use different ciphertexts (different nonces)
+        assert_ne!(msg1, msg2);
+        assert_ne!(msg2, msg3);
+        assert_ne!(msg1, msg3);
+
+        // Bob should be able to decrypt all three messages in order
+        let mut bob_session = SignalSession::from_prekey_message_real(
+            "alice.onion".into(),
+            &msg1,
+            &bob_bundle,
+            &bob_private,
+            &bob_identity,
+        ).unwrap();
+
+        assert_eq!(bob_session.decrypt(&msg1).unwrap(), b"Message 1");
+        assert_eq!(bob_session.decrypt(&msg2).unwrap(), b"Message 2");
+        assert_eq!(bob_session.decrypt(&msg3).unwrap(), b"Message 3");
     }
 }
