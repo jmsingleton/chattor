@@ -236,7 +236,7 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
     let bundle_json = serde_json::to_string(&bundle)
         .map_err(|e| error::TorrentChatError::Crypto(format!("Failed to serialize bundle: {}", e)))?;
 
-    let _accept_msg = protocol::message::FriendRequestAcceptMessage {
+    let accept_msg = protocol::message::FriendRequestAcceptMessage {
         from_onion: own_onion.to_string(),
         to_onion: from_onion.clone(),
         signal_prekey_bundle: bundle_json,
@@ -273,12 +273,19 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
         [request_id],
     ).map_err(|e| error::TorrentChatError::Database(format!("Failed to update request: {}", e)))?;
 
-    // TODO: Send the accept message over Tor connection to the peer
-    // For MVP, we'll just pretend it was sent successfully
+    // Send the accept message over Tor (try direct, queue on failure)
+    let message = protocol::message::Message::FriendRequestAccept(accept_msg);
+    match try_send_direct(app, &from_onion, &message).await {
+        Ok(_) => {
+            eprintln!("Friend request #{} accepted (sent directly)", request_id);
+        }
+        Err(_) => {
+            app.message_queue.enqueue(&app.db, &from_onion, &message, "high")?;
+            eprintln!("Friend request #{} accepted (queued for delivery)", request_id);
+        }
+    }
 
-    eprintln!("Friend request #{} accepted", request_id);
     eprintln!("Session established with {}", from_onion);
-    eprintln!("(TODO: Actually send accept message over Tor)");
 
     Ok(())
 }
