@@ -203,41 +203,64 @@ async fn main() -> Result<()> {
                                         &app_lock.db, conv_id, &own_onion, &content, &msg_id
                                     ).ok();
 
-                                    // Try to send directly, queue on failure
-                                    match try_send_direct(&*app_lock, &peer_onion, &protocol::message::Message::TextMessage(
-                                        protocol::message::TextMessage {
-                                            from_onion: own_onion.clone(),
-                                            to_onion: peer_onion.clone(),
-                                            signal_ciphertext: content.clone(),
-                                            signal_type: protocol::message::SignalMessageType::Message,
-                                            timestamp: std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap_or_default()
-                                                .as_secs() as i64,
-                                            message_id: uuid::Uuid::parse_str(&msg_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
-                                        }
-                                    )).await {
-                                        Ok(_) => {
-                                            db::queries::update_message_status(&app_lock.db, &msg_id, "sent").ok();
-                                        }
-                                        Err(_) => {
-                                            // Queue for later delivery
-                                            let text_msg = protocol::message::Message::TextMessage(
-                                                protocol::message::TextMessage {
-                                                    from_onion: own_onion.clone(),
-                                                    to_onion: peer_onion.clone(),
-                                                    signal_ciphertext: content,
-                                                    signal_type: protocol::message::SignalMessageType::Message,
-                                                    timestamp: std::time::SystemTime::now()
+                                    // Encrypt the message using Signal session
+                                    let encrypted_msg = {
+                                        let store = crypto::SessionStore::new(&app_lock.db);
+                                        let session = store.load_session(&peer_onion);
+                                        match session {
+                                            Ok(Some(mut session)) => {
+                                                let payload = protocol::message::PlaintextPayload {
+                                                    content: content.clone(),
+                                                    sent_at: std::time::SystemTime::now()
                                                         .duration_since(std::time::UNIX_EPOCH)
                                                         .unwrap_or_default()
                                                         .as_secs() as i64,
-                                                    message_id: uuid::Uuid::parse_str(&msg_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                                                    message_type: "text".to_string(),
+                                                };
+                                                let plaintext = serde_json::to_vec(&payload).ok();
+                                                match plaintext {
+                                                    Some(pt) => {
+                                                        match session.encrypt(&pt) {
+                                                            Ok((ciphertext, is_prekey)) => {
+                                                                store.store_session(&session).ok();
+                                                                Some(protocol::message::TextMessage {
+                                                                    from_onion: own_onion.clone(),
+                                                                    to_onion: peer_onion.clone(),
+                                                                    signal_ciphertext: base64::encode(&ciphertext),
+                                                                    signal_type: if is_prekey {
+                                                                        protocol::message::SignalMessageType::PrekeyMessage
+                                                                    } else {
+                                                                        protocol::message::SignalMessageType::Message
+                                                                    },
+                                                                    timestamp: payload.sent_at,
+                                                                    message_id: uuid::Uuid::parse_str(&msg_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                                                                })
+                                                            }
+                                                            Err(_) => None
+                                                        }
+                                                    }
+                                                    None => None
                                                 }
-                                            );
-                                            app_lock.message_queue.enqueue(&app_lock.db, &peer_onion, &text_msg, "normal").ok();
-                                            db::queries::update_message_status(&app_lock.db, &msg_id, "queued").ok();
+                                            }
+                                            _ => None
                                         }
+                                    };
+
+                                    if let Some(text_msg) = encrypted_msg {
+                                        let msg = protocol::message::Message::TextMessage(text_msg.clone());
+                                        // Try to send directly, queue on failure
+                                        match try_send_direct(&*app_lock, &peer_onion, &msg).await {
+                                            Ok(_) => {
+                                                db::queries::update_message_status(&app_lock.db, &msg_id, "sent").ok();
+                                            }
+                                            Err(_) => {
+                                                app_lock.message_queue.enqueue(&app_lock.db, &peer_onion, &msg, "normal").ok();
+                                                db::queries::update_message_status(&app_lock.db, &msg_id, "queued").ok();
+                                            }
+                                        }
+                                    } else {
+                                        eprintln!("Failed to encrypt message: no session for {}", peer_onion);
+                                        db::queries::update_message_status(&app_lock.db, &msg_id, "failed").ok();
                                     }
                                 }
                             }
@@ -391,7 +414,7 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
     ).map_err(|e| error::TorrentChatError::Database(format!("Failed to load request: {}", e)))?;
 
     // Generate PreKey bundle for the accept message
-    let (bundle, _private_keys) = PreKeyBundle::generate_real(&app.identity)?;
+    let (bundle, private_keys) = PreKeyBundle::generate_real(&app.identity)?;
 
     // Create accept message (inline to avoid Database clone issue)
     let timestamp = std::time::SystemTime::now()
@@ -415,8 +438,13 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
         signature: format!("{}", base64::encode(&signature.to_bytes())),
     };
 
-    // Initialize Signal session (simplified - in production would use real keys exchange)
-    let session = SignalSession::from_prekey_bundle(from_onion.clone(), &bundle)?;
+    // Initialize Signal session with real X3DH key exchange
+    let session = SignalSession::from_prekey_bundle_real(
+        from_onion.clone(),
+        &bundle,
+        &private_keys,
+        &app.identity,
+    )?;
 
     // Store the session
     let store = SessionStore::new(&app.db);
@@ -543,13 +571,34 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
         }
         protocol::message::Message::TextMessage(text_msg) => {
             let from_onion = &text_msg.from_onion;
-            let content = &text_msg.signal_ciphertext; // MVP: plaintext
             let msg_id = text_msg.message_id.to_string();
+
+            // Decrypt the message using Signal session
+            let store = crypto::SessionStore::new(&app.db);
+            let content = match store.load_session(from_onion)? {
+                Some(mut session) => {
+                    let ciphertext = base64::decode(&text_msg.signal_ciphertext)
+                        .map_err(|e| error::TorrentChatError::Crypto(
+                            format!("Failed to decode base64: {}", e)
+                        ))?;
+                    let plaintext = session.decrypt(&ciphertext)?;
+                    store.store_session(&session)?;
+                    let payload: protocol::message::PlaintextPayload = serde_json::from_slice(&plaintext)
+                        .map_err(|e| error::TorrentChatError::Crypto(
+                            format!("Failed to parse payload: {}", e)
+                        ))?;
+                    payload.content
+                }
+                None => {
+                    eprintln!("No session for {}, cannot decrypt", from_onion);
+                    return Ok(());
+                }
+            };
 
             // Find friend and conversation
             if let Some(friend_id) = db::queries::find_friend_by_onion(&app.db, from_onion)? {
                 let conv_id = db::queries::get_or_create_conversation(&app.db, friend_id)?;
-                db::queries::store_incoming_message(&app.db, conv_id, from_onion, content, &msg_id)?;
+                db::queries::store_incoming_message(&app.db, conv_id, from_onion, &content, &msg_id)?;
             }
         }
         protocol::message::Message::DeliveryReceipt(_) => {
@@ -607,10 +656,15 @@ fn handle_incoming_accept(
             format!("Failed to parse PreKey bundle: {}", e)
         ))?;
 
-    // Initialize Signal session
-    let session = SignalSession::from_prekey_bundle(
+    // Generate our own key material for X3DH
+    let (_, local_private) = PreKeyBundle::generate_real(&app.identity)?;
+
+    // Initialize Signal session with real X3DH key exchange
+    let session = SignalSession::from_prekey_bundle_real(
         accept.from_onion.clone(),
         &bundle,
+        &local_private,
+        &app.identity,
     )?;
 
     // Store session
