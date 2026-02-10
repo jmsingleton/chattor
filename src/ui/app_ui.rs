@@ -152,7 +152,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, app: &App) {
     // Footer - show keyboard shortcuts based on state
     let footer_text = match app_state {
         AppState::Normal => "[i] My Identity | [a] Add Friend | [q] Quit",
-        AppState::AddingFriend { .. } => "Enter friend code | [Enter] Send | [Esc] Cancel",
+        AppState::AddingFriend { .. } => "Enter .onion address | [Enter] Send | [Esc] Cancel",
         AppState::ViewingFriendRequest { .. } => "[A]ccept | [R]eject | [Esc] Back",
         AppState::ViewingMyIdentity { .. } => "[i/Esc] Close identity",
     };

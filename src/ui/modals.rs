@@ -33,7 +33,7 @@ pub fn render_add_friend_modal(
         .split(area);
 
     // Prompt
-    let prompt = Paragraph::new("Enter friend code:");
+    let prompt = Paragraph::new("Enter their .onion address:");
     f.render_widget(prompt, chunks[0]);
 
     // Input field
@@ -46,7 +46,7 @@ pub fn render_add_friend_modal(
     let help = if let Some(err) = error {
         Paragraph::new(err).style(Style::default().fg(Color::Red))
     } else {
-        Paragraph::new("Format: word-NNNN-word-NNNN")
+        Paragraph::new("e.g., abc123...xyz.onion")
             .style(Style::default().fg(Color::Gray))
     };
     f.render_widget(help, chunks[2]);
@@ -140,29 +140,29 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
         ])
         .split(inner);
 
-    // Friend code label
-    let label1 = Paragraph::new("Share this with friends:")
+    // Onion address label
+    let label1 = Paragraph::new("Share this address with friends:")
         .style(Style::default().fg(Color::White));
     f.render_widget(label1, chunks[0]);
+
+    // Onion address value (primary - this is what friends need to add you)
+    let onion_widget_top = Paragraph::new(onion_address)
+        .block(Block::default().borders(Borders::ALL))
+        .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        .wrap(Wrap { trim: false });
+    f.render_widget(onion_widget_top, chunks[1]);
+
+    // Friend code label
+    let label2 = Paragraph::new("Friend Code:")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(label2, chunks[3]);
 
     // Friend code value
     let code_widget = Paragraph::new(friend_code)
         .block(Block::default().borders(Borders::ALL))
-        .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
-        .wrap(Wrap { trim: false });
-    f.render_widget(code_widget, chunks[1]);
-
-    // Onion address label
-    let label2 = Paragraph::new("Onion Address:")
-        .style(Style::default().fg(Color::DarkGray));
-    f.render_widget(label2, chunks[3]);
-
-    // Onion address value
-    let onion_widget = Paragraph::new(onion_address)
-        .block(Block::default().borders(Borders::ALL))
         .style(Style::default().fg(Color::Yellow))
         .wrap(Wrap { trim: false });
-    f.render_widget(onion_widget, chunks[4]);
+    f.render_widget(code_widget, chunks[4]);
 
     // Help text
     let help = Paragraph::new("[Esc/i] Close")
