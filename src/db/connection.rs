@@ -23,11 +23,12 @@ impl Database {
 
     /// Initialize database schema
     fn initialize(&mut self) -> Result<()> {
-        // Execute schema creation
-        self.conn.execute_batch(CREATE_TABLES)
-            .map_err(|e| TorrentChatError::Database(format!("Failed to create tables: {}", e)))?;
+        // Ensure schema_version table exists first (needed for migrations)
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);"
+        ).map_err(|e| TorrentChatError::Database(format!("Failed to create schema_version: {}", e)))?;
 
-        // Check/set schema version
+        // Check if this is an existing database that needs migrations
         let version: rusqlite::Result<i32> = self.conn.query_row(
             "SELECT version FROM schema_version LIMIT 1",
             [],
@@ -36,19 +37,29 @@ impl Database {
 
         match version {
             Ok(_v) => {
-                // Version exists, run migrations
+                // Existing database - run migrations BEFORE CREATE_TABLES
+                // so old tables get replaced before new indices are created
                 self.migrate_to_v3()?;
-                Ok(())
+                self.migrate_to_v4()?;
             },
             Err(_) => {
-                // No version set, insert current
-                self.conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?1)",
-                    [SCHEMA_VERSION]
-                ).map_err(|e| TorrentChatError::Database(format!("Failed to set schema version: {}", e)))?;
-                Ok(())
+                // Fresh database - will set version after creating tables
             }
         }
+
+        // Execute schema creation (IF NOT EXISTS handles already-migrated tables)
+        self.conn.execute_batch(CREATE_TABLES)
+            .map_err(|e| TorrentChatError::Database(format!("Failed to create tables: {}", e)))?;
+
+        // Set version if not yet set (fresh database)
+        if version.is_err() {
+            self.conn.execute(
+                "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
+                [SCHEMA_VERSION]
+            ).map_err(|e| TorrentChatError::Database(format!("Failed to set schema version: {}", e)))?;
+        }
+
+        Ok(())
     }
 
     /// Get a reference to the connection
@@ -69,6 +80,33 @@ impl Database {
             |row| row.get(0)
         ).map_err(|e| TorrentChatError::Database(format!("Failed to get schema version: {}", e)))?;
         Ok(version)
+    }
+
+    /// Migrate database from v3 to v4 (general-purpose message queue)
+    fn migrate_to_v4(&self) -> Result<()> {
+        let version = self.get_schema_version()?;
+
+        if version < 4 {
+            info!("Migrating database to schema v4 (general-purpose message queue)");
+
+            let conn = self.connection();
+
+            // Drop old message_queue table and its indices
+            conn.execute_batch(
+                "DROP INDEX IF EXISTS idx_queue_to_onion;
+                 DROP INDEX IF EXISTS idx_queue_conversation;
+                 DROP INDEX IF EXISTS idx_queue_retry;
+                 DROP TABLE IF EXISTS message_queue;"
+            ).map_err(|e| TorrentChatError::Database(format!("Failed to drop old queue: {}", e)))?;
+
+            // Update version
+            conn.execute("UPDATE schema_version SET version = 4", [])
+                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+
+            info!("Migration to schema v4 complete (old message queue replaced)");
+        }
+
+        Ok(())
     }
 
     /// Migrate database from v2 to v3 (production Signal Protocol)
@@ -168,13 +206,13 @@ mod tests {
         let mut db = Database::open(temp_db.path()).unwrap();
         db.initialize().unwrap();
 
-        // Should be v3 now
+        // Should be at latest schema version (v3 + v4 migrations both run)
         let version: i64 = db.connection().query_row(
             "SELECT version FROM schema_version",
             [],
             |row| row.get(0)
         ).unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, SCHEMA_VERSION as i64);
 
         // Old sessions should be cleared
         let count: i64 = db.connection().query_row(
