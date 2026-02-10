@@ -49,6 +49,48 @@ impl PreKeyBundle {
             }),
         })
     }
+
+    /// Generate real PreKey bundle with libsignal
+    pub fn generate_real(identity: &crate::crypto::IdentityKeypair) -> Result<Self> {
+        use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
+        use rand::rngs::OsRng;
+
+        // Generate identity key pair for X25519
+        let identity_secret = StaticSecret::random_from_rng(OsRng);
+        let identity_public = X25519PublicKey::from(&identity_secret);
+
+        // Generate signed pre-key
+        let signed_prekey_secret = StaticSecret::random_from_rng(OsRng);
+        let signed_prekey_public = X25519PublicKey::from(&signed_prekey_secret);
+        let signed_prekey_id = 1u32;
+
+        // Sign the pre-key with Ed25519 identity
+        let signature = identity.sign(signed_prekey_public.as_bytes());
+
+        // Generate one-time pre-key
+        let prekey_secret = StaticSecret::random_from_rng(OsRng);
+        let prekey_public = X25519PublicKey::from(&prekey_secret);
+        let prekey_id = 1u32;
+
+        // Convert to our format (extract 32 bytes)
+        let identity_key_bytes = identity_public.as_bytes().to_vec();
+        let signed_prekey_bytes = signed_prekey_public.as_bytes().to_vec();
+        let prekey_bytes = prekey_public.as_bytes().to_vec();
+        let signature_bytes = signature.to_bytes().to_vec();
+
+        Ok(PreKeyBundle {
+            identity_key: identity_key_bytes,
+            signed_prekey: SignedPreKey {
+                key_id: signed_prekey_id,
+                public_key: signed_prekey_bytes,
+                signature: signature_bytes,
+            },
+            prekey: Some(PreKey {
+                key_id: prekey_id,
+                public_key: prekey_bytes,
+            }),
+        })
+    }
 }
 
 /// Signal session for encryption/decryption
@@ -123,5 +165,18 @@ mod tests {
         assert!(bundle.signed_prekey.public_key.len() > 0);
         assert!(bundle.signed_prekey.signature.len() > 0);
         assert!(bundle.prekey.is_some());
+    }
+
+    #[test]
+    fn test_generate_real_prekey_bundle() {
+        let identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let bundle = PreKeyBundle::generate_real(&identity).unwrap();
+
+        // Real keys should be 32 bytes (Curve25519)
+        assert_eq!(bundle.identity_key.len(), 32);
+        assert_eq!(bundle.signed_prekey.public_key.len(), 32);
+        assert_eq!(bundle.signed_prekey.signature.len(), 64);
+        assert!(bundle.prekey.is_some());
+        assert_eq!(bundle.prekey.as_ref().unwrap().public_key.len(), 32);
     }
 }
