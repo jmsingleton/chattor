@@ -132,4 +132,52 @@ mod tests {
 
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_prepare_message_with_real_signal() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = Arc::new(crate::db::Database::open(temp_db.path()).unwrap());
+
+        // Create real session
+        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let (bob_bundle, bob_private) = crate::crypto::PreKeyBundle::generate_real(&bob_identity).unwrap();
+
+        let session = crate::crypto::SignalSession::from_prekey_bundle_real(
+            "bob.onion".into(),
+            &bob_bundle,
+            &bob_private,
+            &alice_identity,
+        ).unwrap();
+
+        let store = crate::crypto::SessionStore::new(&db);
+        store.store_session(&session).unwrap();
+
+        // Create sender
+        let sender = MessageSender::new(db);
+
+        // Prepare message
+        let result = sender.prepare_message(
+            "alice.onion",
+            "bob.onion",
+            "Hello Bob!",
+        );
+
+        assert!(result.is_ok());
+        let message = result.unwrap();
+
+        // Verify real encryption was used:
+        // 1. Ciphertext should not contain plaintext
+        assert!(!message.signal_ciphertext.contains("Hello Bob!"));
+
+        // 2. Decode base64 and verify it's not the plaintext bytes
+        let decoded_ciphertext = base64::decode(&message.signal_ciphertext).unwrap();
+        assert_ne!(decoded_ciphertext, b"Hello Bob!");
+
+        // 3. Should be longer than plaintext due to encryption overhead
+        assert!(decoded_ciphertext.len() > 12); // "Hello Bob!" is 10 bytes
+
+        // 4. Should be PreKey message type for first message
+        assert_eq!(message.signal_type, crate::protocol::message::SignalMessageType::PrekeyMessage);
+    }
 }
