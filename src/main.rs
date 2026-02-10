@@ -146,6 +146,23 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        // Check for queue processing commands
+        let should_process = {
+            let mut app_lock = app.lock().await;
+            if let Some(rx) = &mut app_lock.queue_command_rx {
+                rx.try_recv().is_ok()
+            } else {
+                false
+            }
+        };
+
+        if should_process {
+            let app_lock = app.lock().await;
+            if let Err(e) = process_message_queue(&*app_lock).await {
+                eprintln!("Queue processing error: {}", e);
+            }
+        }
     };
 
     // Cleanup
@@ -372,6 +389,40 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
         }
         _ => {
             // TextMessage, DeliveryReceipt - not implemented yet
+        }
+    }
+
+    Ok(())
+}
+
+/// Process pending messages in the queue
+async fn process_message_queue(app: &App) -> Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let pending = app.message_queue.get_pending_messages(&app.db, now)?;
+
+    if pending.is_empty() {
+        return Ok(());
+    }
+
+    for queued in pending {
+        match try_send_direct(app, &queued.peer_onion, &queued.message).await {
+            Ok(_) => {
+                app.message_queue.mark_delivered(&app.db, queued.id)?;
+                eprintln!("Queued message #{} delivered to {}", queued.id, queued.peer_onion);
+            }
+            Err(_) => {
+                if queued.retry_count >= 10 {
+                    app.message_queue.mark_failed(&app.db, queued.id)?;
+                    eprintln!("Message #{} failed after 10 retries", queued.id);
+                } else {
+                    let next_retry = now + 30;
+                    app.message_queue.schedule_retry(&app.db, queued.id, next_retry)?;
+                }
+            }
         }
     }
 

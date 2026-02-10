@@ -8,6 +8,11 @@ use crate::net::queue::MessageQueue;
 use std::fs;
 use std::sync::Arc;
 
+/// Commands sent to the main thread for queue processing
+pub enum QueueCommand {
+    ProcessQueue,
+}
+
 pub struct App {
     pub settings: Settings,
     pub db: Database,
@@ -17,6 +22,7 @@ pub struct App {
     pub message_queue: MessageQueue,
     pub onion_address: Option<String>,
     pub incoming_message_rx: Option<tokio::sync::mpsc::Receiver<crate::net::listener::IncomingMessage>>,
+    pub queue_command_rx: Option<tokio::sync::mpsc::Receiver<QueueCommand>>,
 }
 
 impl App {
@@ -50,6 +56,7 @@ impl App {
             message_queue,
             onion_address,
             incoming_message_rx: None,
+            queue_command_rx: None,
         })
     }
 
@@ -93,6 +100,18 @@ impl App {
             }
         }
 
+        // Spawn queue processor task (sends ProcessQueue command every 30 seconds)
+        let (queue_cmd_tx, queue_cmd_rx) = tokio::sync::mpsc::channel(10);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                if queue_cmd_tx.send(QueueCommand::ProcessQueue).await.is_err() {
+                    break; // Channel closed, app shutting down
+                }
+            }
+        });
+        self.queue_command_rx = Some(queue_cmd_rx);
+
         // Store in app state
         self.tor_client = Some(Arc::new(client));
         self.hidden_service = Some(hidden_service);
@@ -119,6 +138,7 @@ impl App {
             message_queue,
             onion_address: None,
             incoming_message_rx: None,
+            queue_command_rx: None,
         })
     }
 }
