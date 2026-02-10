@@ -1,5 +1,5 @@
 /// SQL schema for torrent-chat database
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 pub const CREATE_TABLES: &str = r#"
 -- Schema version tracking
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn test_schema_version_defined() {
-        assert_eq!(SCHEMA_VERSION, 2);
+        assert_eq!(SCHEMA_VERSION, 3);
     }
 
     #[test]
