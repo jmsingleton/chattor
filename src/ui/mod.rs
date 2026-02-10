@@ -1,12 +1,14 @@
 pub mod app_ui;
 pub mod bootstrap;
 pub mod modals;
+pub mod sidebar;
 pub mod state;
 pub mod error;
 
 pub use app_ui::{AppUI, render_app};
 pub use bootstrap::render_bootstrap;
 pub use modals::{render_add_friend_modal, render_friend_request_modal, render_identity_modal};
+pub use sidebar::render_sidebar;
 pub use state::{AppState, AppAction};
 pub use error::format_error_for_user;
 
@@ -38,6 +40,14 @@ pub fn display_connection_status(app: &App) {
     println!("Message Queue: Active");
 
     println!("========================\n");
+}
+
+/// Copy text to system clipboard. Returns true on success.
+pub fn copy_to_clipboard(text: &str) -> bool {
+    match arboard::Clipboard::new() {
+        Ok(mut clipboard) => clipboard.set_text(text).is_ok(),
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]
