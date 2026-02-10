@@ -1,177 +1,128 @@
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
 use ratatui::{
-    backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
-    Frame, Terminal,
+    Frame,
 };
-use std::io;
-use crate::error::Result;
-use crate::app::App;
-use super::{AppState, render_add_friend_modal, render_friend_request_modal, render_identity_modal};
+use crate::db::queries::{FriendEntry, ChatMessage};
+use super::AppState;
 
-pub struct AppUI {
-    should_quit: bool,
-}
-
-impl AppUI {
-    pub fn new() -> Self {
-        AppUI {
-            should_quit: false,
-        }
-    }
-
-    fn tor_status(&self) -> &str {
-        // TODO: Get actual status from app state
-        // For now, return stub status
-        "Not Connected"
-    }
-
-    pub fn run(&mut self) -> Result<()> {
-        // Setup terminal
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend)?;
-
-        // Run main loop
-        let result = self.main_loop(&mut terminal);
-
-        // Cleanup terminal
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )?;
-        terminal.show_cursor()?;
-
-        result
-    }
-
-    fn main_loop<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
-        loop {
-            terminal.draw(|f| self.render(f))?;
-
-            if event::poll(std::time::Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Char('q') => self.should_quit = true,
-                        KeyCode::Esc => self.should_quit = true,
-                        _ => {}
-                    }
-                }
-            }
-
-            if self.should_quit {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    fn render(&self, f: &mut Frame) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(0),
-                Constraint::Length(3),
-            ])
-            .split(f.size());
-
-        // Header
-        let header_text = format!(
-            "torrent-chat v0.1.0  [Tor: {}]",
-            self.tor_status()
-        );
-        let header = Paragraph::new(header_text)
-            .style(Style::default().fg(Color::Cyan))
-            .block(Block::default().borders(Borders::ALL));
-        f.render_widget(header, chunks[0]);
-
-        // Main area
-        let main = Paragraph::new("Welcome to torrent-chat! (Phase 2: Core Foundation)\n\nPress '?' for help")
-            .style(Style::default().fg(Color::White))
-            .block(Block::default().borders(Borders::ALL).title("Welcome"));
-        f.render_widget(main, chunks[1]);
-
-        // Footer
-        let footer = Paragraph::new("Press 'q' to quit | Phase 2: Core Foundation + Tor Integration")
-            .style(Style::default().fg(Color::Gray))
-            .block(Block::default().borders(Borders::ALL));
-        f.render_widget(footer, chunks[2]);
-    }
+/// Data needed for rendering (populated by main loop before render)
+pub struct RenderContext {
+    pub friends: Vec<FriendEntry>,
+    pub messages: Vec<ChatMessage>,
+    pub own_onion: Option<String>,
+    pub friend_code: Option<String>,
+    pub tor_connected: bool,
 }
 
 /// Render the application UI based on current state
-pub fn render_app(f: &mut Frame, app_state: &AppState, app: &App) {
-    // Base layout
+pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(0),
-            Constraint::Length(3),
+            Constraint::Length(3),  // Header
+            Constraint::Min(0),     // Main area
+            Constraint::Length(1),  // Footer
         ])
         .split(f.size());
 
-    // Header - show Tor status
-    let tor_status = if app.tor_client.is_some() {
-        "Connected"
-    } else {
-        "Not Connected"
-    };
-    let header_text = format!("torrent-chat v0.1.0  [Tor: {}]", tor_status);
-    let header = Paragraph::new(header_text)
+    // Header
+    let tor_status = if ctx.tor_connected { "Connected" } else { "Connecting..." };
+    let addr_display = ctx.own_onion.as_deref()
+        .map(|a| {
+            let trunc = if a.len() > 16 { &a[..16] } else { a };
+            format!("  [@{}...]", trunc)
+        })
+        .unwrap_or_default();
+
+    let header = Paragraph::new(format!("  torrent-chat v0.1.0{}  [Tor: {}]", addr_display, tor_status))
         .style(Style::default().fg(Color::Cyan))
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
 
-    // Main area - base UI
-    let main_text = match app_state {
-        AppState::Normal { .. } => {
-            "Welcome to torrent-chat!\n\n\
-             Press 'i' to view your identity\n\
-             Press 'a' to add a friend\n\
-             Press 'q' to quit"
-        }
-        _ => "Welcome to torrent-chat!",
-    };
-    let main = Paragraph::new(main_text)
-        .style(Style::default().fg(Color::White))
-        .block(Block::default().borders(Borders::ALL).title("Welcome"));
-    f.render_widget(main, chunks[1]);
+    // Main area -- depends on whether we have friends
+    if ctx.friends.is_empty() {
+        // Setup wizard
+        let (onion_ref, code_ref) = (ctx.own_onion.as_deref(), ctx.friend_code.as_deref());
+        crate::ui::conversation::render_setup_wizard(f, chunks[1], onion_ref, code_ref);
+    } else {
+        // Split into sidebar + conversation
+        let main_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(20),  // Sidebar
+                Constraint::Min(0),      // Conversation
+            ])
+            .split(chunks[1]);
 
-    // Footer - show keyboard shortcuts based on state
+        // Extract state from Normal variant
+        let (selected_idx, _conv_id, input, cursor, input_focused, scroll_offset) =
+            if let AppState::Normal {
+                selected_friend_idx, conversation_id, input, cursor, input_focused, scroll_offset
+            } = app_state {
+                (*selected_friend_idx, *conversation_id, input.as_str(), *cursor, *input_focused, *scroll_offset)
+            } else {
+                (None, None, "", 0, false, 0)
+            };
+
+        // Sidebar
+        crate::ui::sidebar::render_sidebar(
+            f, main_chunks[0], &ctx.friends, selected_idx, !input_focused,
+        );
+
+        // Right panel: conversation + input
+        let right_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),     // Messages
+                Constraint::Length(3),  // Input
+            ])
+            .split(main_chunks[1]);
+
+        // Find the selected friend
+        let selected_friend = selected_idx
+            .and_then(|i| ctx.friends.get(i));
+
+        // Conversation
+        crate::ui::conversation::render_conversation(
+            f,
+            right_chunks[0],
+            selected_friend,
+            &ctx.messages,
+            ctx.own_onion.as_deref(),
+            scroll_offset,
+        );
+
+        // Input
+        crate::ui::conversation::render_input(
+            f, right_chunks[1], input, cursor, input_focused,
+        );
+    }
+
+    // Footer
     let footer_text = match app_state {
-        AppState::Normal { .. } => "[i] My Identity | [a] Add Friend | [q] Quit",
-        AppState::AddingFriend { .. } => "Enter .onion address | [Enter] Send | [Esc] Cancel",
-        AppState::ViewingFriendRequest { .. } => "[A]ccept | [R]eject | [Esc] Back",
-        AppState::ViewingMyIdentity { .. } => "[i/Esc] Close identity",
+        AppState::Normal { input_focused: true, .. } => "[Enter] Send  [Esc] Navigation mode",
+        AppState::Normal { .. } => "[Tab/\u{2191}\u{2193}] Select friend  [Enter] Open  [a] Add  [i] Identity  [q] Quit",
+        AppState::AddingFriend { .. } => "[Enter] Send request  [Esc] Cancel",
+        AppState::ViewingFriendRequest { .. } => "[A]ccept  [R]eject  [Esc] Back",
+        AppState::ViewingMyIdentity { .. } => "[i/Esc] Close",
     };
-    let footer = Paragraph::new(footer_text)
-        .style(Style::default().fg(Color::Gray))
-        .block(Block::default().borders(Borders::ALL));
+    let footer = Paragraph::new(format!("  {}", footer_text))
+        .style(Style::default().fg(Color::DarkGray));
     f.render_widget(footer, chunks[2]);
 
-    // Render modals on top if in modal state
+    // Modal overlays
     match app_state {
         AppState::AddingFriend { input, error, .. } => {
-            render_add_friend_modal(f, input, error.as_deref());
+            crate::ui::modals::render_add_friend_modal(f, input, error.as_deref());
         }
         AppState::ViewingFriendRequest { from_onion, friend_code, .. } => {
-            render_friend_request_modal(f, from_onion, friend_code);
+            crate::ui::modals::render_friend_request_modal(f, from_onion, friend_code);
         }
         AppState::ViewingMyIdentity { friend_code, onion_address } => {
-            render_identity_modal(f, friend_code, onion_address);
+            crate::ui::modals::render_identity_modal(f, friend_code, onion_address);
         }
-        AppState::Normal { .. } => {}
+        _ => {}
     }
 }

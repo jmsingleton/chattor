@@ -13,7 +13,7 @@ use clap::Parser;
 use cli::Cli;
 use error::Result;
 use app::App;
-use ui::{AppState, AppAction};
+use ui::{AppState, AppAction, RenderContext};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
@@ -56,19 +56,40 @@ async fn main() -> Result<()> {
 
     // Main event loop
     let result = loop {
-        // Lock app for rendering (need to do this outside the draw closure since it's async)
+        // Lock app to build render context
         let app_lock = app.lock().await;
+
+        let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+        let own_onion = app_lock.onion_address.clone();
+        let friend_code = own_onion.as_deref().and_then(|o| {
+            crate::tor::address::onion_to_friend_code(o).ok()
+        });
+        let tor_connected = app_lock.tor_client.is_some();
+
+        // Load messages for selected conversation
+        let messages = if let AppState::Normal { conversation_id: Some(conv_id), .. } = &app_state {
+            db::queries::get_messages(&app_lock.db, *conv_id, 100, 0).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        // Release lock before rendering
+        drop(app_lock);
+
+        let ctx = RenderContext {
+            friends,
+            messages,
+            own_onion,
+            friend_code,
+            tor_connected,
+        };
 
         // Render current state
         if let Err(e) = terminal.draw(|f| {
-            ui::render_app(f, &app_state, &*app_lock);
+            ui::render_app(f, &app_state, &ctx);
         }) {
-            drop(app_lock); // Release lock before breaking
             break Err(e.into());
         }
-
-        // Release lock before polling events
-        drop(app_lock);
 
         // Handle events with timeout
         if event::poll(Duration::from_millis(100))? {
