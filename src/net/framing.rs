@@ -1,10 +1,12 @@
-use tokio::net::TcpStream;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use crate::error::{Result, TorrentChatError};
 use crate::protocol::message::Message;
 
-/// Send message with length prefix
-pub async fn send_message(stream: &mut TcpStream, message: &Message) -> Result<()> {
+/// Send message with length prefix (works with any async stream)
+pub async fn send_message<S>(stream: &mut S, message: &Message) -> Result<()>
+where
+    S: AsyncWrite + Unpin
+{
     // Serialize to JSON
     let json = serde_json::to_vec(message)
         .map_err(|e| TorrentChatError::Network(format!("Failed to serialize: {}", e)))?;
@@ -29,8 +31,11 @@ pub async fn send_message(stream: &mut TcpStream, message: &Message) -> Result<(
     Ok(())
 }
 
-/// Receive message with length prefix
-pub async fn receive_message(stream: &mut TcpStream) -> Result<Message> {
+/// Receive message with length prefix (works with any async stream)
+pub async fn receive_message<S>(stream: &mut S) -> Result<Message>
+where
+    S: AsyncRead + Unpin
+{
     // Read length prefix (4 bytes, big-endian)
     let mut len_bytes = [0u8; 4];
     stream.read_exact(&mut len_bytes).await
@@ -91,5 +96,34 @@ mod tests {
         let received = receive_message(&mut stream).await.unwrap();
 
         assert_eq!(format!("{:?}", original), format!("{:?}", received));
+    }
+
+    #[tokio::test]
+    async fn test_generic_framing_with_different_streams() {
+        use uuid::Uuid;
+
+        let (mut client, mut server) = tokio::io::duplex(1024);
+
+        let message = Message::TextMessage(TextMessage {
+            from_onion: "alice.onion".into(),
+            to_onion: "bob.onion".into(),
+            signal_ciphertext: "test_ciphertext".into(),
+            signal_type: SignalMessageType::Message,
+            timestamp: 12345,
+            message_id: Uuid::new_v4(),
+        });
+
+        let message_clone = message.clone();
+
+        // Send on one end
+        tokio::spawn(async move {
+            send_message(&mut client, &message_clone).await.unwrap();
+        });
+
+        // Receive on other end
+        let received = receive_message(&mut server).await.unwrap();
+
+        // Verify
+        assert_eq!(format!("{:?}", message), format!("{:?}", received));
     }
 }
