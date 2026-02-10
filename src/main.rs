@@ -79,11 +79,11 @@ async fn main() -> Result<()> {
 
                         match handle_send_friend_request(&*app_lock, &code).await {
                             Ok(SendResult::SentImmediately) => {
-                                app_state = AppState::Normal;
+                                app_state = AppState::default();
                             }
                             Ok(SendResult::Queued) => {
                                 // Show queued status briefly, then return to normal
-                                app_state = AppState::Normal;
+                                app_state = AppState::default();
                             }
                             Err(e) => {
                                 app_state = AppState::AddingFriend {
@@ -100,10 +100,10 @@ async fn main() -> Result<()> {
                         let app_lock = app.lock().await;
 
                         match handle_accept_friend_request(&*app_lock, id).await {
-                            Ok(_) => app_state = AppState::Normal,
+                            Ok(_) => app_state = AppState::default(),
                             Err(e) => {
                                 eprintln!("Failed to accept friend request: {}", e);
-                                app_state = AppState::Normal;
+                                app_state = AppState::default();
                             }
                         }
                         drop(app_lock);
@@ -113,10 +113,10 @@ async fn main() -> Result<()> {
                         let app_lock = app.lock().await;
 
                         match handle_reject_friend_request(&*app_lock, id) {
-                            Ok(_) => app_state = AppState::Normal,
+                            Ok(_) => app_state = AppState::default(),
                             Err(e) => {
                                 eprintln!("Failed to reject friend request: {}", e);
-                                app_state = AppState::Normal;
+                                app_state = AppState::default();
                             }
                         }
                         drop(app_lock);
@@ -138,6 +138,12 @@ async fn main() -> Result<()> {
                             };
                         }
                         drop(app_lock);
+                    }
+                    Some(AppAction::SelectFriend(_idx)) => {
+                        // TODO: Load conversation for selected friend
+                    }
+                    Some(AppAction::SendMessage(_msg)) => {
+                        // TODO: Send message to selected friend
                     }
                     Some(AppAction::Quit) => break Ok(()),
                     None => {} // Just state change

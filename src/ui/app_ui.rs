@@ -136,7 +136,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, app: &App) {
 
     // Main area - base UI
     let main_text = match app_state {
-        AppState::Normal => {
+        AppState::Normal { .. } => {
             "Welcome to torrent-chat!\n\n\
              Press 'i' to view your identity\n\
              Press 'a' to add a friend\n\
@@ -151,7 +151,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, app: &App) {
 
     // Footer - show keyboard shortcuts based on state
     let footer_text = match app_state {
-        AppState::Normal => "[i] My Identity | [a] Add Friend | [q] Quit",
+        AppState::Normal { .. } => "[i] My Identity | [a] Add Friend | [q] Quit",
         AppState::AddingFriend { .. } => "Enter .onion address | [Enter] Send | [Esc] Cancel",
         AppState::ViewingFriendRequest { .. } => "[A]ccept | [R]eject | [Esc] Back",
         AppState::ViewingMyIdentity { .. } => "[i/Esc] Close identity",
@@ -172,6 +172,6 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, app: &App) {
         AppState::ViewingMyIdentity { friend_code, onion_address } => {
             render_identity_modal(f, friend_code, onion_address);
         }
-        AppState::Normal => {}
+        AppState::Normal { .. } => {}
     }
 }
