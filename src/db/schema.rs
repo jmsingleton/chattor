@@ -1,5 +1,5 @@
 /// SQL schema for torrent-chat database
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 pub const CREATE_TABLES: &str = r#"
 -- Schema version tracking
@@ -61,18 +61,16 @@ CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_message_id ON messages(message_id);
 CREATE INDEX IF NOT EXISTS idx_friends_onion ON friends(onion_address);
 
--- Phase 2: Message queue for offline delivery
+-- General-purpose outgoing message queue
 CREATE TABLE IF NOT EXISTS message_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    to_onion TEXT NOT NULL,
-    conversation_id INTEGER NOT NULL,
-    encrypted_message BLOB NOT NULL,
-    message_uuid TEXT,
+    peer_onion TEXT NOT NULL,
+    message_json TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'normal',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    next_retry_at INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
-    retry_count INTEGER DEFAULT 0,
-    last_retry_at INTEGER,
-    max_retries INTEGER DEFAULT 50,
-    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+    status TEXT NOT NULL DEFAULT 'pending'
 );
 
 -- Phase 2: Signal Protocol sessions
@@ -116,10 +114,11 @@ CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN
     VALUES (new.id, new.content, new.sender_onion, new.conversation_id);
 END;
 
--- Phase 2: Additional indices
-CREATE INDEX IF NOT EXISTS idx_queue_to_onion ON message_queue(to_onion);
-CREATE INDEX IF NOT EXISTS idx_queue_conversation ON message_queue(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_queue_retry ON message_queue(retry_count, last_retry_at);
+-- Message queue indices
+CREATE INDEX IF NOT EXISTS idx_queue_pending
+    ON message_queue(next_retry_at, status)
+    WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_queue_peer ON message_queue(peer_onion);
 "#;
 
 #[cfg(test)]
@@ -129,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_schema_version_defined() {
-        assert_eq!(SCHEMA_VERSION, 3);
+        assert_eq!(SCHEMA_VERSION, 4);
     }
 
     #[test]
