@@ -46,6 +46,7 @@ pub struct ChatMessage {
     pub content: String,
     pub timestamp: i64,
     pub status: String,
+    pub ephemeral_ttl: Option<i64>,
 }
 
 /// Get active friends with unread counts
@@ -112,7 +113,7 @@ pub fn get_or_create_conversation(db: &Database, friend_id: i64) -> Result<i64> 
 pub fn get_messages(db: &Database, conversation_id: i64, limit: usize, offset: usize) -> Result<Vec<ChatMessage>> {
     let conn = db.connection();
     let mut stmt = conn.prepare(
-        "SELECT id, message_id, sender_onion, content, timestamp, status
+        "SELECT id, message_id, sender_onion, content, timestamp, status, ephemeral_ttl
          FROM messages
          WHERE conversation_id = ?1
          ORDER BY timestamp DESC, id DESC
@@ -129,6 +130,7 @@ pub fn get_messages(db: &Database, conversation_id: i64, limit: usize, offset: u
                 content: row.get(3)?,
                 timestamp: row.get(4)?,
                 status: row.get(5)?,
+                ephemeral_ttl: row.get(6)?,
             })
         },
     ).map_err(|e| TorrentChatError::Database(format!("Failed to query messages: {}", e)))?
@@ -148,15 +150,27 @@ pub fn store_outgoing_message(
     content: &str,
     message_id: &str,
 ) -> Result<()> {
+    store_outgoing_message_with_ttl(db, conversation_id, sender_onion, content, message_id, None)
+}
+
+/// Store an outgoing message with optional ephemeral TTL
+pub fn store_outgoing_message_with_ttl(
+    db: &Database,
+    conversation_id: i64,
+    sender_onion: &str,
+    content: &str,
+    message_id: &str,
+    ephemeral_ttl: Option<i64>,
+) -> Result<()> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
 
     db.connection().execute(
-        "INSERT INTO messages (message_id, conversation_id, sender_onion, content, timestamp, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'sent')",
-        params![message_id, conversation_id, sender_onion, content, now],
+        "INSERT INTO messages (message_id, conversation_id, sender_onion, content, timestamp, status, ephemeral_ttl)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'sent', ?6)",
+        params![message_id, conversation_id, sender_onion, content, now, ephemeral_ttl],
     ).map_err(|e| TorrentChatError::Database(format!("Failed to store outgoing message: {}", e)))?;
 
     Ok(())
@@ -170,15 +184,27 @@ pub fn store_incoming_message(
     content: &str,
     message_id: &str,
 ) -> Result<()> {
+    store_incoming_message_with_ttl(db, conversation_id, sender_onion, content, message_id, None)
+}
+
+/// Store an incoming message with optional ephemeral TTL
+pub fn store_incoming_message_with_ttl(
+    db: &Database,
+    conversation_id: i64,
+    sender_onion: &str,
+    content: &str,
+    message_id: &str,
+    ephemeral_ttl: Option<i64>,
+) -> Result<()> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
 
     db.connection().execute(
-        "INSERT OR IGNORE INTO messages (message_id, conversation_id, sender_onion, content, timestamp, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'received')",
-        params![message_id, conversation_id, sender_onion, content, now],
+        "INSERT OR IGNORE INTO messages (message_id, conversation_id, sender_onion, content, timestamp, status, ephemeral_ttl)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'received', ?6)",
+        params![message_id, conversation_id, sender_onion, content, now, ephemeral_ttl],
     ).map_err(|e| TorrentChatError::Database(format!("Failed to store incoming message: {}", e)))?;
 
     Ok(())
@@ -257,6 +283,64 @@ pub fn get_pending_friend_requests(db: &Database) -> Result<Vec<PendingFriendReq
     .map_err(|e| TorrentChatError::Database(format!("Failed to collect friend requests: {}", e)))?;
 
     Ok(entries)
+}
+
+/// Get the ephemeral TTL for a conversation (None = not ephemeral)
+pub fn get_conversation_ephemeral_ttl(db: &Database, conversation_id: i64) -> Result<Option<i64>> {
+    let result: rusqlite::Result<Option<i64>> = db.connection().query_row(
+        "SELECT ephemeral_ttl FROM conversations WHERE id = ?1",
+        params![conversation_id],
+        |row| row.get(0),
+    );
+
+    match result {
+        Ok(ttl) => Ok(ttl),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(TorrentChatError::Database(format!("Failed to get ephemeral TTL: {}", e))),
+    }
+}
+
+/// Set the ephemeral TTL for a conversation (None = disable)
+pub fn set_conversation_ephemeral_ttl(db: &Database, conversation_id: i64, ttl: Option<i64>) -> Result<()> {
+    db.connection().execute(
+        "UPDATE conversations SET ephemeral_ttl = ?1, is_ephemeral = ?2 WHERE id = ?3",
+        params![ttl, ttl.is_some() as i32, conversation_id],
+    ).map_err(|e| TorrentChatError::Database(format!("Failed to set ephemeral TTL: {}", e)))?;
+
+    Ok(())
+}
+
+/// Set expires_at for unread ephemeral messages when conversation is read
+pub fn activate_ephemeral_timers(db: &Database, conversation_id: i64) -> Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    db.connection().execute(
+        "UPDATE messages SET expires_at = ?1 + ephemeral_ttl
+         WHERE conversation_id = ?2
+         AND ephemeral_ttl IS NOT NULL
+         AND expires_at IS NULL",
+        params![now, conversation_id],
+    ).map_err(|e| TorrentChatError::Database(format!("Failed to activate timers: {}", e)))?;
+
+    Ok(())
+}
+
+/// Delete expired ephemeral messages
+pub fn cleanup_expired_messages(db: &Database) -> Result<i64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let deleted = db.connection().execute(
+        "DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at < ?1",
+        params![now],
+    ).map_err(|e| TorrentChatError::Database(format!("Failed to cleanup expired: {}", e)))? as i64;
+
+    Ok(deleted)
 }
 
 #[cfg(test)]
@@ -422,6 +506,71 @@ mod tests {
 
         let requests = get_pending_friend_requests(&db).unwrap();
         assert_eq!(requests.len(), 0);
+    }
+
+    #[test]
+    fn test_ephemeral_ttl_set_and_get() {
+        let (db, _temp) = setup_test_db();
+        let conv_id = get_or_create_conversation(&db, 1).unwrap();
+
+        // Initially no TTL
+        assert_eq!(get_conversation_ephemeral_ttl(&db, conv_id).unwrap(), None);
+
+        // Set TTL
+        set_conversation_ephemeral_ttl(&db, conv_id, Some(300)).unwrap();
+        assert_eq!(get_conversation_ephemeral_ttl(&db, conv_id).unwrap(), Some(300));
+
+        // Disable
+        set_conversation_ephemeral_ttl(&db, conv_id, None).unwrap();
+        assert_eq!(get_conversation_ephemeral_ttl(&db, conv_id).unwrap(), None);
+    }
+
+    #[test]
+    fn test_cleanup_expired_messages() {
+        let (db, _temp) = setup_test_db();
+        let conv_id = get_or_create_conversation(&db, 1).unwrap();
+
+        store_outgoing_message(&db, conv_id, "me.onion", "will expire", "msg-exp").unwrap();
+        store_outgoing_message(&db, conv_id, "me.onion", "will stay", "msg-stay").unwrap();
+
+        // Set one message to expire in the past
+        db.connection().execute(
+            "UPDATE messages SET expires_at = 1 WHERE message_id = 'msg-exp'",
+            [],
+        ).unwrap();
+
+        let deleted = cleanup_expired_messages(&db).unwrap();
+        assert_eq!(deleted, 1);
+
+        let messages = get_messages(&db, conv_id, 50, 0).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "will stay");
+    }
+
+    #[test]
+    fn test_activate_ephemeral_timers() {
+        let (db, _temp) = setup_test_db();
+        let conv_id = get_or_create_conversation(&db, 1).unwrap();
+
+        store_outgoing_message(&db, conv_id, "me.onion", "ephemeral msg", "msg-1").unwrap();
+
+        // Set ephemeral_ttl on the message but no expires_at
+        db.connection().execute(
+            "UPDATE messages SET ephemeral_ttl = 300 WHERE message_id = 'msg-1'",
+            [],
+        ).unwrap();
+
+        // Activate timers
+        activate_ephemeral_timers(&db, conv_id).unwrap();
+
+        // Check expires_at is now set
+        let expires_at: Option<i64> = db.connection().query_row(
+            "SELECT expires_at FROM messages WHERE message_id = 'msg-1'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert!(expires_at.is_some());
+        assert!(expires_at.unwrap() > 0);
     }
 
     #[test]

@@ -39,6 +39,7 @@ impl MessageSender {
                 .unwrap()
                 .as_secs() as i64,
             message_type: "text".to_string(),
+            ephemeral_ttl: None,
         };
 
         let plaintext = serde_json::to_vec(&payload)

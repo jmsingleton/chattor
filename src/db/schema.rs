@@ -1,5 +1,5 @@
 /// SQL schema for torrent-chat database
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 pub const CREATE_TABLES: &str = r#"
 -- Schema version tracking
@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     is_ephemeral INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     last_read_at INTEGER,
+    ephemeral_ttl INTEGER,
     FOREIGN KEY (friend_id) REFERENCES friends(id)
 );
 
@@ -44,6 +45,8 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL,
     timestamp INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'sent',
+    expires_at INTEGER,
+    ephemeral_ttl INTEGER,
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
 
@@ -129,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_schema_version_defined() {
-        assert_eq!(SCHEMA_VERSION, 5);
+        assert_eq!(SCHEMA_VERSION, 6);
     }
 
     #[test]

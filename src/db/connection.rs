@@ -42,6 +42,7 @@ impl Database {
                 self.migrate_to_v3()?;
                 self.migrate_to_v4()?;
                 self.migrate_to_v5()?;
+                self.migrate_to_v6()?;
             },
             Err(_) => {
                 // Fresh database - will set version after creating tables
@@ -134,6 +135,45 @@ impl Database {
                 .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
 
             info!("Migration to schema v5 complete");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate database from v5 to v6 (ephemeral messages)
+    fn migrate_to_v6(&self) -> Result<()> {
+        let version = self.get_schema_version()?;
+
+        if version < 6 {
+            info!("Migrating database to schema v6 (ephemeral messages)");
+
+            let conn = self.connection();
+
+            // Add ephemeral_ttl to conversations
+            let has_conv_col: bool = conn
+                .prepare("SELECT ephemeral_ttl FROM conversations LIMIT 0")
+                .is_ok();
+            if !has_conv_col {
+                conn.execute_batch(
+                    "ALTER TABLE conversations ADD COLUMN ephemeral_ttl INTEGER;"
+                ).map_err(|e| TorrentChatError::Database(format!("Failed to add ephemeral_ttl to conversations: {}", e)))?;
+            }
+
+            // Add expires_at and ephemeral_ttl to messages
+            let has_expires: bool = conn
+                .prepare("SELECT expires_at FROM messages LIMIT 0")
+                .is_ok();
+            if !has_expires {
+                conn.execute_batch(
+                    "ALTER TABLE messages ADD COLUMN expires_at INTEGER;
+                     ALTER TABLE messages ADD COLUMN ephemeral_ttl INTEGER;"
+                ).map_err(|e| TorrentChatError::Database(format!("Failed to add ephemeral columns to messages: {}", e)))?;
+            }
+
+            conn.execute("UPDATE schema_version SET version = 6", [])
+                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+
+            info!("Migration to schema v6 complete");
         }
 
         Ok(())

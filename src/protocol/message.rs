@@ -73,6 +73,8 @@ pub struct PlaintextPayload {
     pub content: String,
     pub sent_at: i64,
     pub message_type: String,  // "text", "typing_indicator", etc.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ephemeral_ttl: Option<i64>,  // seconds until deletion after read
 }
 
 #[cfg(test)]
@@ -130,6 +132,7 @@ mod tests {
             content: "Hello, Bob!".to_string(),
             sent_at: 1234567890,
             message_type: "text".to_string(),
+            ephemeral_ttl: None,
         };
 
         let json = serde_json::to_string(&payload).unwrap();

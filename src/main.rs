@@ -67,11 +67,16 @@ async fn main() -> Result<()> {
         });
         let tor_connected = app_lock.tor_client.is_some();
 
-        // Load messages for selected conversation
-        let messages = if let AppState::Normal { conversation_id: Some(conv_id), .. } = &app_state {
-            db::queries::get_messages(&app_lock.db, *conv_id, 100, 0).unwrap_or_default()
+        // Cleanup expired ephemeral messages
+        db::queries::cleanup_expired_messages(&app_lock.db).ok();
+
+        // Load messages and ephemeral TTL for selected conversation
+        let (messages, conversation_ephemeral_ttl) = if let AppState::Normal { conversation_id: Some(conv_id), .. } = &app_state {
+            let msgs = db::queries::get_messages(&app_lock.db, *conv_id, 100, 0).unwrap_or_default();
+            let ttl = db::queries::get_conversation_ephemeral_ttl(&app_lock.db, *conv_id).unwrap_or(None);
+            (msgs, ttl)
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
 
         // Release lock before rendering
@@ -84,6 +89,7 @@ async fn main() -> Result<()> {
             friend_code,
             tor_connected,
             pending_request_count,
+            conversation_ephemeral_ttl,
         };
 
         // Render current state
@@ -200,6 +206,7 @@ async fn main() -> Result<()> {
 
                                 if conv_id > 0 {
                                     db::queries::mark_conversation_read(&app_lock.db, conv_id).ok();
+                                    db::queries::activate_ephemeral_timers(&app_lock.db, conv_id).ok();
                                 }
 
                                 if let AppState::Normal { conversation_id, .. } = &mut app_state {
@@ -227,9 +234,12 @@ async fn main() -> Result<()> {
                                         .unwrap_or_default();
                                     let msg_id = uuid::Uuid::new_v4().to_string();
 
+                                    // Check ephemeral TTL for this conversation
+                                    let conv_ttl = db::queries::get_conversation_ephemeral_ttl(&app_lock.db, conv_id).unwrap_or(None);
+
                                     // Store locally first
-                                    db::queries::store_outgoing_message(
-                                        &app_lock.db, conv_id, &own_onion, &content, &msg_id
+                                    db::queries::store_outgoing_message_with_ttl(
+                                        &app_lock.db, conv_id, &own_onion, &content, &msg_id, conv_ttl
                                     ).ok();
 
                                     // Encrypt the message using Signal session
@@ -245,6 +255,7 @@ async fn main() -> Result<()> {
                                                         .unwrap_or_default()
                                                         .as_secs() as i64,
                                                     message_type: "text".to_string(),
+                                                    ephemeral_ttl: conv_ttl,
                                                 };
                                                 let plaintext = serde_json::to_vec(&payload).ok();
                                                 match plaintext {
@@ -294,6 +305,11 @@ async fn main() -> Result<()> {
                                 }
                             }
 
+                            drop(app_lock);
+                        }
+                        Some(AppAction::SetEphemeralTtl(conv_id, ttl)) => {
+                            let app_lock = app.lock().await;
+                            db::queries::set_conversation_ephemeral_ttl(&app_lock.db, conv_id, ttl).ok();
                             drop(app_lock);
                         }
                         Some(AppAction::Quit) => break Ok(()),
@@ -604,7 +620,7 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
 
             // Decrypt the message using Signal session
             let store = crypto::SessionStore::new(&app.db);
-            let content = match store.load_session(from_onion)? {
+            let (content, ephemeral_ttl) = match store.load_session(from_onion)? {
                 Some(mut session) => {
                     let ciphertext = base64::decode(&text_msg.signal_ciphertext)
                         .map_err(|e| error::TorrentChatError::Crypto(
@@ -616,7 +632,7 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
                         .map_err(|e| error::TorrentChatError::Crypto(
                             format!("Failed to parse payload: {}", e)
                         ))?;
-                    payload.content
+                    (payload.content, payload.ephemeral_ttl)
                 }
                 None => {
                     eprintln!("No session for {}, cannot decrypt", from_onion);
@@ -627,7 +643,7 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
             // Find friend and conversation
             if let Some(friend_id) = db::queries::find_friend_by_onion(&app.db, from_onion)? {
                 let conv_id = db::queries::get_or_create_conversation(&app.db, friend_id)?;
-                db::queries::store_incoming_message(&app.db, conv_id, from_onion, &content, &msg_id)?;
+                db::queries::store_incoming_message_with_ttl(&app.db, conv_id, from_onion, &content, &msg_id, ephemeral_ttl)?;
             }
         }
         protocol::message::Message::DeliveryReceipt(_) => {

@@ -31,6 +31,10 @@ pub enum AppState {
         friend_code: String,
         onion_address: String,
     },
+    SettingEphemeral {
+        conversation_id: i64,
+        selected_idx: usize,
+    },
 }
 
 impl Default for AppState {
@@ -53,6 +57,7 @@ pub enum AppAction {
     RejectFriendRequest(i64),
     SelectFriend(usize),
     SendMessage(String),
+    SetEphemeralTtl(i64, Option<i64>), // (conversation_id, ttl_seconds or None for off)
     ViewMyIdentity,
     ViewFriendRequests,
     Quit,
@@ -68,6 +73,7 @@ impl AppState {
         match self {
             AppState::Normal {
                 selected_friend_idx,
+                conversation_id,
                 input,
                 cursor,
                 input_focused,
@@ -130,6 +136,15 @@ impl AppState {
                         }
                         KeyCode::Char('i') => Ok(Some(AppAction::ViewMyIdentity)),
                         KeyCode::Char('f') => Ok(Some(AppAction::ViewFriendRequests)),
+                        KeyCode::Char('e') => {
+                            if let Some(conv_id) = *conversation_id {
+                                *self = AppState::SettingEphemeral {
+                                    conversation_id: conv_id,
+                                    selected_idx: 0,
+                                };
+                            }
+                            Ok(None)
+                        }
                         KeyCode::Tab => {
                             if selected_friend_idx.is_none() {
                                 *selected_friend_idx = Some(0);
@@ -286,6 +301,41 @@ impl AppState {
             AppState::ViewingMyIdentity { .. } => {
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('i') => {
+                        *self = AppState::default();
+                        Ok(None)
+                    }
+                    _ => Ok(None),
+                }
+            }
+
+            AppState::SettingEphemeral { conversation_id, selected_idx } => {
+                match key.code {
+                    KeyCode::Up => {
+                        if *selected_idx > 0 {
+                            *selected_idx -= 1;
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Down => {
+                        if *selected_idx < 4 {
+                            *selected_idx += 1;
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Enter => {
+                        let conv_id = *conversation_id;
+                        let ttl = match *selected_idx {
+                            0 => None,
+                            1 => Some(300),
+                            2 => Some(3600),
+                            3 => Some(86400),
+                            4 => Some(604800),
+                            _ => None,
+                        };
+                        *self = AppState::default();
+                        Ok(Some(AppAction::SetEphemeralTtl(conv_id, ttl)))
+                    }
+                    KeyCode::Esc => {
                         *self = AppState::default();
                         Ok(None)
                     }
@@ -669,5 +719,76 @@ mod tests {
             }
             _ => panic!("Expected Normal state"),
         }
+    }
+
+    #[test]
+    fn test_ephemeral_hotkey_with_conversation() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: Some(1),
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        let key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE);
+        let action = state.handle_key(key).unwrap();
+        assert!(action.is_none());
+        match &state {
+            AppState::SettingEphemeral { conversation_id, selected_idx } => {
+                assert_eq!(*conversation_id, 1);
+                assert_eq!(*selected_idx, 0);
+            }
+            _ => panic!("Expected SettingEphemeral state"),
+        }
+    }
+
+    #[test]
+    fn test_ephemeral_hotkey_without_conversation() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        let key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE);
+        let action = state.handle_key(key).unwrap();
+        assert!(action.is_none());
+        assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn test_ephemeral_selection() {
+        let mut state = AppState::SettingEphemeral {
+            conversation_id: 42,
+            selected_idx: 0,
+        };
+        // Down twice to select "1 hour" (index 2)
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        match &state {
+            AppState::SettingEphemeral { selected_idx, .. } => {
+                assert_eq!(*selected_idx, 2);
+            }
+            _ => panic!("Expected SettingEphemeral state"),
+        }
+        // Enter to confirm
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        assert_eq!(action, Some(AppAction::SetEphemeralTtl(42, Some(3600))));
+        assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn test_ephemeral_escape() {
+        let mut state = AppState::SettingEphemeral {
+            conversation_id: 42,
+            selected_idx: 2,
+        };
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let action = state.handle_key(key).unwrap();
+        assert!(action.is_none());
+        assert!(matches!(state, AppState::Normal { .. }));
     }
 }

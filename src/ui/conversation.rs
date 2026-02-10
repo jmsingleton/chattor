@@ -15,8 +15,18 @@ pub fn render_conversation(
     messages: &[ChatMessage],
     own_onion: Option<&str>,
     scroll_offset: usize,
+    ephemeral_ttl: Option<i64>,
 ) {
+    let title = if let (Some(friend_entry), Some(ttl)) = (friend, ephemeral_ttl) {
+        format!(" {} [⏱ {}] ", friend_entry.display(), format_ttl(ttl))
+    } else if let Some(friend_entry) = friend {
+        format!(" {} ", friend_entry.display())
+    } else {
+        String::new()
+    };
+
     let block = Block::default()
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
@@ -104,7 +114,8 @@ fn render_messages(
         ]));
 
         // Content line
-        lines.push(Line::from(Span::raw(format!("  {}", msg.content))));
+        let content_prefix = if msg.ephemeral_ttl.is_some() { "  ⏱ " } else { "  " };
+        lines.push(Line::from(Span::raw(format!("{}{}", content_prefix, msg.content))));
 
         // Blank line between messages
         lines.push(Line::from(""));
@@ -228,6 +239,19 @@ pub fn render_input(
         .style(Style::default().fg(if focused { Color::White } else { Color::DarkGray }));
 
     f.render_widget(widget, area);
+}
+
+/// Format TTL for display (e.g., 300 -> "5m", 3600 -> "1h")
+fn format_ttl(seconds: i64) -> String {
+    if seconds < 60 {
+        format!("{}s", seconds)
+    } else if seconds < 3600 {
+        format!("{}m", seconds / 60)
+    } else if seconds < 86400 {
+        format!("{}h", seconds / 3600)
+    } else {
+        format!("{}d", seconds / 86400)
+    }
 }
 
 /// Format timestamp for display

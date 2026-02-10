@@ -126,6 +126,7 @@ mod tests {
             content: "Hello!".to_string(),
             sent_at: 12345,
             message_type: "text".to_string(),
+            ephemeral_ttl: None,
         };
         let ciphertext_bytes = serde_json::to_vec(&payload).unwrap();
         let ciphertext = base64::encode(&ciphertext_bytes);
@@ -184,6 +185,7 @@ mod tests {
             content: plaintext_content.to_string(),
             sent_at: 12345,
             message_type: "text".to_string(),
+            ephemeral_ttl: None,
         };
         let plaintext_bytes = serde_json::to_vec(&payload).unwrap();
         let (ciphertext, is_prekey) = alice_session.encrypt(&plaintext_bytes).unwrap();
@@ -252,6 +254,7 @@ mod tests {
             content: "First message".to_string(),
             sent_at: 12345,
             message_type: "text".to_string(),
+            ephemeral_ttl: None,
         };
         let (ciphertext1, _) = alice_session.encrypt(&serde_json::to_vec(&payload1).unwrap()).unwrap();
 
@@ -274,6 +277,7 @@ mod tests {
             content: plaintext_content.to_string(),
             sent_at: 12346,
             message_type: "text".to_string(),
+            ephemeral_ttl: None,
         };
         let (ciphertext2, is_prekey) = alice_session.encrypt(&serde_json::to_vec(&payload2).unwrap()).unwrap();
 

@@ -263,6 +263,65 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
     f.render_widget(help, chunks[6]);
 }
 
+/// Render ephemeral messages duration picker modal
+pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize) {
+    use ratatui::style::Modifier;
+    use ratatui::widgets::{List, ListItem};
+    use ratatui::text::{Line, Span};
+
+    let area = centered_rect(50, 40, f.size());
+    f.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Ephemeral Messages ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Min(0),    // List
+            Constraint::Length(1), // Controls
+        ])
+        .split(inner);
+
+    let options = ["Off", "5 minutes", "1 hour", "24 hours", "7 days"];
+
+    let items: Vec<ListItem> = options
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let is_selected = i == selected_idx;
+            let arrow = if is_selected { "\u{25b8} " } else { "  " };
+
+            let style = if is_selected {
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+
+            let line = Line::from(vec![
+                Span::raw(arrow.to_string()),
+                Span::styled(label.to_string(), style),
+            ]);
+
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items);
+    f.render_widget(list, chunks[0]);
+
+    let controls = Paragraph::new("[Enter] Select    [Esc] Cancel")
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::Gray));
+    f.render_widget(controls, chunks[1]);
+}
+
 /// Helper to center a rect
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()

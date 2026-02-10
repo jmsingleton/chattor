@@ -15,6 +15,7 @@ pub struct RenderContext {
     pub friend_code: Option<String>,
     pub tor_connected: bool,
     pub pending_request_count: i64,
+    pub conversation_ephemeral_ttl: Option<i64>,
 }
 
 /// Render the application UI based on current state
@@ -93,6 +94,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
             &ctx.messages,
             ctx.own_onion.as_deref(),
             scroll_offset,
+            ctx.conversation_ephemeral_ttl,
         );
 
         // Input
@@ -104,11 +106,12 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
     // Footer
     let footer_text = match app_state {
         AppState::Normal { input_focused: true, .. } => "[Enter] Send  [Esc] Navigation mode",
-        AppState::Normal { .. } => "[Tab/\u{2191}\u{2193}] Select friend  [Enter] Open  [a] Add  [i] Identity  [f] Requests  [q] Quit",
+        AppState::Normal { .. } => "[Tab/\u{2191}\u{2193}] Select  [Enter] Open  [a] Add  [e] Ephemeral  [i] Identity  [f] Requests  [q] Quit",
         AppState::AddingFriend { .. } => "[Enter] Send request  [Esc] Cancel",
         AppState::ViewingFriendRequests { .. } => "[\u{2191}\u{2193}] Navigate  [Enter] View  [Esc] Back",
         AppState::ViewingFriendRequest { .. } => "[A]ccept  [R]eject  [Esc] Back",
         AppState::ViewingMyIdentity { .. } => "[i/Esc] Close",
+        AppState::SettingEphemeral { .. } => "[\u{2191}\u{2193}] Select  [Enter] Confirm  [Esc] Cancel",
     };
     let footer = Paragraph::new(format!("  {}", footer_text))
         .style(Style::default().fg(Color::DarkGray));
@@ -127,6 +130,9 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         }
         AppState::ViewingMyIdentity { friend_code, onion_address } => {
             crate::ui::modals::render_identity_modal(f, friend_code, onion_address);
+        }
+        AppState::SettingEphemeral { selected_idx, .. } => {
+            crate::ui::modals::render_ephemeral_modal(f, *selected_idx);
         }
         _ => {}
     }
