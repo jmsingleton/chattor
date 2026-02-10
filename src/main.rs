@@ -25,24 +25,24 @@ use ratatui::{
 };
 use std::time::Duration;
 use std::io;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let _cli = Cli::parse();
 
-    // Initialize application
-    let app = App::new()?;
+    // Initialize application wrapped in Arc<Mutex> for sharing between threads
+    let app = Arc::new(Mutex::new(App::new()?));
 
-    // TODO: Initialize Tor in background
-    // Currently commented out because we need `app` in the main thread for UI
-    // In the future, wrap App in Arc<Mutex<App>> or Arc<RwLock<App>> for sharing
-    // tokio::spawn(async move {
-    //     println!("Bootstrapping Tor connection...");
-    //     match app.init_tor().await {
-    //         Ok(_) => println!("Tor connected!"),
-    //         Err(e) => eprintln!("Tor initialization failed: {}", e),
-    //     }
-    // });
+    // Initialize Tor in background
+    let app_tor = Arc::clone(&app);
+    tokio::spawn(async move {
+        let mut app_lock = app_tor.lock().await;
+        if let Err(e) = app_lock.init_tor().await {
+            eprintln!("Failed to initialize Tor: {}", e);
+        }
+    });
 
     // Set up terminal
     enable_raw_mode()?;
@@ -56,12 +56,19 @@ async fn main() -> Result<()> {
 
     // Main event loop
     let result = loop {
+        // Lock app for rendering (need to do this outside the draw closure since it's async)
+        let app_lock = app.lock().await;
+
         // Render current state
         if let Err(e) = terminal.draw(|f| {
-            ui::render_app(f, &app_state, &app);
+            ui::render_app(f, &app_state, &*app_lock);
         }) {
+            drop(app_lock); // Release lock before breaking
             break Err(e.into());
         }
+
+        // Release lock before polling events
+        drop(app_lock);
 
         // Handle events with timeout
         if event::poll(Duration::from_millis(100))? {
