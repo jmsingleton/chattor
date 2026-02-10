@@ -297,7 +297,7 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
          VALUES (?1, ?2, ?3, 'active')",
         (
             &from_onion,
-            &from_onion[..10], // Use first 10 chars as name
+            &from_onion[..std::cmp::min(10, from_onion.len())],
             timestamp,
         ),
     ).map_err(|e| error::TorrentChatError::Database(format!("Failed to add friend: {}", e)))?;

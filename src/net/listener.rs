@@ -39,27 +39,8 @@ async fn handle_connection(
     remote_addr: String,
     tx: mpsc::Sender<IncomingMessage>,
 ) -> Result<()> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    // Read length prefix (4 bytes, big-endian)
-    let mut len_bytes = [0u8; 4];
-    stream.read_exact(&mut len_bytes).await
-        .map_err(|e| crate::error::TorrentChatError::Network(format!("Failed to read length: {}", e)))?;
-
-    let len = u32::from_be_bytes(len_bytes) as usize;
-
-    if len > 10_000_000 { // 10MB max
-        return Err(crate::error::TorrentChatError::Network("Message too large".into()));
-    }
-
-    // Read message payload
-    let mut json_bytes = vec![0u8; len];
-    stream.read_exact(&mut json_bytes).await
-        .map_err(|e| crate::error::TorrentChatError::Network(format!("Failed to read payload: {}", e)))?;
-
-    // Deserialize message
-    let message: Message = serde_json::from_slice(&json_bytes)
-        .map_err(|e| crate::error::TorrentChatError::Network(format!("Failed to parse message: {}", e)))?;
+    // Use shared framing module instead of duplicating read logic
+    let message = crate::net::framing::receive_message(&mut stream).await?;
 
     // Send to app
     tx.send(IncomingMessage { message, remote_addr }).await
