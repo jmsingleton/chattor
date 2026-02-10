@@ -71,13 +71,16 @@ fn test_message_queue_integration() {
 
 #[test]
 fn test_signal_session_creation() {
-    // Test Signal session stub
-    let session = SignalSession::new("bob.onion".to_string()).unwrap();
+    use torrent_chat::crypto::signal::PreKeyBundle;
+
+    // Test Signal session stub from PreKey bundle
+    let bundle = PreKeyBundle::generate().unwrap();
+    let mut session = SignalSession::from_prekey_bundle("bob.onion".to_string(), &bundle).unwrap();
     assert_eq!(session.remote_onion, "bob.onion");
 
     // Test encrypt/decrypt stubs
     let plaintext = b"Hello, Bob!";
-    let ciphertext = session.encrypt(plaintext).unwrap();
+    let (ciphertext, _is_prekey) = session.encrypt(plaintext).unwrap();
     let decrypted = session.decrypt(&ciphertext).unwrap();
     assert_eq!(plaintext, &decrypted[..]);
 }

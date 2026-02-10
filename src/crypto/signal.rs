@@ -9,6 +9,17 @@ pub struct PreKeyBundle {
     pub prekey: Option<PreKey>,
 }
 
+/// Private key material for X3DH key agreement
+///
+/// Contains the private keys needed to complete Signal Protocol's X3DH
+/// key agreement when receiving messages encrypted to this PreKey bundle.
+#[derive(Debug)]
+pub struct PreKeyPrivateMaterial {
+    pub identity_secret: [u8; 32],      // X25519 private key bytes
+    pub signed_prekey_secret: [u8; 32], // X25519 private key bytes
+    pub prekey_secret: Option<[u8; 32]>, // X25519 private key bytes
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedPreKey {
     pub key_id: u32,
@@ -51,7 +62,22 @@ impl PreKeyBundle {
     }
 
     /// Generate real PreKey bundle with libsignal
-    pub fn generate_real(identity: &crate::crypto::IdentityKeypair) -> Result<Self> {
+    ///
+    /// Creates a new PreKey bundle for Signal Protocol X3DH key agreement.
+    /// Generates fresh X25519 keys for identity, signed prekey, and one-time prekey.
+    ///
+    /// **Note:** Generates an independent X25519 identity key pair for Signal Protocol.
+    /// The provided Ed25519 identity is used ONLY for signing the prekey, not for
+    /// deriving the X25519 identity.
+    ///
+    /// # Arguments
+    /// * `identity` - Ed25519 identity keypair used for signing the prekey
+    ///
+    /// # Returns
+    /// A tuple of (PreKeyBundle, PreKeyPrivateMaterial):
+    /// - PreKeyBundle: Public keys for transmission to peers
+    /// - PreKeyPrivateMaterial: Private keys needed for X3DH key agreement
+    pub fn generate_real(identity: &crate::crypto::IdentityKeypair) -> Result<(Self, PreKeyPrivateMaterial)> {
         use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
         use rand::rngs::OsRng;
 
@@ -72,13 +98,20 @@ impl PreKeyBundle {
         let prekey_public = X25519PublicKey::from(&prekey_secret);
         let prekey_id = 1u32;
 
-        // Convert to our format (extract 32 bytes)
+        // Convert public keys to our format (extract 32 bytes)
         let identity_key_bytes = identity_public.as_bytes().to_vec();
         let signed_prekey_bytes = signed_prekey_public.as_bytes().to_vec();
         let prekey_bytes = prekey_public.as_bytes().to_vec();
         let signature_bytes = signature.to_bytes().to_vec();
 
-        Ok(PreKeyBundle {
+        // Store private keys as byte arrays
+        let private_material = PreKeyPrivateMaterial {
+            identity_secret: identity_secret.to_bytes(),
+            signed_prekey_secret: signed_prekey_secret.to_bytes(),
+            prekey_secret: Some(prekey_secret.to_bytes()),
+        };
+
+        let bundle = PreKeyBundle {
             identity_key: identity_key_bytes,
             signed_prekey: SignedPreKey {
                 key_id: signed_prekey_id,
@@ -89,7 +122,9 @@ impl PreKeyBundle {
                 key_id: prekey_id,
                 public_key: prekey_bytes,
             }),
-        })
+        };
+
+        Ok((bundle, private_material))
     }
 }
 
@@ -170,7 +205,7 @@ mod tests {
     #[test]
     fn test_generate_real_prekey_bundle() {
         let identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let bundle = PreKeyBundle::generate_real(&identity).unwrap();
+        let (bundle, private_material) = PreKeyBundle::generate_real(&identity).unwrap();
 
         // Real keys should be 32 bytes (Curve25519)
         assert_eq!(bundle.identity_key.len(), 32);
@@ -178,5 +213,11 @@ mod tests {
         assert_eq!(bundle.signed_prekey.signature.len(), 64);
         assert!(bundle.prekey.is_some());
         assert_eq!(bundle.prekey.as_ref().unwrap().public_key.len(), 32);
+
+        // Verify private keys are returned
+        assert_eq!(private_material.identity_secret.len(), 32);
+        assert_eq!(private_material.signed_prekey_secret.len(), 32);
+        assert!(private_material.prekey_secret.is_some());
+        assert_eq!(private_material.prekey_secret.unwrap().len(), 32);
     }
 }

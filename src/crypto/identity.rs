@@ -5,7 +5,7 @@ use crate::db::Database;
 
 /// User identity keypair (Ed25519)
 pub struct IdentityKeypair {
-    pub signing_key: SigningKey,
+    signing_key: SigningKey,
     verifying_key: VerifyingKey,
 }
 
