@@ -12,6 +12,8 @@ use ratatui::{
 };
 use std::io;
 use crate::error::Result;
+use crate::app::App;
+use super::{AppState, render_add_friend_modal, render_friend_request_modal};
 
 pub struct AppUI {
     should_quit: bool,
@@ -105,5 +107,66 @@ impl AppUI {
             .style(Style::default().fg(Color::Gray))
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(footer, chunks[2]);
+    }
+}
+
+/// Render the application UI based on current state
+pub fn render_app(f: &mut Frame, app_state: &AppState, app: &App) {
+    // Base layout
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(3),
+        ])
+        .split(f.size());
+
+    // Header - show Tor status
+    let tor_status = if app.tor_client.is_some() {
+        "Connected"
+    } else {
+        "Not Connected"
+    };
+    let header_text = format!("torrent-chat v0.1.0  [Tor: {}]", tor_status);
+    let header = Paragraph::new(header_text)
+        .style(Style::default().fg(Color::Cyan))
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(header, chunks[0]);
+
+    // Main area - base UI
+    let main_text = match app_state {
+        AppState::Normal => {
+            "Welcome to torrent-chat! (Phase 2b: Interactive UI)\n\n\
+             Press 'a' to add a friend\n\
+             Press 'q' to quit"
+        }
+        _ => "Welcome to torrent-chat!",
+    };
+    let main = Paragraph::new(main_text)
+        .style(Style::default().fg(Color::White))
+        .block(Block::default().borders(Borders::ALL).title("Welcome"));
+    f.render_widget(main, chunks[1]);
+
+    // Footer - show keyboard shortcuts based on state
+    let footer_text = match app_state {
+        AppState::Normal => "Press 'a' to add friend | 'q' or Ctrl+C to quit | Phase 2b: Interactive UI",
+        AppState::AddingFriend { .. } => "Enter friend code | [Enter] Send | [Esc] Cancel",
+        AppState::ViewingFriendRequest { .. } => "[A]ccept | [R]eject | [Esc] Back",
+    };
+    let footer = Paragraph::new(footer_text)
+        .style(Style::default().fg(Color::Gray))
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(footer, chunks[2]);
+
+    // Render modals on top if in modal state
+    match app_state {
+        AppState::AddingFriend { input, error, .. } => {
+            render_add_friend_modal(f, input, error.as_deref());
+        }
+        AppState::ViewingFriendRequest { from_onion, friend_code, .. } => {
+            render_friend_request_modal(f, from_onion, friend_code);
+        }
+        AppState::Normal => {}
     }
 }
