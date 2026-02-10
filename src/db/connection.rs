@@ -41,6 +41,7 @@ impl Database {
                 // so old tables get replaced before new indices are created
                 self.migrate_to_v3()?;
                 self.migrate_to_v4()?;
+                self.migrate_to_v5()?;
             },
             Err(_) => {
                 // Fresh database - will set version after creating tables
@@ -104,6 +105,35 @@ impl Database {
                 .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
 
             info!("Migration to schema v4 complete (old message queue replaced)");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate database from v4 to v5 (add last_read_at for unread tracking)
+    fn migrate_to_v5(&self) -> Result<()> {
+        let version = self.get_schema_version()?;
+
+        if version < 5 {
+            info!("Migrating database to schema v5 (unread tracking)");
+
+            let conn = self.connection();
+
+            // Check if column already exists (e.g. fresh DB created with latest schema)
+            let has_column: bool = conn
+                .prepare("SELECT last_read_at FROM conversations LIMIT 0")
+                .is_ok();
+
+            if !has_column {
+                conn.execute_batch(
+                    "ALTER TABLE conversations ADD COLUMN last_read_at INTEGER;"
+                ).map_err(|e| TorrentChatError::Database(format!("Failed to add last_read_at: {}", e)))?;
+            }
+
+            conn.execute("UPDATE schema_version SET version = 5", [])
+                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+
+            info!("Migration to schema v5 complete");
         }
 
         Ok(())
