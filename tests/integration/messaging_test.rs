@@ -137,3 +137,66 @@ fn test_protocol_message_serialization() {
     let deserialized: Message = serde_json::from_str(&json).unwrap();
     assert!(matches!(deserialized, Message::FriendRequest(_)));
 }
+
+#[test]
+fn test_full_conversation_flow() {
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    let db = torrent_chat::db::Database::open(temp.path()).unwrap();
+
+    // Add a friend
+    db.connection().execute(
+        "INSERT INTO friends (onion_address, display_name, added_at, status)
+         VALUES ('bob.onion', 'Bob', 1000, 'active')",
+        [],
+    ).unwrap();
+
+    // Get friends
+    let friends = torrent_chat::db::queries::get_friends_with_unread(&db).unwrap();
+    assert_eq!(friends.len(), 1);
+    assert_eq!(friends[0].display_name, Some("Bob".to_string()));
+
+    // Create conversation
+    let conv_id = torrent_chat::db::queries::get_or_create_conversation(&db, friends[0].friend_id).unwrap();
+
+    // Send a message
+    torrent_chat::db::queries::store_outgoing_message(&db, conv_id, "me.onion", "Hello Bob!", "msg-001").unwrap();
+
+    // Receive a reply
+    torrent_chat::db::queries::store_incoming_message(&db, conv_id, "bob.onion", "Hey there!", "msg-002").unwrap();
+
+    // Check messages
+    let messages = torrent_chat::db::queries::get_messages(&db, conv_id, 50, 0).unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].content, "Hello Bob!");
+    assert_eq!(messages[0].status, "sent");
+    assert_eq!(messages[1].content, "Hey there!");
+    assert_eq!(messages[1].status, "received");
+
+    // Check unread (bob's message is unread)
+    let friends = torrent_chat::db::queries::get_friends_with_unread(&db).unwrap();
+    assert_eq!(friends[0].unread_count, 1);
+
+    // Mark read
+    torrent_chat::db::queries::mark_conversation_read(&db, conv_id).unwrap();
+    let friends = torrent_chat::db::queries::get_friends_with_unread(&db).unwrap();
+    assert_eq!(friends[0].unread_count, 0);
+}
+
+#[test]
+fn test_find_friend_for_incoming_message() {
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    let db = torrent_chat::db::Database::open(temp.path()).unwrap();
+
+    // No friends yet
+    assert_eq!(torrent_chat::db::queries::find_friend_by_onion(&db, "unknown.onion").unwrap(), None);
+
+    // Add friend
+    db.connection().execute(
+        "INSERT INTO friends (onion_address, display_name, added_at, status)
+         VALUES ('alice.onion', 'Alice', 1000, 'active')",
+        [],
+    ).unwrap();
+
+    // Now findable
+    assert!(torrent_chat::db::queries::find_friend_by_onion(&db, "alice.onion").unwrap().is_some());
+}

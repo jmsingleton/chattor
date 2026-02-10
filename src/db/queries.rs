@@ -47,6 +47,7 @@ pub fn get_friends_with_unread(db: &Database) -> Result<Vec<FriendEntry>> {
                 c.id as conversation_id,
                 (SELECT COUNT(*) FROM messages m
                  WHERE m.conversation_id = c.id
+                 AND m.status = 'received'
                  AND m.timestamp > COALESCE(c.last_read_at, 0)) as unread
          FROM friends f
          LEFT JOIN conversations c ON c.friend_id = f.id
