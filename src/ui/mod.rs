@@ -1,10 +1,12 @@
 pub mod app_ui;
 pub mod bootstrap;
 pub mod modals;
+pub mod state;
 
 pub use app_ui::AppUI;
 pub use bootstrap::render_bootstrap;
 pub use modals::{render_add_friend_modal, render_friend_request_modal};
+pub use state::{AppState, AppAction};
 
 use crate::app::App;
 
