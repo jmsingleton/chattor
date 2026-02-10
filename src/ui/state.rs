@@ -82,7 +82,7 @@ impl AppState {
                     }
                     KeyCode::Enter => {
                         if input.is_empty() {
-                            *error = Some("Friend code cannot be empty".to_string());
+                            *error = Some("Please enter a .onion address".to_string());
                             Ok(None)
                         } else {
                             Ok(Some(AppAction::SendFriendRequest(input.clone())))
@@ -227,7 +227,7 @@ mod tests {
 
         if let AppState::AddingFriend { error, .. } = &state {
             assert!(error.is_some());
-            assert_eq!(error.as_ref().unwrap(), "Friend code cannot be empty");
+            assert_eq!(error.as_ref().unwrap(), "Please enter a .onion address");
         } else {
             panic!("Expected AddingFriend state");
         }

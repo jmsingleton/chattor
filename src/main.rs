@@ -75,16 +75,17 @@ async fn main() -> Result<()> {
             if let Event::Key(key) = event::read()? {
                 match app_state.handle_key(key)? {
                     Some(AppAction::SendFriendRequest(code)) => {
-                        // Lock app to send friend request
                         let app_lock = app.lock().await;
 
                         match handle_send_friend_request(&*app_lock, &code).await {
-                            Ok(_) => {
-                                // Success - return to normal
+                            Ok(SendResult::SentImmediately) => {
+                                app_state = AppState::Normal;
+                            }
+                            Ok(SendResult::Queued) => {
+                                // Show queued status briefly, then return to normal
                                 app_state = AppState::Normal;
                             }
                             Err(e) => {
-                                // Show error in the modal
                                 app_state = AppState::AddingFriend {
                                     input: code,
                                     cursor: 0,
@@ -140,37 +141,45 @@ async fn main() -> Result<()> {
 }
 
 /// Handle sending a friend request
-async fn handle_send_friend_request(app: &App, friend_code: &str) -> Result<()> {
-    use crate::protocol::friend_code::validate_friend_code;
+async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendResult> {
     use crate::protocol::friend_request::FriendRequestHandler;
 
-    // Validate friend code format
-    validate_friend_code(friend_code)?;
+    // For MVP: peer_input is a .onion address directly
+    // Validate it looks like a .onion address
+    let peer_onion = peer_input.trim();
+    if !peer_onion.ends_with(".onion") {
+        return Err(error::TorrentChatError::Tor(
+            "Please enter a .onion address (e.g., abc123.onion)".into()
+        ));
+    }
 
-    // Get our .onion address (need Tor to be initialized)
+    // Get our .onion address
     let own_onion = app.onion_address.as_ref()
         .ok_or_else(|| error::TorrentChatError::Tor("Tor not initialized yet".into()))?;
 
-    // Create the friend request message (static method, doesn't need handler instance)
-    let _request_msg = FriendRequestHandler::create_request(
+    // Generate our own friend code to include in the request
+    let own_friend_code = crate::tor::address::onion_to_friend_code(own_onion)
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    // Create friend request message
+    let request_msg = FriendRequestHandler::create_request(
         &app.identity,
         own_onion,
-        friend_code,
+        &own_friend_code,
     )?;
 
-    // TODO: Send the request over Tor connection to the peer
-    // For MVP, we'll just pretend it was sent successfully
-    // In production:
-    // 1. Convert friend_code to .onion address
-    // 2. Connect to peer via Tor
-    // 3. Send the friend request message
-    // 4. Wait for response or queue for later delivery
+    // Wrap in Message enum
+    let message = protocol::message::Message::FriendRequest(request_msg);
 
-    // For now, just show success
-    eprintln!("Friend request created for {}", friend_code);
-    eprintln!("(TODO: Actually send over Tor connection)");
-
-    Ok(())
+    // Try direct send, queue on failure
+    match try_send_direct(app, peer_onion, &message).await {
+        Ok(_) => Ok(SendResult::SentImmediately),
+        Err(_) => {
+            // Queue for background delivery
+            app.message_queue.enqueue(&app.db, peer_onion, &message, "high")?;
+            Ok(SendResult::Queued)
+        }
+    }
 }
 
 /// Handle accepting a friend request
