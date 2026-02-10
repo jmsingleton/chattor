@@ -49,24 +49,32 @@ fn test_address_mapping_roundtrip() {
 
 #[test]
 fn test_message_queue_integration() {
+    use torrent_chat::protocol::message::{Message, FriendRequestMessage};
+
     let db = setup_test_db();
     let queue = MessageQueue::new();
 
-    // Enqueue a message
-    let encrypted = b"encrypted message content";
-    let queue_id = queue.enqueue(&db, "alice.onion", 1, encrypted).unwrap();
+    // Create a protocol message to enqueue
+    let msg = Message::FriendRequest(FriendRequestMessage {
+        from_onion: "alice.onion".to_string(),
+        from_friendcode: "ALICE-1234".to_string(),
+        timestamp: 1234567890,
+        signature: "sig123".to_string(),
+    });
+
+    let queue_id = queue.enqueue(&db, "alice.onion", &msg, "normal").unwrap();
     assert!(queue_id > 0);
 
-    // Retrieve queued messages
-    let messages = queue.get_queued(&db, "alice.onion").unwrap();
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].to_onion, "alice.onion");
-    assert_eq!(messages[0].encrypted_message, encrypted);
+    // Retrieve queued messages (use far-future timestamp so it's due)
+    let pending = queue.get_pending_messages(&db, i64::MAX).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].peer_onion, "alice.onion");
+    assert_eq!(pending[0].priority, "normal");
 
-    // Remove message
-    queue.remove(&db, queue_id).unwrap();
-    let messages = queue.get_queued(&db, "alice.onion").unwrap();
-    assert_eq!(messages.len(), 0);
+    // Mark as delivered
+    queue.mark_delivered(&db, queue_id).unwrap();
+    let pending = queue.get_pending_messages(&db, i64::MAX).unwrap();
+    assert_eq!(pending.len(), 0);
 }
 
 #[test]

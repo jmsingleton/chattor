@@ -1,20 +1,21 @@
 //! Message Queue for Offline Delivery
 //!
-//! Manages queued messages that couldn't be delivered immediately.
+//! General-purpose outgoing message queue that serializes protocol Messages
+//! as JSON and persists them in the database for reliable delivery.
 
 use crate::db::Database;
 use crate::error::{Result, TorrentChatError};
-use chrono::Utc;
+use crate::protocol::message::Message;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Represents a queued message awaiting delivery
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct QueuedMessage {
     pub id: i64,
-    pub to_onion: String,
-    pub conversation_id: i64,
-    pub encrypted_message: Vec<u8>,
-    pub retry_count: i32,
-    pub max_retries: i32,
+    pub peer_onion: String,
+    pub message: Message,
+    pub retry_count: i64,
+    pub priority: String,
 }
 
 /// Message queue for managing offline message delivery
@@ -28,21 +29,29 @@ impl MessageQueue {
 
     /// Add a message to the delivery queue
     ///
-    /// Returns the queue ID of the newly inserted message
+    /// Serializes the message to JSON and inserts it into the message_queue table.
+    /// Returns the queue ID of the newly inserted row.
     pub fn enqueue(
         &self,
         db: &Database,
-        to_onion: &str,
-        conversation_id: i64,
-        encrypted_message: &[u8],
+        peer_onion: &str,
+        message: &Message,
+        priority: &str,
     ) -> Result<i64> {
         let conn = db.connection();
-        let now = Utc::now().timestamp();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let message_json = serde_json::to_string(message).map_err(|e| {
+            TorrentChatError::Database(format!("Failed to serialize message: {}", e))
+        })?;
 
         conn.execute(
-            "INSERT INTO message_queue (to_onion, conversation_id, encrypted_message, created_at, retry_count, max_retries)
-             VALUES (?1, ?2, ?3, ?4, 0, 50)",
-            rusqlite::params![to_onion, conversation_id, encrypted_message, now],
+            "INSERT INTO message_queue (peer_onion, message_json, priority, retry_count, next_retry_at, created_at, status)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5, 'pending')",
+            rusqlite::params![peer_onion, message_json, priority, now, now],
         )
         .map_err(|e| TorrentChatError::Database(format!("Failed to enqueue message: {}", e)))?;
 
@@ -50,225 +59,307 @@ impl MessageQueue {
         Ok(id)
     }
 
-    /// Get all messages pending delivery to a specific peer
-    pub fn get_queued(&self, db: &Database, to_onion: &str) -> Result<Vec<QueuedMessage>> {
+    /// Get all pending messages that are due for delivery
+    ///
+    /// Returns messages where status = 'pending' and next_retry_at <= now,
+    /// ordered by priority (high before normal), then created_at ASC (FIFO).
+    pub fn get_pending_messages(
+        &self,
+        db: &Database,
+        now: i64,
+    ) -> Result<Vec<QueuedMessage>> {
         let conn = db.connection();
         let mut stmt = conn
             .prepare(
-                "SELECT id, to_onion, conversation_id, encrypted_message, retry_count, max_retries
+                "SELECT id, peer_onion, message_json, retry_count, priority
                  FROM message_queue
-                 WHERE to_onion = ?1 AND retry_count < max_retries
-                 ORDER BY created_at ASC",
+                 WHERE status = 'pending' AND next_retry_at <= ?1
+                 ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at ASC",
             )
-            .map_err(|e| TorrentChatError::Database(format!("Failed to prepare statement: {}", e)))?;
+            .map_err(|e| {
+                TorrentChatError::Database(format!("Failed to prepare statement: {}", e))
+            })?;
 
-        let messages = stmt
-            .query_map([to_onion], |row| {
-                Ok(QueuedMessage {
-                    id: row.get(0)?,
-                    to_onion: row.get(1)?,
-                    conversation_id: row.get(2)?,
-                    encrypted_message: row.get(3)?,
-                    retry_count: row.get(4)?,
-                    max_retries: row.get(5)?,
-                })
+        // Collect raw rows first, then deserialize outside of query_map
+        // to avoid issues with serde_json errors inside rusqlite callbacks.
+        let raw_rows: Vec<(i64, String, String, i64, String)> = stmt
+            .query_map([now], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
             })
-            .map_err(|e| TorrentChatError::Database(format!("Failed to query messages: {}", e)))?
+            .map_err(|e| {
+                TorrentChatError::Database(format!("Failed to query messages: {}", e))
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| TorrentChatError::Database(format!("Failed to collect messages: {}", e)))?;
+            .map_err(|e| {
+                TorrentChatError::Database(format!("Failed to collect messages: {}", e))
+            })?;
+
+        let mut messages = Vec::with_capacity(raw_rows.len());
+        for (id, peer_onion, message_json, retry_count, priority) in raw_rows {
+            let message: Message = serde_json::from_str(&message_json).map_err(|e| {
+                TorrentChatError::Database(format!(
+                    "Failed to deserialize message_json for queue id {}: {}",
+                    id, e
+                ))
+            })?;
+            messages.push(QueuedMessage {
+                id,
+                peer_onion,
+                message,
+                retry_count,
+                priority,
+            });
+        }
 
         Ok(messages)
     }
 
-    /// Mark a message as successfully delivered and remove from queue
-    pub fn remove(&self, db: &Database, id: i64) -> Result<()> {
+    /// Mark a queued message as successfully delivered
+    pub fn mark_delivered(&self, db: &Database, id: i64) -> Result<()> {
         let conn = db.connection();
-        conn.execute("DELETE FROM message_queue WHERE id = ?1", [id])
-            .map_err(|e| {
-                TorrentChatError::Database(format!("Failed to remove message from queue: {}", e))
-            })?;
-        Ok(())
-    }
-
-    /// Increment retry count for a failed delivery attempt
-    pub fn increment_retry(&self, db: &Database, id: i64) -> Result<()> {
-        let conn = db.connection();
-        let now = Utc::now().timestamp();
-
         conn.execute(
-            "UPDATE message_queue SET retry_count = retry_count + 1, last_retry_at = ?1 WHERE id = ?2",
-            rusqlite::params![now, id],
+            "UPDATE message_queue SET status = 'delivered' WHERE id = ?1",
+            [id],
         )
         .map_err(|e| {
-            TorrentChatError::Database(format!("Failed to increment retry count: {}", e))
+            TorrentChatError::Database(format!("Failed to mark message delivered: {}", e))
         })?;
-
         Ok(())
     }
-}
 
-impl Default for MessageQueue {
-    fn default() -> Self {
-        Self::new()
+    /// Mark a queued message as permanently failed
+    pub fn mark_failed(&self, db: &Database, id: i64) -> Result<()> {
+        let conn = db.connection();
+        conn.execute(
+            "UPDATE message_queue SET status = 'failed' WHERE id = ?1",
+            [id],
+        )
+        .map_err(|e| {
+            TorrentChatError::Database(format!("Failed to mark message failed: {}", e))
+        })?;
+        Ok(())
+    }
+
+    /// Schedule a retry for a queued message
+    ///
+    /// Increments the retry_count and sets the next_retry_at timestamp.
+    pub fn schedule_retry(
+        &self,
+        db: &Database,
+        id: i64,
+        next_retry_at: i64,
+    ) -> Result<()> {
+        let conn = db.connection();
+        conn.execute(
+            "UPDATE message_queue SET retry_count = retry_count + 1, next_retry_at = ?1 WHERE id = ?2",
+            rusqlite::params![next_retry_at, id],
+        )
+        .map_err(|e| {
+            TorrentChatError::Database(format!("Failed to schedule retry: {}", e))
+        })?;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use crate::db::Database;
+    use crate::protocol::message::{FriendRequestMessage, Message};
+    use tempfile::NamedTempFile;
 
-    fn setup_test_db() -> Database {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(crate::db::schema::CREATE_TABLES)
-            .unwrap();
-        // Need to create a conversation first
-        conn.execute(
-            "INSERT INTO friends (onion_address, added_at, status) VALUES ('test.onion', 0, 'active')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO conversations (friend_id, is_ephemeral, created_at) VALUES (1, 0, 0)",
-            [],
-        )
-        .unwrap();
-        Database::from_connection(conn)
+    fn setup_test_db() -> (NamedTempFile, Database) {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+        // No need to create friends/conversations since the new queue has no foreign keys
+        (temp, db)
+    }
+
+    fn create_test_message() -> Message {
+        Message::FriendRequest(FriendRequestMessage {
+            from_onion: "test.onion".to_string(),
+            from_friendcode: "test-code".to_string(),
+            timestamp: 123456,
+            signature: "sig".to_string(),
+        })
     }
 
     #[test]
     fn test_enqueue_message() {
-        let db = setup_test_db();
+        let (_temp, db) = setup_test_db();
         let queue = MessageQueue::new();
+        let msg = create_test_message();
 
-        let id = queue
-            .enqueue(&db, "test.onion", 1, b"encrypted data")
-            .unwrap();
-
+        let id = queue.enqueue(&db, "peer.onion", &msg, "normal").unwrap();
         assert!(id > 0);
-    }
 
-    #[test]
-    fn test_get_queued_messages() {
-        let db = setup_test_db();
-        let queue = MessageQueue::new();
-
-        // Enqueue two messages
-        let id1 = queue
-            .enqueue(&db, "test.onion", 1, b"message 1")
-            .unwrap();
-        let id2 = queue
-            .enqueue(&db, "test.onion", 1, b"message 2")
-            .unwrap();
-
-        let messages = queue.get_queued(&db, "test.onion").unwrap();
-
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].id, id1);
-        assert_eq!(messages[0].to_onion, "test.onion");
-        assert_eq!(messages[0].conversation_id, 1);
-        assert_eq!(messages[0].encrypted_message, b"message 1");
-        assert_eq!(messages[0].retry_count, 0);
-        assert_eq!(messages[0].max_retries, 50);
-
-        assert_eq!(messages[1].id, id2);
-        assert_eq!(messages[1].encrypted_message, b"message 2");
-    }
-
-    #[test]
-    fn test_get_queued_filters_by_onion() {
-        let db = setup_test_db();
-        let queue = MessageQueue::new();
-
-        // Add another friend
-        db.connection()
-            .execute(
-                "INSERT INTO friends (onion_address, added_at, status) VALUES ('other.onion', 0, 'active')",
-                [],
+        // Verify the row exists in the database
+        let count: i64 = db
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM message_queue WHERE id = ?1",
+                [id],
+                |row| row.get(0),
             )
             .unwrap();
-
-        queue.enqueue(&db, "test.onion", 1, b"message 1").unwrap();
-        queue.enqueue(&db, "other.onion", 1, b"message 2").unwrap();
-
-        let messages = queue.get_queued(&db, "test.onion").unwrap();
-
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].to_onion, "test.onion");
-        assert_eq!(messages[0].encrypted_message, b"message 1");
+        assert_eq!(count, 1);
     }
 
     #[test]
-    fn test_remove_message() {
-        let db = setup_test_db();
+    fn test_get_pending_messages() {
+        let (_temp, db) = setup_test_db();
         let queue = MessageQueue::new();
+        let msg = create_test_message();
 
-        let id = queue
-            .enqueue(&db, "test.onion", 1, b"message 1")
-            .unwrap();
+        // Enqueue a message (created_at and next_retry_at will be "now")
+        let id = queue.enqueue(&db, "peer.onion", &msg, "normal").unwrap();
 
-        queue.remove(&db, id).unwrap();
+        // Retrieve with a timestamp far in the future so it's definitely due
+        let future = i64::MAX;
+        let pending = queue.get_pending_messages(&db, future).unwrap();
 
-        let messages = queue.get_queued(&db, "test.onion").unwrap();
-        assert_eq!(messages.len(), 0);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, id);
+        assert_eq!(pending[0].peer_onion, "peer.onion");
+        assert_eq!(pending[0].retry_count, 0);
+        assert_eq!(pending[0].priority, "normal");
     }
 
     #[test]
-    fn test_increment_retry() {
-        let db = setup_test_db();
+    fn test_mark_delivered() {
+        let (_temp, db) = setup_test_db();
         let queue = MessageQueue::new();
+        let msg = create_test_message();
 
-        let id = queue
-            .enqueue(&db, "test.onion", 1, b"message 1")
+        let id = queue.enqueue(&db, "peer.onion", &msg, "normal").unwrap();
+
+        // Mark as delivered
+        queue.mark_delivered(&db, id).unwrap();
+
+        // Verify status changed
+        let status: String = db
+            .connection()
+            .query_row(
+                "SELECT status FROM message_queue WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
             .unwrap();
+        assert_eq!(status, "delivered");
 
-        queue.increment_retry(&db, id).unwrap();
-
-        let messages = queue.get_queued(&db, "test.onion").unwrap();
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].retry_count, 1);
+        // Should no longer appear in pending
+        let pending = queue.get_pending_messages(&db, i64::MAX).unwrap();
+        assert_eq!(pending.len(), 0);
     }
 
     #[test]
-    fn test_max_retries_filters_messages() {
-        let db = setup_test_db();
+    fn test_schedule_retry() {
+        let (_temp, db) = setup_test_db();
         let queue = MessageQueue::new();
+        let msg = create_test_message();
 
-        let id = queue
-            .enqueue(&db, "test.onion", 1, b"message 1")
+        let id = queue.enqueue(&db, "peer.onion", &msg, "normal").unwrap();
+
+        // Schedule a retry with a future timestamp
+        let future_time = 9999999999i64;
+        queue.schedule_retry(&db, id, future_time).unwrap();
+
+        // Verify retry_count incremented
+        let retry_count: i64 = db
+            .connection()
+            .query_row(
+                "SELECT retry_count FROM message_queue WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
             .unwrap();
+        assert_eq!(retry_count, 1);
 
-        // Increment retry count to max (50 times)
-        for _ in 0..50 {
-            queue.increment_retry(&db, id).unwrap();
-        }
-
-        // Message should no longer appear in get_queued
-        let messages = queue.get_queued(&db, "test.onion").unwrap();
-        assert_eq!(messages.len(), 0);
+        // Verify next_retry_at updated
+        let next_retry: i64 = db
+            .connection()
+            .query_row(
+                "SELECT next_retry_at FROM message_queue WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(next_retry, future_time);
     }
 
     #[test]
-    fn test_fifo_ordering() {
-        let db = setup_test_db();
+    fn test_mark_failed() {
+        let (_temp, db) = setup_test_db();
         let queue = MessageQueue::new();
+        let msg = create_test_message();
 
-        // Enqueue three messages
-        let id1 = queue
-            .enqueue(&db, "test.onion", 1, b"first")
-            .unwrap();
-        let id2 = queue
-            .enqueue(&db, "test.onion", 1, b"second")
-            .unwrap();
-        let id3 = queue
-            .enqueue(&db, "test.onion", 1, b"third")
-            .unwrap();
+        let id = queue.enqueue(&db, "peer.onion", &msg, "normal").unwrap();
 
-        let messages = queue.get_queued(&db, "test.onion").unwrap();
+        // Mark as failed
+        queue.mark_failed(&db, id).unwrap();
 
-        assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0].id, id1);
-        assert_eq!(messages[1].id, id2);
-        assert_eq!(messages[2].id, id3);
+        // Verify status changed
+        let status: String = db
+            .connection()
+            .query_row(
+                "SELECT status FROM message_queue WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "failed");
+
+        // Should no longer appear in pending
+        let pending = queue.get_pending_messages(&db, i64::MAX).unwrap();
+        assert_eq!(pending.len(), 0);
+    }
+
+    #[test]
+    fn test_priority_ordering() {
+        let (_temp, db) = setup_test_db();
+        let queue = MessageQueue::new();
+        let msg = create_test_message();
+
+        // Enqueue normal priority first, then high priority
+        let id_normal = queue.enqueue(&db, "peer.onion", &msg, "normal").unwrap();
+        let id_high = queue.enqueue(&db, "peer.onion", &msg, "high").unwrap();
+
+        let pending = queue.get_pending_messages(&db, i64::MAX).unwrap();
+
+        assert_eq!(pending.len(), 2);
+        // High priority messages come first
+        assert_eq!(pending[0].id, id_high);
+        assert_eq!(pending[0].priority, "high");
+        assert_eq!(pending[1].id, id_normal);
+        assert_eq!(pending[1].priority, "normal");
+    }
+
+    #[test]
+    fn test_pending_only_returns_due_messages() {
+        let (_temp, db) = setup_test_db();
+        let queue = MessageQueue::new();
+        let msg = create_test_message();
+
+        // Enqueue a message
+        let id = queue.enqueue(&db, "peer.onion", &msg, "normal").unwrap();
+
+        // Schedule a retry far in the future
+        let far_future = 9999999999i64;
+        queue.schedule_retry(&db, id, far_future).unwrap();
+
+        // Query with a timestamp before the retry time -- should get nothing
+        let pending = queue.get_pending_messages(&db, 1000).unwrap();
+        assert_eq!(pending.len(), 0);
+
+        // Query with a timestamp at or after the retry time -- should get the message
+        let pending = queue.get_pending_messages(&db, far_future).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, id);
     }
 }
