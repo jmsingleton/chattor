@@ -16,11 +16,16 @@ pub enum AppState {
         cursor: usize,
         error: Option<String>,
     },
+    ViewingFriendRequests {
+        requests: Vec<crate::db::queries::PendingFriendRequest>,
+        selected_idx: usize,
+    },
     ViewingFriendRequest {
         request_id: i64,
         from_onion: String,
         friend_code: String,
         timestamp: i64,
+        return_to_list: bool,
     },
     ViewingMyIdentity {
         friend_code: String,
@@ -49,6 +54,7 @@ pub enum AppAction {
     SelectFriend(usize),
     SendMessage(String),
     ViewMyIdentity,
+    ViewFriendRequests,
     Quit,
 }
 
@@ -123,6 +129,7 @@ impl AppState {
                             Ok(None)
                         }
                         KeyCode::Char('i') => Ok(Some(AppAction::ViewMyIdentity)),
+                        KeyCode::Char('f') => Ok(Some(AppAction::ViewFriendRequests)),
                         KeyCode::Tab => {
                             if selected_friend_idx.is_none() {
                                 *selected_friend_idx = Some(0);
@@ -198,20 +205,78 @@ impl AppState {
                 }
             }
 
-            AppState::ViewingFriendRequest { request_id, .. } => {
+            AppState::ViewingFriendRequests { requests, selected_idx } => {
+                match key.code {
+                    KeyCode::Up => {
+                        if *selected_idx > 0 {
+                            *selected_idx -= 1;
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Down => {
+                        if *selected_idx + 1 < requests.len() {
+                            *selected_idx += 1;
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Enter => {
+                        if let Some(req) = requests.get(*selected_idx) {
+                            *self = AppState::ViewingFriendRequest {
+                                request_id: req.id,
+                                from_onion: req.from_onion.clone(),
+                                friend_code: req.friend_code.clone(),
+                                timestamp: req.received_at,
+                                return_to_list: true,
+                            };
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Esc => {
+                        *self = AppState::default();
+                        Ok(None)
+                    }
+                    _ => Ok(None),
+                }
+            }
+
+            AppState::ViewingFriendRequest { request_id, return_to_list, .. } => {
                 match key.code {
                     KeyCode::Char('a') | KeyCode::Char('A') => {
                         let id = *request_id;
-                        *self = AppState::default();
+                        let back_to_list = *return_to_list;
+                        if back_to_list {
+                            // Will be replaced with refreshed list in main.rs
+                            *self = AppState::ViewingFriendRequests {
+                                requests: Vec::new(),
+                                selected_idx: 0,
+                            };
+                        } else {
+                            *self = AppState::default();
+                        }
                         Ok(Some(AppAction::AcceptFriendRequest(id)))
                     }
                     KeyCode::Char('r') | KeyCode::Char('R') => {
                         let id = *request_id;
-                        *self = AppState::default();
+                        let back_to_list = *return_to_list;
+                        if back_to_list {
+                            *self = AppState::ViewingFriendRequests {
+                                requests: Vec::new(),
+                                selected_idx: 0,
+                            };
+                        } else {
+                            *self = AppState::default();
+                        }
                         Ok(Some(AppAction::RejectFriendRequest(id)))
                     }
                     KeyCode::Esc => {
-                        *self = AppState::default();
+                        if *return_to_list {
+                            *self = AppState::ViewingFriendRequests {
+                                requests: Vec::new(),
+                                selected_idx: 0,
+                            };
+                        } else {
+                            *self = AppState::default();
+                        }
                         Ok(None)
                     }
                     _ => Ok(None),
@@ -468,6 +533,7 @@ mod tests {
             from_onion: "test.onion".to_string(),
             friend_code: "friend-1234-code-5678".to_string(),
             timestamp: 1234567890,
+            return_to_list: false,
         };
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
         let action = state.handle_key(key).unwrap();
@@ -497,6 +563,91 @@ mod tests {
             }
             _ => panic!("Expected Normal state"),
         }
+    }
+
+    #[test]
+    fn normal_nav_mode_view_friend_requests() {
+        let mut state = AppState::default();
+        let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE);
+        let action = state.handle_key(key).unwrap();
+        assert_eq!(action, Some(AppAction::ViewFriendRequests));
+    }
+
+    #[test]
+    fn friend_requests_list_navigation() {
+        use crate::db::queries::PendingFriendRequest;
+        let mut state = AppState::ViewingFriendRequests {
+            requests: vec![
+                PendingFriendRequest { id: 1, from_onion: "a.onion".into(), friend_code: "code-1".into(), received_at: 1000 },
+                PendingFriendRequest { id: 2, from_onion: "b.onion".into(), friend_code: "code-2".into(), received_at: 2000 },
+            ],
+            selected_idx: 0,
+        };
+
+        // Down
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 1);
+        } else { panic!("Wrong state"); }
+
+        // Down at bottom stays at bottom
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 1);
+        } else { panic!("Wrong state"); }
+
+        // Up
+        state.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)).unwrap();
+        if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 0);
+        } else { panic!("Wrong state"); }
+    }
+
+    #[test]
+    fn friend_requests_list_enter_opens_modal() {
+        use crate::db::queries::PendingFriendRequest;
+        let mut state = AppState::ViewingFriendRequests {
+            requests: vec![
+                PendingFriendRequest { id: 42, from_onion: "a.onion".into(), friend_code: "code-1".into(), received_at: 1000 },
+            ],
+            selected_idx: 0,
+        };
+
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        match &state {
+            AppState::ViewingFriendRequest { request_id, return_to_list, .. } => {
+                assert_eq!(*request_id, 42);
+                assert!(*return_to_list);
+            }
+            _ => panic!("Expected ViewingFriendRequest state"),
+        }
+    }
+
+    #[test]
+    fn friend_requests_list_esc_returns_to_normal() {
+        use crate::db::queries::PendingFriendRequest;
+        let mut state = AppState::ViewingFriendRequests {
+            requests: vec![],
+            selected_idx: 0,
+        };
+
+        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn friend_request_accept_returns_to_list() {
+        let mut state = AppState::ViewingFriendRequest {
+            request_id: 42,
+            from_onion: "test.onion".to_string(),
+            friend_code: "code".to_string(),
+            timestamp: 1000,
+            return_to_list: true,
+        };
+
+        let action = state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).unwrap();
+        assert_eq!(action, Some(AppAction::AcceptFriendRequest(42)));
+        assert!(matches!(state, AppState::ViewingFriendRequests { .. }));
     }
 
     #[test]

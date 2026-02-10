@@ -109,6 +109,99 @@ pub fn render_friend_request_modal(
     f.render_widget(block, area);
 }
 
+/// Render friend request list modal
+pub fn render_friend_request_list(
+    f: &mut Frame,
+    requests: &[crate::db::queries::PendingFriendRequest],
+    selected_idx: usize,
+) {
+    use ratatui::style::Modifier;
+    use ratatui::widgets::{List, ListItem};
+    use ratatui::text::{Line, Span};
+
+    let area = centered_rect(60, 50, f.size());
+    f.render_widget(Clear, area);
+
+    let title = format!(" Friend Requests ({} pending) ", requests.len());
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if requests.is_empty() {
+        let msg = Paragraph::new("No pending friend requests.")
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center);
+        f.render_widget(msg, inner);
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Min(0),    // List
+            Constraint::Length(1), // Controls
+        ])
+        .split(inner);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let items: Vec<ListItem> = requests
+        .iter()
+        .enumerate()
+        .map(|(i, req)| {
+            let is_selected = i == selected_idx;
+            let arrow = if is_selected { "▸ " } else { "  " };
+
+            let onion_display = if req.from_onion.len() > 16 {
+                format!("{}...", &req.from_onion[..16])
+            } else {
+                req.from_onion.clone()
+            };
+
+            let elapsed = now - req.received_at;
+            let time_ago = if elapsed < 60 {
+                "just now".to_string()
+            } else if elapsed < 3600 {
+                format!("{}m ago", elapsed / 60)
+            } else if elapsed < 86400 {
+                format!("{}h ago", elapsed / 3600)
+            } else {
+                format!("{}d ago", elapsed / 86400)
+            };
+
+            let style = if is_selected {
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+
+            let line = Line::from(vec![
+                Span::raw(arrow.to_string()),
+                Span::styled(onion_display, style),
+                Span::styled(format!("  {}", time_ago), Style::default().fg(Color::DarkGray)),
+            ]);
+
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items);
+    f.render_widget(list, chunks[0]);
+
+    let controls = Paragraph::new("[Enter] View    [Esc] Back")
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::Gray));
+    f.render_widget(controls, chunks[1]);
+}
+
 /// Render "My Identity" modal showing friend code and onion address
 pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &str) {
     use ratatui::style::Modifier;

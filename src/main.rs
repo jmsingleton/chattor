@@ -60,6 +60,7 @@ async fn main() -> Result<()> {
         let app_lock = app.lock().await;
 
         let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+        let pending_request_count = db::queries::get_pending_request_count(&app_lock.db).unwrap_or(0);
         let own_onion = app_lock.onion_address.clone();
         let friend_code = own_onion.as_deref().and_then(|o| {
             crate::tor::address::onion_to_friend_code(o).ok()
@@ -82,6 +83,7 @@ async fn main() -> Result<()> {
             own_onion,
             friend_code,
             tor_connected,
+            pending_request_count,
         };
 
         // Render current state
@@ -118,30 +120,57 @@ async fn main() -> Result<()> {
                             drop(app_lock);
                         }
                         Some(AppAction::AcceptFriendRequest(id)) => {
-                            // Lock app to accept friend request
+                            let return_to_list = matches!(app_state, AppState::ViewingFriendRequests { .. });
                             let app_lock = app.lock().await;
 
                             match handle_accept_friend_request(&*app_lock, id).await {
-                                Ok(_) => app_state = AppState::default(),
-                                Err(e) => {
-                                    eprintln!("Failed to accept friend request: {}", e);
+                                Ok(_) => {}
+                                Err(e) => eprintln!("Failed to accept friend request: {}", e),
+                            }
+
+                            if return_to_list {
+                                let requests = db::queries::get_pending_friend_requests(&app_lock.db).unwrap_or_default();
+                                if requests.is_empty() {
                                     app_state = AppState::default();
+                                } else {
+                                    app_state = AppState::ViewingFriendRequests { requests, selected_idx: 0 };
                                 }
+                            } else {
+                                app_state = AppState::default();
                             }
                             drop(app_lock);
                         }
                         Some(AppAction::RejectFriendRequest(id)) => {
-                            // Lock app to reject friend request
+                            let return_to_list = matches!(app_state, AppState::ViewingFriendRequests { .. });
                             let app_lock = app.lock().await;
 
                             match handle_reject_friend_request(&*app_lock, id) {
-                                Ok(_) => app_state = AppState::default(),
-                                Err(e) => {
-                                    eprintln!("Failed to reject friend request: {}", e);
+                                Ok(_) => {}
+                                Err(e) => eprintln!("Failed to reject friend request: {}", e),
+                            }
+
+                            if return_to_list {
+                                let requests = db::queries::get_pending_friend_requests(&app_lock.db).unwrap_or_default();
+                                if requests.is_empty() {
                                     app_state = AppState::default();
+                                } else {
+                                    app_state = AppState::ViewingFriendRequests { requests, selected_idx: 0 };
                                 }
+                            } else {
+                                app_state = AppState::default();
                             }
                             drop(app_lock);
+                        }
+                        Some(AppAction::ViewFriendRequests) => {
+                            let app_lock = app.lock().await;
+                            let requests = db::queries::get_pending_friend_requests(&app_lock.db).unwrap_or_default();
+                            drop(app_lock);
+                            if !requests.is_empty() {
+                                app_state = AppState::ViewingFriendRequests {
+                                    requests,
+                                    selected_idx: 0,
+                                };
+                            }
                         }
                         Some(AppAction::ViewMyIdentity) => {
                             let app_lock = app.lock().await;

@@ -14,6 +14,7 @@ pub struct RenderContext {
     pub own_onion: Option<String>,
     pub friend_code: Option<String>,
     pub tor_connected: bool,
+    pub pending_request_count: i64,
 }
 
 /// Render the application UI based on current state
@@ -68,7 +69,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
 
         // Sidebar
         crate::ui::sidebar::render_sidebar(
-            f, main_chunks[0], &ctx.friends, selected_idx, !input_focused,
+            f, main_chunks[0], &ctx.friends, selected_idx, !input_focused, ctx.pending_request_count,
         );
 
         // Right panel: conversation + input
@@ -103,8 +104,9 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
     // Footer
     let footer_text = match app_state {
         AppState::Normal { input_focused: true, .. } => "[Enter] Send  [Esc] Navigation mode",
-        AppState::Normal { .. } => "[Tab/\u{2191}\u{2193}] Select friend  [Enter] Open  [a] Add  [i] Identity  [q] Quit",
+        AppState::Normal { .. } => "[Tab/\u{2191}\u{2193}] Select friend  [Enter] Open  [a] Add  [i] Identity  [f] Requests  [q] Quit",
         AppState::AddingFriend { .. } => "[Enter] Send request  [Esc] Cancel",
+        AppState::ViewingFriendRequests { .. } => "[\u{2191}\u{2193}] Navigate  [Enter] View  [Esc] Back",
         AppState::ViewingFriendRequest { .. } => "[A]ccept  [R]eject  [Esc] Back",
         AppState::ViewingMyIdentity { .. } => "[i/Esc] Close",
     };
@@ -116,6 +118,9 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
     match app_state {
         AppState::AddingFriend { input, error, .. } => {
             crate::ui::modals::render_add_friend_modal(f, input, error.as_deref());
+        }
+        AppState::ViewingFriendRequests { requests, selected_idx } => {
+            crate::ui::modals::render_friend_request_list(f, requests, *selected_idx);
         }
         AppState::ViewingFriendRequest { from_onion, friend_code, .. } => {
             crate::ui::modals::render_friend_request_modal(f, from_onion, friend_code);

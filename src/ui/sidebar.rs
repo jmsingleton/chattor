@@ -14,9 +14,20 @@ pub fn render_sidebar(
     friends: &[FriendEntry],
     selected_idx: Option<usize>,
     focused: bool,
+    pending_request_count: i64,
 ) {
-    let title = format!(" Friends ({}) ", friends.len());
-    let border_color = if focused { Color::Cyan } else { Color::DarkGray };
+    let title = if pending_request_count > 0 {
+        format!(" Friends ({} new) ", pending_request_count)
+    } else {
+        format!(" Friends ({}) ", friends.len())
+    };
+    let border_color = if pending_request_count > 0 {
+        Color::Yellow
+    } else if focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
 
     let items: Vec<ListItem> = friends
         .iter()

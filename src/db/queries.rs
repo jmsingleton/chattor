@@ -28,6 +28,15 @@ impl FriendEntry {
     }
 }
 
+/// A pending friend request entry
+#[derive(Debug, Clone)]
+pub struct PendingFriendRequest {
+    pub id: i64,
+    pub from_onion: String,
+    pub friend_code: String,
+    pub received_at: i64,
+}
+
 /// A message for the conversation view
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
@@ -215,6 +224,41 @@ pub fn find_friend_by_onion(db: &Database, onion_address: &str) -> Result<Option
     }
 }
 
+/// Count pending friend requests
+pub fn get_pending_request_count(db: &Database) -> Result<i64> {
+    let count: i64 = db.connection().query_row(
+        "SELECT COUNT(*) FROM friend_requests WHERE status = 'pending'",
+        [],
+        |row| row.get(0),
+    ).map_err(|e| TorrentChatError::Database(format!("Failed to count pending requests: {}", e)))?;
+
+    Ok(count)
+}
+
+/// Get all pending friend requests
+pub fn get_pending_friend_requests(db: &Database) -> Result<Vec<PendingFriendRequest>> {
+    let conn = db.connection();
+    let mut stmt = conn.prepare(
+        "SELECT id, from_onion, COALESCE(friend_code, ''), received_at
+         FROM friend_requests
+         WHERE status = 'pending'
+         ORDER BY received_at ASC"
+    ).map_err(|e| TorrentChatError::Database(format!("Failed to prepare friend requests query: {}", e)))?;
+
+    let entries = stmt.query_map([], |row| {
+        Ok(PendingFriendRequest {
+            id: row.get(0)?,
+            from_onion: row.get(1)?,
+            friend_code: row.get(2)?,
+            received_at: row.get(3)?,
+        })
+    }).map_err(|e| TorrentChatError::Database(format!("Failed to query friend requests: {}", e)))?
+    .collect::<std::result::Result<Vec<_>, _>>()
+    .map_err(|e| TorrentChatError::Database(format!("Failed to collect friend requests: {}", e)))?;
+
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +359,69 @@ mod tests {
 
         let not_found = find_friend_by_onion(&db, "unknown.onion").unwrap();
         assert_eq!(not_found, None);
+    }
+
+    #[test]
+    fn test_get_pending_request_count_empty() {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+        assert_eq!(get_pending_request_count(&db).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_get_pending_request_count() {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+
+        db.connection().execute(
+            "INSERT INTO friend_requests (from_onion, friend_code, received_at, status) VALUES ('a.onion', 'code-1', 1000, 'pending')",
+            [],
+        ).unwrap();
+        db.connection().execute(
+            "INSERT INTO friend_requests (from_onion, friend_code, received_at, status) VALUES ('b.onion', 'code-2', 2000, 'pending')",
+            [],
+        ).unwrap();
+        db.connection().execute(
+            "INSERT INTO friend_requests (from_onion, friend_code, received_at, status) VALUES ('c.onion', 'code-3', 3000, 'accepted')",
+            [],
+        ).unwrap();
+
+        assert_eq!(get_pending_request_count(&db).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_get_pending_friend_requests() {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+
+        db.connection().execute(
+            "INSERT INTO friend_requests (from_onion, friend_code, received_at, status) VALUES ('a.onion', 'code-1', 1000, 'pending')",
+            [],
+        ).unwrap();
+        db.connection().execute(
+            "INSERT INTO friend_requests (from_onion, friend_code, received_at, status) VALUES ('b.onion', 'code-2', 2000, 'pending')",
+            [],
+        ).unwrap();
+
+        let requests = get_pending_friend_requests(&db).unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].from_onion, "a.onion");
+        assert_eq!(requests[1].from_onion, "b.onion");
+        assert_eq!(requests[0].friend_code, "code-1");
+    }
+
+    #[test]
+    fn test_get_pending_friend_requests_excludes_accepted() {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+
+        db.connection().execute(
+            "INSERT INTO friend_requests (from_onion, friend_code, received_at, status) VALUES ('a.onion', 'code-1', 1000, 'accepted')",
+            [],
+        ).unwrap();
+
+        let requests = get_pending_friend_requests(&db).unwrap();
+        assert_eq!(requests.len(), 0);
     }
 
     #[test]
