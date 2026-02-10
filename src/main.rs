@@ -126,6 +126,26 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        // Check for incoming messages from listener
+        {
+            let mut app_lock = app.lock().await;
+
+            // Drain incoming messages into a local vec to avoid borrow conflict
+            let mut incoming_messages = Vec::new();
+            if let Some(rx) = &mut app_lock.incoming_message_rx {
+                while let Ok(incoming) = rx.try_recv() {
+                    incoming_messages.push(incoming);
+                }
+            }
+
+            // Process collected messages
+            for incoming in incoming_messages {
+                if let Err(e) = handle_incoming_message(&*app_lock, incoming) {
+                    eprintln!("Failed to handle incoming message: {}", e);
+                }
+            }
+        }
     };
 
     // Cleanup
@@ -312,6 +332,83 @@ async fn try_send_direct(
     )
     .await
     .map_err(|_| error::TorrentChatError::Network("Send timed out (5s)".into()))??;
+
+    Ok(())
+}
+
+/// Handle an incoming message from the listener
+fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) -> Result<()> {
+    match &incoming.message {
+        protocol::message::Message::FriendRequest(req) => {
+            // Store incoming friend request in database
+            let conn = app.db.connection();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+
+            conn.execute(
+                "INSERT INTO friend_requests (from_onion, friend_code, received_at, status)
+                 VALUES (?1, ?2, ?3, 'pending')",
+                (&req.from_onion, &req.from_friendcode, now),
+            ).map_err(|e| error::TorrentChatError::Database(
+                format!("Failed to save friend request: {}", e)
+            ))?;
+
+            eprintln!("Received friend request from {}", req.from_onion);
+        }
+        protocol::message::Message::FriendRequestAccept(accept) => {
+            handle_incoming_accept(app, accept)?;
+        }
+        protocol::message::Message::FriendRequestReject(reject) => {
+            eprintln!("Friend request rejected by {}", reject.from_onion);
+        }
+        _ => {
+            // TextMessage, DeliveryReceipt - not implemented yet
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle incoming friend request accept
+fn handle_incoming_accept(
+    app: &App,
+    accept: &protocol::message::FriendRequestAcceptMessage,
+) -> Result<()> {
+    use crate::crypto::{PreKeyBundle, SignalSession, SessionStore};
+
+    // Deserialize PreKey bundle
+    let bundle: PreKeyBundle = serde_json::from_str(&accept.signal_prekey_bundle)
+        .map_err(|e| error::TorrentChatError::Crypto(
+            format!("Failed to parse PreKey bundle: {}", e)
+        ))?;
+
+    // Initialize Signal session
+    let session = SignalSession::from_prekey_bundle(
+        accept.from_onion.clone(),
+        &bundle,
+    )?;
+
+    // Store session
+    let store = SessionStore::new(&app.db);
+    store.store_session(&session)?;
+
+    // Add as friend
+    let conn = app.db.connection();
+    conn.execute(
+        "INSERT OR IGNORE INTO friends (onion_address, display_name, added_at, status)
+         VALUES (?1, ?2, ?3, 'active')",
+        (
+            &accept.from_onion,
+            &accept.from_onion[..std::cmp::min(10, accept.from_onion.len())],
+            accept.timestamp,
+        ),
+    ).map_err(|e| error::TorrentChatError::Database(
+        format!("Failed to add friend: {}", e)
+    ))?;
+
+    eprintln!("Friend request accepted by {}", accept.from_onion);
 
     Ok(())
 }

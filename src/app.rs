@@ -16,6 +16,7 @@ pub struct App {
     pub hidden_service: Option<HiddenService>,
     pub message_queue: MessageQueue,
     pub onion_address: Option<String>,
+    pub incoming_message_rx: Option<tokio::sync::mpsc::Receiver<crate::net::listener::IncomingMessage>>,
 }
 
 impl App {
@@ -48,6 +49,7 @@ impl App {
             hidden_service,
             message_queue,
             onion_address,
+            incoming_message_rx: None,
         })
     }
 
@@ -72,14 +74,29 @@ impl App {
 
         let onion_address = hidden_service.address().to_string();
 
+        // Spawn TCP listener for incoming connections
+        let listener_addr = hidden_service.local_addr();
+        let (msg_tx, msg_rx) = tokio::sync::mpsc::channel(100);
+
+        // Bind listener
+        match tokio::net::TcpListener::bind(listener_addr).await {
+            Ok(listener) => {
+                tokio::spawn(async move {
+                    if let Err(e) = crate::net::listener::listen_for_connections(listener, msg_tx).await {
+                        eprintln!("Listener task error: {}", e);
+                    }
+                });
+                self.incoming_message_rx = Some(msg_rx);
+            }
+            Err(e) => {
+                eprintln!("Failed to bind listener on {}: {}", listener_addr, e);
+            }
+        }
+
         // Store in app state
         self.tor_client = Some(Arc::new(client));
         self.hidden_service = Some(hidden_service);
         self.onion_address = Some(onion_address);
-
-        // Note: Listener and queue processor tasks would be spawned here in production
-        // Currently blocked by Database not being Send/Sync (SQLite limitation)
-        // TODO: Implement connection pooling or per-thread connections for background tasks
 
         Ok(())
     }
@@ -101,6 +118,7 @@ impl App {
             hidden_service: None,
             message_queue,
             onion_address: None,
+            incoming_message_rx: None,
         })
     }
 }
