@@ -96,4 +96,36 @@ mod tests {
         let loaded_session = loaded.unwrap();
         assert_eq!(loaded_session.remote_onion, "test.onion");
     }
+
+    #[test]
+    fn test_session_serialization() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let db = crate::db::Database::open(temp_db.path()).unwrap();
+        let store = SessionStore::new(&db);
+
+        // Create real session
+        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let (bob_bundle, bob_private) = crate::crypto::signal::PreKeyBundle::generate_real(&bob_identity).unwrap();
+
+        let session = crate::crypto::signal::SignalSession::from_prekey_bundle_real(
+            "bob.onion".into(),
+            &bob_bundle,
+            &bob_private,
+            &alice_identity,
+        ).unwrap();
+
+        // Store session
+        store.store_session(&session).unwrap();
+
+        // Load session
+        let loaded = store.load_session("bob.onion").unwrap();
+        assert!(loaded.is_some());
+
+        // Verify session state is preserved
+        let mut loaded_session = loaded.unwrap();
+        // Encrypt with loaded session to verify it works
+        let (ciphertext, _) = loaded_session.encrypt(b"test").unwrap();
+        assert!(ciphertext.len() > 0);
+    }
 }
