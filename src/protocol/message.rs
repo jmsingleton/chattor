@@ -18,6 +18,9 @@ pub enum Message {
 
     #[serde(rename = "delivery_receipt")]
     DeliveryReceipt(DeliveryReceiptMessage),
+
+    #[serde(rename = "read_receipt")]
+    ReadReceipt(DeliveryReceiptMessage),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -122,6 +125,19 @@ mod tests {
         });
 
         let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_read_receipt_serialization() {
+        let msg = Message::ReadReceipt(DeliveryReceiptMessage {
+            message_id: Uuid::new_v4(),
+            timestamp: 1234567890,
+        });
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("read_receipt"));
         let deserialized: Message = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
     }

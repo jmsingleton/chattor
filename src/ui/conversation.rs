@@ -88,16 +88,17 @@ fn render_messages(
         let sender = if is_own { "You" } else { friend_name };
         let time = format_timestamp(msg.timestamp);
 
-        let status_str = if is_own {
+        let (status_str, status_style) = if is_own {
             match msg.status.as_str() {
-                "sent" => " ✓",
-                "queued" => " ⏳",
-                "failed" => " ✗",
-                "received" => "",
-                _ => "",
+                "sent" => (" ✓", Style::default().fg(Color::DarkGray)),
+                "queued" => (" ⏳", Style::default().fg(Color::DarkGray)),
+                "failed" => (" ✗", Style::default().fg(Color::Red)),
+                "delivered" => (" ✓✓", Style::default().fg(Color::DarkGray)),
+                "read" => (" ✓✓", Style::default().fg(Color::Green)),
+                _ => ("", Style::default().fg(Color::DarkGray)),
             }
         } else {
-            ""
+            ("", Style::default().fg(Color::DarkGray))
         };
 
         // Sender line
@@ -110,7 +111,7 @@ fn render_messages(
         lines.push(Line::from(vec![
             Span::styled(sender.to_string(), sender_style),
             Span::styled(format!("  {}", time), Style::default().fg(Color::DarkGray)),
-            Span::styled(status_str.to_string(), Style::default().fg(Color::DarkGray)),
+            Span::styled(status_str.to_string(), status_style),
         ]));
 
         // Content line

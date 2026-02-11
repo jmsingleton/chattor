@@ -285,6 +285,30 @@ pub fn get_pending_friend_requests(db: &Database) -> Result<Vec<PendingFriendReq
     Ok(entries)
 }
 
+/// Get message IDs from a peer that need read receipts (status = 'received')
+pub fn get_unreceipted_message_ids(
+    db: &Database,
+    conversation_id: i64,
+    own_onion: &str,
+) -> Result<Vec<(String, String)>> {
+    let conn = db.connection();
+    let mut stmt = conn.prepare(
+        "SELECT message_id, sender_onion FROM messages
+         WHERE conversation_id = ?1
+         AND status = 'received'
+         AND sender_onion != ?2"
+    ).map_err(|e| TorrentChatError::Database(format!("Failed to prepare unreceipted query: {}", e)))?;
+
+    let entries = stmt.query_map(
+        params![conversation_id, own_onion],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    ).map_err(|e| TorrentChatError::Database(format!("Failed to query unreceipted: {}", e)))?
+    .collect::<std::result::Result<Vec<_>, _>>()
+    .map_err(|e| TorrentChatError::Database(format!("Failed to collect unreceipted: {}", e)))?;
+
+    Ok(entries)
+}
+
 /// Get the ephemeral TTL for a conversation (None = not ephemeral)
 pub fn get_conversation_ephemeral_ttl(db: &Database, conversation_id: i64) -> Result<Option<i64>> {
     let result: rusqlite::Result<Option<i64>> = db.connection().query_row(
@@ -506,6 +530,30 @@ mod tests {
 
         let requests = get_pending_friend_requests(&db).unwrap();
         assert_eq!(requests.len(), 0);
+    }
+
+    #[test]
+    fn test_get_unreceipted_message_ids() {
+        let (db, _temp) = setup_test_db();
+        let conv_id = get_or_create_conversation(&db, 1).unwrap();
+
+        // Store incoming messages
+        store_incoming_message(&db, conv_id, "alice.onion", "Hey!", "msg-1").unwrap();
+        store_incoming_message(&db, conv_id, "alice.onion", "How are you?", "msg-2").unwrap();
+
+        // Store an outgoing message (should not appear)
+        store_outgoing_message(&db, conv_id, "me.onion", "Good!", "msg-3").unwrap();
+
+        let unreceipted = get_unreceipted_message_ids(&db, conv_id, "me.onion").unwrap();
+        assert_eq!(unreceipted.len(), 2);
+        assert_eq!(unreceipted[0].0, "msg-1");
+        assert_eq!(unreceipted[0].1, "alice.onion");
+
+        // After marking one as read, it should disappear
+        update_message_status(&db, "msg-1", "read").unwrap();
+        let unreceipted = get_unreceipted_message_ids(&db, conv_id, "me.onion").unwrap();
+        assert_eq!(unreceipted.len(), 1);
+        assert_eq!(unreceipted[0].0, "msg-2");
     }
 
     #[test]

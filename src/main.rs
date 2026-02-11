@@ -207,6 +207,26 @@ async fn main() -> Result<()> {
                                 if conv_id > 0 {
                                     db::queries::mark_conversation_read(&app_lock.db, conv_id).ok();
                                     db::queries::activate_ephemeral_timers(&app_lock.db, conv_id).ok();
+
+                                    // Send read receipts for unread messages from peer
+                                    let own_onion = app_lock.onion_address.clone().unwrap_or_default();
+                                    if let Ok(unreceipted) = db::queries::get_unreceipted_message_ids(&app_lock.db, conv_id, &own_onion) {
+                                        for (msg_id, sender_onion) in &unreceipted {
+                                            if let Ok(uuid) = uuid::Uuid::parse_str(msg_id) {
+                                                let receipt = protocol::message::DeliveryReceiptMessage {
+                                                    message_id: uuid,
+                                                    timestamp: std::time::SystemTime::now()
+                                                        .duration_since(std::time::UNIX_EPOCH)
+                                                        .unwrap()
+                                                        .as_secs() as i64,
+                                                };
+                                                let receipt_msg = protocol::message::Message::ReadReceipt(receipt);
+                                                app_lock.message_queue.enqueue(&app_lock.db, sender_onion, &receipt_msg, "low").ok();
+                                            }
+                                            // Mark the message as read locally
+                                            db::queries::update_message_status(&app_lock.db, msg_id, "read").ok();
+                                        }
+                                    }
                                 }
 
                                 if let AppState::Normal { conversation_id, .. } = &mut app_state {
@@ -644,10 +664,24 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
             if let Some(friend_id) = db::queries::find_friend_by_onion(&app.db, from_onion)? {
                 let conv_id = db::queries::get_or_create_conversation(&app.db, friend_id)?;
                 db::queries::store_incoming_message_with_ttl(&app.db, conv_id, from_onion, &content, &msg_id, ephemeral_ttl)?;
+
+                // Queue delivery receipt back to sender
+                let receipt = protocol::message::DeliveryReceiptMessage {
+                    message_id: text_msg.message_id,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64,
+                };
+                let receipt_msg = protocol::message::Message::DeliveryReceipt(receipt);
+                app.message_queue.enqueue(&app.db, from_onion, &receipt_msg, "high").ok();
             }
         }
-        protocol::message::Message::DeliveryReceipt(_) => {
-            // Not implemented yet
+        protocol::message::Message::DeliveryReceipt(receipt) => {
+            db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "delivered").ok();
+        }
+        protocol::message::Message::ReadReceipt(receipt) => {
+            db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "read").ok();
         }
     }
 
