@@ -2,15 +2,15 @@
 //!
 //! Tests that verify components work together correctly.
 
-use torrent_chat::db::Database;
-use torrent_chat::crypto::signal::SignalSession;
-use torrent_chat::net::queue::MessageQueue;
-use torrent_chat::tor::address::{onion_to_friend_code, friend_code_to_onion};
+use chattor::db::Database;
+use chattor::crypto::signal::SignalSession;
+use chattor::net::queue::MessageQueue;
+use chattor::tor::address::{onion_to_friend_code, friend_code_to_onion};
 use std::collections::HashMap;
 
 fn setup_test_db() -> Database {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
-    conn.execute_batch(torrent_chat::db::CREATE_TABLES).unwrap();
+    conn.execute_batch(chattor::db::CREATE_TABLES).unwrap();
 
     // Create test data
     conn.execute(
@@ -49,7 +49,7 @@ fn test_address_mapping_roundtrip() {
 
 #[test]
 fn test_message_queue_integration() {
-    use torrent_chat::protocol::message::{Message, FriendRequestMessage};
+    use chattor::protocol::message::{Message, FriendRequestMessage};
 
     let db = setup_test_db();
     let queue = MessageQueue::new();
@@ -79,7 +79,7 @@ fn test_message_queue_integration() {
 
 #[test]
 fn test_signal_session_creation() {
-    use torrent_chat::crypto::signal::PreKeyBundle;
+    use chattor::crypto::signal::PreKeyBundle;
 
     // Test Signal session stub from PreKey bundle
     let bundle = PreKeyBundle::generate().unwrap();
@@ -118,7 +118,7 @@ fn test_database_schema_complete() {
 
 #[test]
 fn test_protocol_message_serialization() {
-    use torrent_chat::protocol::message::{Message, FriendRequestMessage};
+    use chattor::protocol::message::{Message, FriendRequestMessage};
 
     let friend_request = FriendRequestMessage {
         from_onion: "alice.onion".to_string(),
@@ -141,7 +141,7 @@ fn test_protocol_message_serialization() {
 #[test]
 fn test_full_conversation_flow() {
     let temp = tempfile::NamedTempFile::new().unwrap();
-    let db = torrent_chat::db::Database::open(temp.path()).unwrap();
+    let db = chattor::db::Database::open(temp.path()).unwrap();
 
     // Add a friend
     db.connection().execute(
@@ -151,21 +151,21 @@ fn test_full_conversation_flow() {
     ).unwrap();
 
     // Get friends
-    let friends = torrent_chat::db::queries::get_friends_with_unread(&db).unwrap();
+    let friends = chattor::db::queries::get_friends_with_unread(&db).unwrap();
     assert_eq!(friends.len(), 1);
     assert_eq!(friends[0].display_name, Some("Bob".to_string()));
 
     // Create conversation
-    let conv_id = torrent_chat::db::queries::get_or_create_conversation(&db, friends[0].friend_id).unwrap();
+    let conv_id = chattor::db::queries::get_or_create_conversation(&db, friends[0].friend_id).unwrap();
 
     // Send a message
-    torrent_chat::db::queries::store_outgoing_message(&db, conv_id, "me.onion", "Hello Bob!", "msg-001").unwrap();
+    chattor::db::queries::store_outgoing_message(&db, conv_id, "me.onion", "Hello Bob!", "msg-001").unwrap();
 
     // Receive a reply
-    torrent_chat::db::queries::store_incoming_message(&db, conv_id, "bob.onion", "Hey there!", "msg-002").unwrap();
+    chattor::db::queries::store_incoming_message(&db, conv_id, "bob.onion", "Hey there!", "msg-002").unwrap();
 
     // Check messages
-    let messages = torrent_chat::db::queries::get_messages(&db, conv_id, 50, 0).unwrap();
+    let messages = chattor::db::queries::get_messages(&db, conv_id, 50, 0).unwrap();
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].content, "Hello Bob!");
     assert_eq!(messages[0].status, "sent");
@@ -173,22 +173,22 @@ fn test_full_conversation_flow() {
     assert_eq!(messages[1].status, "received");
 
     // Check unread (bob's message is unread)
-    let friends = torrent_chat::db::queries::get_friends_with_unread(&db).unwrap();
+    let friends = chattor::db::queries::get_friends_with_unread(&db).unwrap();
     assert_eq!(friends[0].unread_count, 1);
 
     // Mark read
-    torrent_chat::db::queries::mark_conversation_read(&db, conv_id).unwrap();
-    let friends = torrent_chat::db::queries::get_friends_with_unread(&db).unwrap();
+    chattor::db::queries::mark_conversation_read(&db, conv_id).unwrap();
+    let friends = chattor::db::queries::get_friends_with_unread(&db).unwrap();
     assert_eq!(friends[0].unread_count, 0);
 }
 
 #[test]
 fn test_find_friend_for_incoming_message() {
     let temp = tempfile::NamedTempFile::new().unwrap();
-    let db = torrent_chat::db::Database::open(temp.path()).unwrap();
+    let db = chattor::db::Database::open(temp.path()).unwrap();
 
     // No friends yet
-    assert_eq!(torrent_chat::db::queries::find_friend_by_onion(&db, "unknown.onion").unwrap(), None);
+    assert_eq!(chattor::db::queries::find_friend_by_onion(&db, "unknown.onion").unwrap(), None);
 
     // Add friend
     db.connection().execute(
@@ -198,5 +198,5 @@ fn test_find_friend_for_incoming_message() {
     ).unwrap();
 
     // Now findable
-    assert!(torrent_chat::db::queries::find_friend_by_onion(&db, "alice.onion").unwrap().is_some());
+    assert!(chattor::db::queries::find_friend_by_onion(&db, "alice.onion").unwrap().is_some());
 }

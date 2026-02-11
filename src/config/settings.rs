@@ -44,7 +44,7 @@ impl Settings {
                 .map_err(|_| crate::error::TorrentChatError::Io(
                     std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
                 ))?;
-            Ok(PathBuf::from(home).join("Library/Application Support/torrent-chat"))
+            Ok(PathBuf::from(home).join("Library/Application Support/chattor"))
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -53,7 +53,7 @@ impl Settings {
                 .map_err(|_| crate::error::TorrentChatError::Io(
                     std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
                 ))?;
-            Ok(PathBuf::from(home).join(".config/torrent-chat"))
+            Ok(PathBuf::from(home).join(".config/chattor"))
         }
     }
 
@@ -65,7 +65,7 @@ impl Settings {
                 .map_err(|_| crate::error::TorrentChatError::Io(
                     std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
                 ))?;
-            Ok(PathBuf::from(home).join("Library/Application Support/torrent-chat"))
+            Ok(PathBuf::from(home).join("Library/Application Support/chattor"))
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -74,7 +74,7 @@ impl Settings {
                 .map_err(|_| crate::error::TorrentChatError::Io(
                     std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
                 ))?;
-            Ok(PathBuf::from(home).join(".local/share/torrent-chat"))
+            Ok(PathBuf::from(home).join(".local/share/chattor"))
         }
     }
 }
@@ -94,7 +94,7 @@ mod tests {
         let settings = Settings::default().unwrap();
         assert_eq!(settings.debug, false);
         assert_eq!(settings.tor_socks_port, 9050);
-        assert!(settings.config_dir.to_string_lossy().contains("torrent-chat"));
+        assert!(settings.config_dir.to_string_lossy().contains("chattor"));
     }
 
     #[test]

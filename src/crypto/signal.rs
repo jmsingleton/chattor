@@ -290,7 +290,7 @@ impl SignalSession {
             let mut key_bytes = [0u8; 32];
             let counter_bytes = self.send_counter.to_be_bytes();
             let mut info = Vec::new();
-            info.extend_from_slice(b"torrent-chat-message-key");
+            info.extend_from_slice(b"chattor-message-key");
             info.extend_from_slice(&counter_bytes);
             hk.expand(&info, &mut key_bytes)
                 .map_err(|_| TorrentChatError::Crypto("HKDF expand failed".into()))?;
@@ -345,7 +345,7 @@ impl SignalSession {
             let mut key_bytes = [0u8; 32];
             let counter_bytes = self.recv_counter.to_be_bytes();
             let mut info = Vec::new();
-            info.extend_from_slice(b"torrent-chat-message-key");
+            info.extend_from_slice(b"chattor-message-key");
             info.extend_from_slice(&counter_bytes);
             hk.expand(&info, &mut key_bytes)
                 .map_err(|_| TorrentChatError::Crypto("HKDF expand failed".into()))?;

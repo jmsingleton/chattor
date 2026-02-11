@@ -1,6 +1,6 @@
-//! torrent-chat library
+//! chattor library
 //!
-//! Core modules for the torrent-chat application.
+//! Core modules for the chattor application.
 
 pub mod error;
 pub mod app;

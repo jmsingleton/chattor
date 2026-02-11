@@ -38,7 +38,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         })
         .unwrap_or_default();
 
-    let header = Paragraph::new(format!("  torrent-chat v0.1.0{}  [Tor: {}]", addr_display, tor_status))
+    let header = Paragraph::new(format!("  chattor v0.1.0{}  [Tor: {}]", addr_display, tor_status))
         .style(Style::default().fg(Color::Cyan))
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);

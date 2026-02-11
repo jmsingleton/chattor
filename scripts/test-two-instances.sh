@@ -6,7 +6,7 @@ echo ""
 
 # Clean up old test data
 echo "Cleaning up old test data..."
-rm -rf /tmp/torrent-chat-alice /tmp/torrent-chat-bob
+rm -rf /tmp/chattor-alice /tmp/chattor-bob
 
 # Build release binary
 echo "Building release binary..."
@@ -14,7 +14,7 @@ cargo build --release
 
 # Start Alice in background
 echo "Starting Alice..."
-./target/release/torrent-chat --config-dir /tmp/torrent-chat-alice --debug &
+./target/release/chattor --config-dir /tmp/chattor-alice --debug &
 ALICE_PID=$!
 
 # Wait a moment
@@ -22,7 +22,7 @@ sleep 2
 
 # Start Bob in background
 echo "Starting Bob..."
-./target/release/torrent-chat --config-dir /tmp/torrent-chat-bob --debug &
+./target/release/chattor --config-dir /tmp/chattor-bob --debug &
 BOB_PID=$!
 
 echo ""
@@ -30,8 +30,8 @@ echo "=== Both instances running ==="
 echo "Alice PID: $ALICE_PID"
 echo "Bob PID: $BOB_PID"
 echo ""
-echo "Alice data: /tmp/torrent-chat-alice"
-echo "Bob data: /tmp/torrent-chat-bob"
+echo "Alice data: /tmp/chattor-alice"
+echo "Bob data: /tmp/chattor-bob"
 echo ""
 echo "Press Ctrl+C to stop both instances"
 echo ""

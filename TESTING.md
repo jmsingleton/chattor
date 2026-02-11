@@ -11,7 +11,7 @@ cargo run
 
 # Or run the release build
 cargo build --release
-./target/release/torrent-chat
+./target/release/chattor
 ```
 
 ## What Works Right Now ✅
@@ -23,7 +23,7 @@ cargo build --release
 - Press `q` to quit
 
 ### 2. **Database Layer**
-- SQLCipher database creation at `~/.config/torrent-chat/chat.db`
+- SQLCipher database creation at `~/.config/chattor/chat.db`
 - Schema version 2 with all Phase 2 tables:
   - `message_queue` - Offline message delivery
   - `signal_sessions` - Encryption state
@@ -101,10 +101,10 @@ cargo run
 cargo test db::schema
 
 # Check the actual database (macOS)
-sqlite3 ~/Library/Application\ Support/torrent-chat/messages.db
+sqlite3 ~/Library/Application\ Support/chattor/messages.db
 
 # Or on Linux
-sqlite3 ~/.local/share/torrent-chat/messages.db
+sqlite3 ~/.local/share/chattor/messages.db
 
 # In sqlite3:
 .tables              # Should show all Phase 2 tables
@@ -190,10 +190,10 @@ cargo test --test integration
 cargo test --release -- --nocapture
 
 # Check binary size
-ls -lh target/release/torrent-chat
+ls -lh target/release/chattor
 
 # Memory usage (while app running)
-ps aux | grep torrent-chat
+ps aux | grep chattor
 ```
 
 ## Next Steps for Full Testing
@@ -231,10 +231,10 @@ RUST_LOG=debug cargo run
 ### Check Database
 ```bash
 # View database contents
-sqlite3 ~/.config/torrent-chat/chat.db "SELECT * FROM friends;"
+sqlite3 ~/.config/chattor/chat.db "SELECT * FROM friends;"
 
 # Check schema version
-sqlite3 ~/.config/torrent-chat/chat.db "PRAGMA user_version;"
+sqlite3 ~/.config/chattor/chat.db "PRAGMA user_version;"
 ```
 
 ### Run Specific Test
@@ -245,10 +245,10 @@ cargo test test_message_queue_integration -- --nocapture
 ### Clean State
 ```bash
 # Remove database to start fresh (macOS)
-rm -rf ~/Library/Application\ Support/torrent-chat/
+rm -rf ~/Library/Application\ Support/chattor/
 
 # Or on Linux
-rm -rf ~/.local/share/torrent-chat/
+rm -rf ~/.local/share/chattor/
 ```
 
 ## Known Issues

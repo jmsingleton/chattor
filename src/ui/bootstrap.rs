@@ -21,7 +21,7 @@ pub fn render_bootstrap(f: &mut Frame, progress: u8, status: &str) {
     // Title
     let title = Paragraph::new(vec![
         Line::from(Span::styled(
-            "🔄 torrent-chat",
+            "🔄 chattor",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),

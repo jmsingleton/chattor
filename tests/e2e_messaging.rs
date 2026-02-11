@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
-use torrent_chat::{
+use chattor::{
     app::App,
     config::Settings,
 };

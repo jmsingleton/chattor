@@ -1,4 +1,4 @@
-/// SQL schema for torrent-chat database
+/// SQL schema for chattor database
 pub const SCHEMA_VERSION: i32 = 6;
 
 pub const CREATE_TABLES: &str = r#"

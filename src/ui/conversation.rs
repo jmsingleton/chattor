@@ -167,7 +167,7 @@ pub fn render_setup_wizard(
         .split(inner);
 
     // Welcome
-    let welcome = Paragraph::new("Welcome to torrent-chat")
+    let welcome = Paragraph::new("Welcome to chattor")
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
     f.render_widget(welcome, chunks[1]);

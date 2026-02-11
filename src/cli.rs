@@ -1,7 +1,7 @@
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "torrent-chat")]
+#[command(name = "chattor")]
 #[command(about = "Privacy-first TUI chat application over Tor", long_about = None)]
 pub struct Cli {
     /// Enable debug logging
@@ -19,7 +19,7 @@ mod tests {
 
     #[test]
     fn test_cli_parsing() {
-        let cli = Cli::parse_from(["torrent-chat", "--debug"]);
+        let cli = Cli::parse_from(["chattor", "--debug"]);
         assert!(cli.debug);
     }
 }

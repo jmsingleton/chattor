@@ -18,13 +18,13 @@ Delete the old database and start fresh:
 
 **On macOS:**
 ```bash
-rm -rf ~/Library/Application\ Support/torrent-chat/
+rm -rf ~/Library/Application\ Support/chattor/
 cargo run
 ```
 
 **On Linux:**
 ```bash
-rm -rf ~/.local/share/torrent-chat/
+rm -rf ~/.local/share/chattor/
 cargo run
 ```
 

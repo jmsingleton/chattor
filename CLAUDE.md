@@ -16,7 +16,7 @@ The plan files contain the source of truth for what needs to be built and how. A
 
 ## Project Overview
 
-**torrent-chat** is a privacy-first TUI (Terminal User Interface) chat application built in Rust. The architecture is pure peer-to-peer over Tor hidden services with no central servers. Each user runs their own hidden service (.onion address) for receiving messages, with end-to-end encryption via Signal Protocol (Double Ratchet).
+**chattor** is a privacy-first TUI (Terminal User Interface) chat application built in Rust. The architecture is pure peer-to-peer over Tor hidden services with no central servers. Each user runs their own hidden service (.onion address) for receiving messages, with end-to-end encryption via Signal Protocol (Double Ratchet).
 
 **Current Status:** Phase 2b in progress (real Tor + Signal Protocol implementation).
 
@@ -55,13 +55,13 @@ cargo test --test e2e_messaging -- --ignored --nocapture
 ### Database Management
 ```bash
 # macOS location
-rm -rf ~/Library/Application\ Support/torrent-chat/
+rm -rf ~/Library/Application\ Support/chattor/
 
 # Linux location
-rm -rf ~/.local/share/torrent-chat/
+rm -rf ~/.local/share/chattor/
 
 # Inspect database (macOS)
-sqlite3 ~/Library/Application\ Support/torrent-chat/messages.db
+sqlite3 ~/Library/Application\ Support/chattor/messages.db
 # .schema messages       # View table structure
 # .tables                # List all tables
 # SELECT * FROM schema_version;  # Current schema version (should be 2)
@@ -136,8 +136,8 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 
 | Platform | Config Directory | Data Directory |
 |----------|------------------|----------------|
-| **macOS** | `~/Library/Application Support/torrent-chat/` | `~/Library/Application Support/torrent-chat/` |
-| **Linux** | `~/.config/torrent-chat/` | `~/.local/share/torrent-chat/` |
+| **macOS** | `~/Library/Application Support/chattor/` | `~/Library/Application Support/chattor/` |
+| **Linux** | `~/.config/chattor/` | `~/.local/share/chattor/` |
 
 Database path: `{data_dir}/messages.db`
 
@@ -215,7 +215,7 @@ Database path: `{data_dir}/messages.db`
 - `src/db/schema.rs` - Complete database schema (version 2)
 - `src/protocol/message.rs` - All message types and wire format
 - `src/net/queue.rs` - Offline message delivery queue
-- `docs/plans/2026-02-06-torrent-chat-design.md` - Complete design vision
+- `docs/plans/2026-02-06-chattor-design.md` - Complete design vision
 - `docs/Phase2-Progress.md` - Current implementation status
 
 ## Common Patterns

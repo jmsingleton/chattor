@@ -1,4 +1,4 @@
-# torrent-chat
+# chattor
 
 Privacy-first TUI chat application over Tor.
 
