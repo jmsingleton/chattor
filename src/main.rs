@@ -30,10 +30,18 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
 
     // Initialize application wrapped in Arc<Mutex> for sharing between threads
     let app = Arc::new(Mutex::new(App::new()?));
+
+    // Load theme
+    let theme = {
+        let app_lock = app.lock().await;
+        let config_path = app_lock.settings.config_dir.join("theme.toml");
+        drop(app_lock);
+        ui::theme::load_theme(cli.theme.as_deref(), &config_path)
+    };
 
     // Set up terminal FIRST so we can render immediately
     enable_raw_mode()?;
@@ -249,6 +257,7 @@ async fn main() -> Result<()> {
             channel_subscriptions,
             channel_posts,
             channel_post_read_counts,
+            theme: theme.clone(),
         };
 
         // Render current state

@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 use crate::db::queries::{FriendEntry, ChatMessage, ChannelPost, ChannelSubscription};
-use super::AppState;
+use super::{AppState, Theme};
 
 /// Data needed for rendering (populated by main loop before render)
 pub struct RenderContext {
@@ -19,6 +19,7 @@ pub struct RenderContext {
     pub channel_subscriptions: Vec<ChannelSubscription>,
     pub channel_posts: Vec<ChannelPost>,
     pub channel_post_read_counts: std::collections::HashMap<String, i64>,
+    pub theme: Theme,
 }
 
 /// Render the application UI based on current state
