@@ -52,20 +52,39 @@ pub fn display_connection_status(app: &App) {
 }
 
 /// Copy text to system clipboard. Returns true on success.
+///
+/// On Linux, CLI tools (wl-copy/xclip/xsel) are tried first because arboard's
+/// clipboard contents die when the Clipboard struct is dropped. CLI tools fork
+/// a background process that persists the contents independently.
 pub fn copy_to_clipboard(text: &str) -> bool {
-    // Try arboard first
+    // On Linux, try CLI tools first — they persist clipboard contents
+    // independently of our process, avoiding the "dropped too quickly" issue.
+    #[cfg(target_os = "linux")]
+    {
+        if clipboard_fallback(text) {
+            return true;
+        }
+    }
+
+    // Try arboard (works well on macOS, fallback on Linux)
     match arboard::Clipboard::new() {
         Ok(mut clipboard) => {
             match clipboard.set_text(text) {
                 Ok(()) => return true,
-                Err(_) => {} // Fall through to CLI fallback
+                Err(_) => {} // Fall through
             }
         }
-        Err(_) => {} // Fall through to CLI fallback
+        Err(_) => {}
     }
 
-    // Fallback: try command-line clipboard tools
-    clipboard_fallback(text)
+    // On non-Linux, try CLI tools as fallback
+    #[cfg(not(target_os = "linux"))]
+    {
+        return clipboard_fallback(text);
+    }
+
+    #[cfg(target_os = "linux")]
+    false
 }
 
 /// Fallback clipboard using command-line tools (wl-copy, xclip, xsel, pbcopy).
