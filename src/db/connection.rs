@@ -43,6 +43,7 @@ impl Database {
                 self.migrate_to_v4()?;
                 self.migrate_to_v5()?;
                 self.migrate_to_v6()?;
+                self.migrate_to_v7()?;
             },
             Err(_) => {
                 // Fresh database - will set version after creating tables
@@ -174,6 +175,64 @@ impl Database {
                 .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
 
             info!("Migration to schema v6 complete");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate database from v6 to v7 (broadcast channels)
+    fn migrate_to_v7(&self) -> Result<()> {
+        let version = self.get_schema_version()?;
+
+        if version < 7 {
+            info!("Migrating database to schema v7 (broadcast channels)");
+
+            let conn = self.connection();
+
+            // Create channel tables (IF NOT EXISTS handles fresh databases)
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS channels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_type TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS channel_posts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    post_id TEXT NOT NULL UNIQUE,
+                    created_at INTEGER NOT NULL,
+                    signature TEXT NOT NULL,
+                    FOREIGN KEY (channel_id) REFERENCES channels(id)
+                );
+                CREATE TABLE IF NOT EXISTS channel_subscribers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subscriber_onion TEXT NOT NULL,
+                    channel_type TEXT NOT NULL,
+                    subscribed_at INTEGER NOT NULL,
+                    UNIQUE(subscriber_onion, channel_type)
+                );
+                CREATE TABLE IF NOT EXISTS channel_subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    publisher_onion TEXT NOT NULL,
+                    channel_type TEXT NOT NULL,
+                    subscribed_at INTEGER NOT NULL,
+                    last_sync_at INTEGER,
+                    UNIQUE(publisher_onion, channel_type)
+                );
+                CREATE TABLE IF NOT EXISTS channel_post_receipts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    post_id TEXT NOT NULL,
+                    reader_onion TEXT NOT NULL,
+                    read_at INTEGER NOT NULL,
+                    UNIQUE(post_id, reader_onion)
+                );"
+            ).map_err(|e| TorrentChatError::Database(format!("Failed to create channel tables: {}", e)))?;
+
+            conn.execute("UPDATE schema_version SET version = 7", [])
+                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+
+            info!("Migration to schema v7 complete");
         }
 
         Ok(())

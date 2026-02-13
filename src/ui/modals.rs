@@ -322,6 +322,56 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize) {
     f.render_widget(controls, chunks[1]);
 }
 
+/// Render "Subscribe to Channel" modal
+pub fn render_subscribe_channel_modal(
+    f: &mut Frame,
+    input: &str,
+    error: Option<&str>,
+) {
+    let area = centered_rect(60, 40, f.size());
+
+    f.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Subscribe to Channel ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let prompt = Paragraph::new("Enter publisher's .onion address:");
+    f.render_widget(prompt, chunks[0]);
+
+    let input_widget = Paragraph::new(format!("{}_", input))
+        .block(Block::default().borders(Borders::ALL))
+        .style(Style::default().fg(Color::White));
+    f.render_widget(input_widget, chunks[1]);
+
+    let help = if let Some(err) = error {
+        Paragraph::new(err).style(Style::default().fg(Color::Red))
+    } else {
+        Paragraph::new("Subscribes to their public channel")
+            .style(Style::default().fg(Color::Gray))
+    };
+    f.render_widget(help, chunks[2]);
+
+    let controls = Paragraph::new("[Enter] Subscribe    [Esc] Cancel")
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::Gray));
+    f.render_widget(controls, chunks[3]);
+
+    f.render_widget(block, area);
+}
+
 /// Helper to center a rect
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()

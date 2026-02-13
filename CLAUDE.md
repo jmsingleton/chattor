@@ -18,7 +18,7 @@ The plan files contain the source of truth for what needs to be built and how. A
 
 **chattor** is a privacy-first TUI (Terminal User Interface) chat application built in Rust. The architecture is pure peer-to-peer over Tor hidden services with no central servers. Each user runs their own hidden service (.onion address) for receiving messages, with end-to-end encryption via Signal Protocol (Double Ratchet).
 
-**Current Status:** Phase 2b in progress (real Tor + Signal Protocol implementation).
+**Current Status:** Phase 3 complete (Broadcast Channels). Phase 2b real Tor + Signal Protocol also implemented.
 
 **Core Design Principles:**
 - Privacy-first: No central servers, no telemetry, no metadata leakage
@@ -39,7 +39,7 @@ cargo run -- --debug     # Enable debug logging
 
 ### Testing
 ```bash
-cargo test                            # Run all tests (52 currently)
+cargo test                            # Run all tests (~170 currently)
 cargo test protocol::message          # Run specific module tests
 cargo test --test integration         # Integration tests only
 cargo test -- --nocapture             # Show test output
@@ -64,7 +64,7 @@ rm -rf ~/.local/share/chattor/
 sqlite3 ~/Library/Application\ Support/chattor/messages.db
 # .schema messages       # View table structure
 # .tables                # List all tables
-# SELECT * FROM schema_version;  # Current schema version (should be 2)
+# SELECT * FROM schema_version;  # Current schema version (should be 7)
 ```
 
 ### Linting & Formatting
@@ -96,11 +96,12 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - `App::new()` initializes everything synchronously (Tor init is async via `init_tor()`)
 
 **2. Database Layer (`src/db/`)**
-- Schema version 2 (Phase 2) - see `src/db/schema.rs`
+- Schema version 7 (Phase 3) - see `src/db/schema.rs`
 - SQLCipher for at-rest encryption (bundled via rusqlite)
 - Key tables: `friends`, `conversations`, `messages`, `message_queue`, `signal_sessions`, `blocked_onions`
+- Channel tables: `channels`, `channel_posts`, `channel_subscribers`, `channel_subscriptions`, `channel_post_receipts`
 - FTS5 virtual table (`messages_fts`) for full-text search with auto-sync triggers
-- **Important:** `messages.message_id` (TEXT UUID) added in Phase 2 for deduplication
+- Automatic migrations from v2 through v7 in `src/db/connection.rs`
 
 **3. Identity & Crypto (`src/crypto/`)**
 - Ed25519 keypair for identity and signing (`identity.rs`)
@@ -116,7 +117,8 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 
 **5. Protocol Layer (`src/protocol/`)**
 - Friend codes: `word-NNNN-word-NNNN` format with checksum validation
-- Message types (5 total): `FriendRequest`, `FriendRequestAccept`, `FriendRequestReject`, `TextMessage`, `DeliveryReceipt`
+- Message types (12 total): `FriendRequest`, `FriendRequestAccept`, `FriendRequestReject`, `TextMessage`, `DeliveryReceipt`, `ReadReceipt`, `ChannelSubscribe`, `ChannelUnsubscribe`, `ChannelPost`, `ChannelSyncRequest`, `ChannelSyncResponse`, `ChannelPostReceipt`
+- `ChannelType` enum: `Public`, `FriendsOnly`
 - JSON serialization with serde for wire protocol
 - Signal Protocol envelope: `signal_ciphertext`, `signal_type` (PreKeyMessage or Message)
 
@@ -127,10 +129,20 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - Filters by destination .onion address
 
 **7. UI Layer (`src/ui/`)**
-- Basic TUI with ratatui showing Phase 2 status
-- Header displays: version, Tor connection status
-- Footer: Current phase milestone
-- Main UI implementation planned for Phase 3+
+- Full TUI with ratatui: friends sidebar, conversation view, channel feed
+- Bootstrap animation screen during Tor connection
+- Header displays: version, Tor connection status, onion address
+- Modals: add friend, friend requests, identity, ephemeral settings, channel subscribe
+- Channel feed view with post composition (own channels) and read-only view (subscriptions)
+- Sidebar shows friends list + channels section (own channels + subscriptions)
+
+**8. Broadcast Channels (`src/ui/channel_feed.rs`, `src/db/queries.rs`)**
+- Two auto-created channels per user: Public and Friends Only
+- Posts are Ed25519-signed, stored with 100-post retention limit
+- Pull-based sync: subscribers request missed posts via `ChannelSyncRequest/Response`
+- Read receipts: publisher sees "seen by N" count per post
+- Auto-subscribe: friends automatically subscribe to each other's channels on friend accept
+- Periodic sync task runs every 5 minutes
 
 ### Platform-Specific Paths
 
@@ -168,10 +180,18 @@ Database path: `{data_dir}/messages.db`
 - Add TCP framing and network I/O layer
 - Background async task for message queue processing
 
-### Phase 3: Broadcast Channels (Next)
-- One-to-many communication system
-- Public and friends-only channels
-- Channel subscriptions and post delivery
+### Phase 3: Broadcast Channels ✅
+**What's Complete:**
+- Database schema v7 with 5 channel tables and indices
+- 6 new protocol message types for channel operations
+- 15 channel query functions with full test coverage
+- Auto-channel initialization (Public + Friends Only per user)
+- Incoming channel message handling (subscribe, unsubscribe, post, sync, receipts)
+- Auto-subscribe to friend channels on friend accept
+- Channel UI: sidebar channels section, channel feed view, subscribe modal
+- Channel action handlers: publish, subscribe, select channel
+- Periodic channel sync task (every 5 minutes)
+- Integration tests for full channel flow
 
 ### Phase 4: Polish & Theming
 - Animations, full theming system, vanity .onion mining UI
@@ -182,11 +202,14 @@ Database path: `{data_dir}/messages.db`
 ## Important Technical Details
 
 ### Database Schema Migrations
-**Current Issue:** No automatic migration between schema versions. Database with old schema (v1 without `message_id` column) will fail on startup.
-
-**Workaround:** Delete database to start fresh with v2 schema.
-
-**Future Enhancement:** Implement ALTER TABLE migrations in `src/db/connection.rs::Database::initialize()`
+- Automatic migrations from v2 through v7 in `src/db/connection.rs::Database::initialize()`
+- Each version has a `migrate_to_vN()` method that checks current version and applies changes
+- Migrations run before `CREATE_TABLES` (which uses `IF NOT EXISTS` for idempotency)
+- v3: Clear old Signal sessions (production crypto migration)
+- v4: Replace old message queue with general-purpose queue
+- v5: Add `last_read_at` for unread tracking
+- v6: Add ephemeral message columns (`expires_at`, `ephemeral_ttl`)
+- v7: Add 5 broadcast channel tables
 
 ### Tor Hidden Service Identity
 - Each user's .onion address derived from Ed25519 identity keypair (v3 onion format)
@@ -212,11 +235,13 @@ Database path: `{data_dir}/messages.db`
 ## Key Files to Understand
 
 - `src/app.rs` - Central application state and initialization
-- `src/db/schema.rs` - Complete database schema (version 2)
-- `src/protocol/message.rs` - All message types and wire format
+- `src/db/schema.rs` - Complete database schema (version 7)
+- `src/db/queries.rs` - All database queries including channel operations
+- `src/protocol/message.rs` - All message types and wire format (12 types)
 - `src/net/queue.rs` - Offline message delivery queue
+- `src/ui/channel_feed.rs` - Channel post feed rendering
 - `docs/plans/2026-02-06-chattor-design.md` - Complete design vision
-- `docs/Phase2-Progress.md` - Current implementation status
+- `docs/plans/2026-02-12-broadcast-channels-design.md` - Phase 3 broadcast channels design
 
 ## Common Patterns
 

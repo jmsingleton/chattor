@@ -35,6 +35,19 @@ pub enum AppState {
         conversation_id: i64,
         selected_idx: usize,
     },
+    ViewingChannel {
+        publisher_onion: String,
+        channel_type: String,     // "public" or "friends_only"
+        is_own: bool,
+        input: String,            // for composing (own channels only)
+        cursor: usize,
+        scroll_offset: usize,
+    },
+    SubscribingToChannel {
+        input: String,
+        cursor: usize,
+        error: Option<String>,
+    },
 }
 
 impl Default for AppState {
@@ -60,6 +73,9 @@ pub enum AppAction {
     SetEphemeralTtl(i64, Option<i64>), // (conversation_id, ttl_seconds or None for off)
     ViewMyIdentity,
     ViewFriendRequests,
+    PublishChannelPost(String, String),     // (content, channel_type)
+    SubscribeToChannel(String),             // publisher .onion address
+    SelectChannel(String, String, bool),    // (publisher_onion, channel_type, is_own)
     Quit,
 }
 
@@ -143,6 +159,14 @@ impl AppState {
                                     selected_idx: 0,
                                 };
                             }
+                            Ok(None)
+                        }
+                        KeyCode::Char('s') => {
+                            *self = AppState::SubscribingToChannel {
+                                input: String::new(),
+                                cursor: 0,
+                                error: None,
+                            };
                             Ok(None)
                         }
                         KeyCode::Tab => {
@@ -334,6 +358,79 @@ impl AppState {
                         };
                         *self = AppState::default();
                         Ok(Some(AppAction::SetEphemeralTtl(conv_id, ttl)))
+                    }
+                    KeyCode::Esc => {
+                        *self = AppState::default();
+                        Ok(None)
+                    }
+                    _ => Ok(None),
+                }
+            }
+
+            AppState::ViewingChannel { input, cursor, is_own, publisher_onion, channel_type, .. } => {
+                if *is_own {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            input.insert(*cursor, c);
+                            *cursor += 1;
+                            Ok(None)
+                        }
+                        KeyCode::Backspace => {
+                            if *cursor > 0 {
+                                *cursor -= 1;
+                                input.remove(*cursor);
+                            }
+                            Ok(None)
+                        }
+                        KeyCode::Enter => {
+                            if input.is_empty() {
+                                Ok(None)
+                            } else {
+                                let content = input.clone();
+                                let ch_type = channel_type.clone();
+                                input.clear();
+                                *cursor = 0;
+                                Ok(Some(AppAction::PublishChannelPost(content, ch_type)))
+                            }
+                        }
+                        KeyCode::Esc => {
+                            *self = AppState::default();
+                            Ok(None)
+                        }
+                        _ => Ok(None),
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Esc => {
+                            *self = AppState::default();
+                            Ok(None)
+                        }
+                        _ => Ok(None),
+                    }
+                }
+            }
+
+            AppState::SubscribingToChannel { input, cursor, error } => {
+                match key.code {
+                    KeyCode::Char(c) => {
+                        input.insert(*cursor, c);
+                        *cursor += 1;
+                        Ok(None)
+                    }
+                    KeyCode::Backspace => {
+                        if *cursor > 0 {
+                            *cursor -= 1;
+                            input.remove(*cursor);
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Enter => {
+                        if input.is_empty() {
+                            *error = Some("Please enter a channel address".to_string());
+                            Ok(None)
+                        } else {
+                            Ok(Some(AppAction::SubscribeToChannel(input.clone())))
+                        }
                     }
                     KeyCode::Esc => {
                         *self = AppState::default();
@@ -790,5 +887,154 @@ mod tests {
         let action = state.handle_key(key).unwrap();
         assert!(action.is_none());
         assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn test_subscribe_channel_hotkey() {
+        let mut state = AppState::default();
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
+        let action = state.handle_key(key).unwrap();
+        assert!(action.is_none());
+        assert!(matches!(state, AppState::SubscribingToChannel { .. }));
+    }
+
+    #[test]
+    fn test_subscribing_to_channel_typing() {
+        let mut state = AppState::SubscribingToChannel {
+            input: String::new(),
+            cursor: 0,
+            error: None,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)).unwrap();
+        match &state {
+            AppState::SubscribingToChannel { input, cursor, .. } => {
+                assert_eq!(input, "ab");
+                assert_eq!(*cursor, 2);
+            }
+            _ => panic!("Expected SubscribingToChannel state"),
+        }
+    }
+
+    #[test]
+    fn test_subscribing_to_channel_enter_submits() {
+        let mut state = AppState::SubscribingToChannel {
+            input: "peer.onion".to_string(),
+            cursor: 10,
+            error: None,
+        };
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        assert_eq!(action, Some(AppAction::SubscribeToChannel("peer.onion".to_string())));
+    }
+
+    #[test]
+    fn test_subscribing_to_channel_enter_empty_shows_error() {
+        let mut state = AppState::SubscribingToChannel {
+            input: String::new(),
+            cursor: 0,
+            error: None,
+        };
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        assert!(action.is_none());
+        match &state {
+            AppState::SubscribingToChannel { error, .. } => {
+                assert!(error.is_some());
+            }
+            _ => panic!("Expected SubscribingToChannel state"),
+        }
+    }
+
+    #[test]
+    fn test_subscribing_to_channel_escape() {
+        let mut state = AppState::SubscribingToChannel {
+            input: "draft".to_string(),
+            cursor: 5,
+            error: None,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn test_viewing_own_channel_publish() {
+        let mut state = AppState::ViewingChannel {
+            publisher_onion: "self.onion".to_string(),
+            channel_type: "public".to_string(),
+            is_own: true,
+            input: "hello world".to_string(),
+            cursor: 11,
+            scroll_offset: 0,
+        };
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        assert_eq!(action, Some(AppAction::PublishChannelPost("hello world".to_string(), "public".to_string())));
+        match &state {
+            AppState::ViewingChannel { input, cursor, .. } => {
+                assert_eq!(input, "");
+                assert_eq!(*cursor, 0);
+            }
+            _ => panic!("Expected ViewingChannel state"),
+        }
+    }
+
+    #[test]
+    fn test_viewing_own_channel_empty_enter() {
+        let mut state = AppState::ViewingChannel {
+            publisher_onion: "self.onion".to_string(),
+            channel_type: "public".to_string(),
+            is_own: true,
+            input: String::new(),
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_viewing_own_channel_escape() {
+        let mut state = AppState::ViewingChannel {
+            publisher_onion: "self.onion".to_string(),
+            channel_type: "public".to_string(),
+            is_own: true,
+            input: String::new(),
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn test_viewing_remote_channel_escape() {
+        let mut state = AppState::ViewingChannel {
+            publisher_onion: "peer.onion".to_string(),
+            channel_type: "public".to_string(),
+            is_own: false,
+            input: String::new(),
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn test_viewing_remote_channel_typing_ignored() {
+        let mut state = AppState::ViewingChannel {
+            publisher_onion: "peer.onion".to_string(),
+            channel_type: "public".to_string(),
+            is_own: false,
+            input: String::new(),
+            cursor: 0,
+            scroll_offset: 0,
+        };
+        let action = state.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)).unwrap();
+        assert!(action.is_none());
+        match &state {
+            AppState::ViewingChannel { input, .. } => {
+                assert_eq!(input, "");
+            }
+            _ => panic!("Expected ViewingChannel state"),
+        }
     }
 }

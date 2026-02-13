@@ -21,6 +21,24 @@ pub enum Message {
 
     #[serde(rename = "read_receipt")]
     ReadReceipt(DeliveryReceiptMessage),
+
+    #[serde(rename = "channel_subscribe")]
+    ChannelSubscribe(ChannelSubscribeMessage),
+
+    #[serde(rename = "channel_unsubscribe")]
+    ChannelUnsubscribe(ChannelUnsubscribeMessage),
+
+    #[serde(rename = "channel_post")]
+    ChannelPost(ChannelPostMessage),
+
+    #[serde(rename = "channel_sync_request")]
+    ChannelSyncRequest(ChannelSyncRequestMessage),
+
+    #[serde(rename = "channel_sync_response")]
+    ChannelSyncResponse(ChannelSyncResponseMessage),
+
+    #[serde(rename = "channel_post_receipt")]
+    ChannelPostReceipt(ChannelPostReceiptMessage),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -78,6 +96,58 @@ pub struct PlaintextPayload {
     pub message_type: String,  // "text", "typing_indicator", etc.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub ephemeral_ttl: Option<i64>,  // seconds until deletion after read
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelType {
+    Public,
+    FriendsOnly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelPostMessage {
+    pub publisher_onion: String,
+    pub channel_type: ChannelType,
+    pub post_id: Uuid,
+    pub content: String,
+    pub created_at: i64,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelSubscribeMessage {
+    pub subscriber_onion: String,
+    pub channel_type: ChannelType,
+    pub timestamp: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelUnsubscribeMessage {
+    pub subscriber_onion: String,
+    pub channel_type: ChannelType,
+    pub timestamp: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelSyncRequestMessage {
+    pub subscriber_onion: String,
+    pub channel_type: ChannelType,
+    pub since_timestamp: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelSyncResponseMessage {
+    pub publisher_onion: String,
+    pub channel_type: ChannelType,
+    pub posts: Vec<ChannelPostMessage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChannelPostReceiptMessage {
+    pub post_id: Uuid,
+    pub reader_onion: String,
+    pub timestamp: i64,
 }
 
 #[cfg(test)]
@@ -154,5 +224,91 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         let deserialized: PlaintextPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(payload, deserialized);
+    }
+
+    #[test]
+    fn test_channel_post_serialization() {
+        let msg = Message::ChannelPost(ChannelPostMessage {
+            publisher_onion: "alice.onion".into(),
+            channel_type: ChannelType::Public,
+            post_id: Uuid::new_v4(),
+            content: "Hello world!".into(),
+            created_at: 1234567890,
+            signature: "sig123".into(),
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("channel_post"));
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_channel_subscribe_serialization() {
+        let msg = Message::ChannelSubscribe(ChannelSubscribeMessage {
+            subscriber_onion: "bob.onion".into(),
+            channel_type: ChannelType::Public,
+            timestamp: 1234567890,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_channel_sync_request_serialization() {
+        let msg = Message::ChannelSyncRequest(ChannelSyncRequestMessage {
+            subscriber_onion: "bob.onion".into(),
+            channel_type: ChannelType::FriendsOnly,
+            since_timestamp: 1234567890,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_channel_sync_response_serialization() {
+        let msg = Message::ChannelSyncResponse(ChannelSyncResponseMessage {
+            publisher_onion: "alice.onion".into(),
+            channel_type: ChannelType::Public,
+            posts: vec![
+                ChannelPostMessage {
+                    publisher_onion: "alice.onion".into(),
+                    channel_type: ChannelType::Public,
+                    post_id: Uuid::new_v4(),
+                    content: "Post 1".into(),
+                    created_at: 1000,
+                    signature: "sig1".into(),
+                },
+            ],
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_channel_unsubscribe_serialization() {
+        let msg = Message::ChannelUnsubscribe(ChannelUnsubscribeMessage {
+            subscriber_onion: "bob.onion".into(),
+            channel_type: ChannelType::FriendsOnly,
+            timestamp: 1234567890,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("channel_unsubscribe"));
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_channel_post_receipt_serialization() {
+        let msg = Message::ChannelPostReceipt(ChannelPostReceiptMessage {
+            post_id: Uuid::new_v4(),
+            reader_onion: "bob.onion".into(),
+            timestamp: 1234567890,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
     }
 }

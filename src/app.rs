@@ -37,6 +37,9 @@ impl App {
         // Open database
         let db = Database::open(&settings.db_path)?;
 
+        // Initialize broadcast channels
+        crate::db::queries::initialize_channels(&db)?;
+
         // Generate or load identity
         // TODO: In future, load from database if exists
         let identity = IdentityKeypair::generate()?;
@@ -126,6 +129,7 @@ impl App {
         fs::create_dir_all(&settings.data_dir)?;
 
         let db = Database::open(&settings.db_path)?;
+        crate::db::queries::initialize_channels(&db)?;
         let identity = IdentityKeypair::generate()?;
         let message_queue = MessageQueue::new();
 

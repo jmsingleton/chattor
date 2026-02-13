@@ -46,6 +46,7 @@ pub enum TorrentChatError {
     Tor(String),
 }
 
+pub type ChattorError = TorrentChatError;
 pub type Result<T> = std::result::Result<T, TorrentChatError>;
 
 #[cfg(test)]

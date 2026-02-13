@@ -200,3 +200,97 @@ fn test_find_friend_for_incoming_message() {
     // Now findable
     assert!(chattor::db::queries::find_friend_by_onion(&db, "alice.onion").unwrap().is_some());
 }
+
+#[test]
+fn test_channel_post_flow() {
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    let db = chattor::db::Database::open(temp.path()).unwrap();
+
+    // Initialize channels (creates Public and Friends Only channels)
+    chattor::db::queries::initialize_channels(&db).unwrap();
+
+    // Publish posts to public channel (channel_id = 1)
+    for i in 0..5 {
+        chattor::db::queries::store_channel_post(
+            &db, 1, &format!("Post {}", i),
+            &format!("post-{}", i), (1000 + i) as i64, "sig"
+        ).unwrap();
+    }
+
+    // Retrieve posts (newest first)
+    let posts = chattor::db::queries::get_channel_posts(&db, 1, 50).unwrap();
+    assert_eq!(posts.len(), 5);
+    assert_eq!(posts[0].content, "Post 4"); // newest first
+
+    // Get posts since timestamp (oldest first, for sync)
+    let since_posts = chattor::db::queries::get_channel_posts_since(&db, 1, 1002).unwrap();
+    assert_eq!(since_posts.len(), 2); // posts 3 and 4 (created_at > 1002)
+
+    // Subscriber management
+    chattor::db::queries::add_channel_subscriber(&db, "bob.onion", "public").unwrap();
+    let subs = chattor::db::queries::get_channel_subscribers(&db, "public").unwrap();
+    assert_eq!(subs.len(), 1);
+    assert_eq!(subs[0], "bob.onion");
+
+    // Unsubscribe
+    chattor::db::queries::remove_channel_subscriber(&db, "bob.onion", "public").unwrap();
+    let subs = chattor::db::queries::get_channel_subscribers(&db, "public").unwrap();
+    assert_eq!(subs.len(), 0);
+
+    // Subscription management
+    chattor::db::queries::add_channel_subscription(&db, "alice.onion", "public").unwrap();
+    let subscriptions = chattor::db::queries::get_channel_subscriptions(&db).unwrap();
+    assert_eq!(subscriptions.len(), 1);
+    assert_eq!(subscriptions[0].publisher_onion, "alice.onion");
+
+    // Update sync time
+    chattor::db::queries::update_subscription_sync_time(&db, "alice.onion", "public", 5000).unwrap();
+    let subscriptions = chattor::db::queries::get_channel_subscriptions(&db).unwrap();
+    assert_eq!(subscriptions[0].last_sync_at, Some(5000));
+
+    // Read receipts
+    chattor::db::queries::store_channel_post_receipt(&db, "post-1", "bob.onion", 2000).unwrap();
+    chattor::db::queries::store_channel_post_receipt(&db, "post-1", "charlie.onion", 2001).unwrap();
+    let count = chattor::db::queries::get_channel_post_read_count(&db, "post-1").unwrap();
+    assert_eq!(count, 2);
+
+    // Retention enforcement
+    for i in 5..110 {
+        chattor::db::queries::store_channel_post(
+            &db, 1, &format!("Post {}", i),
+            &format!("post-{}", i), (1000 + i) as i64, "sig"
+        ).unwrap();
+    }
+    let deleted = chattor::db::queries::enforce_channel_retention(&db, 1).unwrap();
+    assert!(deleted > 0);
+    let remaining = chattor::db::queries::get_channel_posts(&db, 1, 200).unwrap();
+    assert_eq!(remaining.len(), 100);
+}
+
+#[test]
+fn test_channel_protocol_messages() {
+    use chattor::protocol::message::*;
+
+    // Test ChannelPost serialization
+    let post = Message::ChannelPost(ChannelPostMessage {
+        publisher_onion: "alice.onion".to_string(),
+        channel_type: ChannelType::Public,
+        post_id: uuid::Uuid::nil(),
+        content: "Hello world".to_string(),
+        created_at: 1000,
+        signature: "sig".to_string(),
+    });
+    let json = serde_json::to_string(&post).unwrap();
+    let deser: Message = serde_json::from_str(&json).unwrap();
+    assert!(matches!(deser, Message::ChannelPost(_)));
+
+    // Test ChannelSyncRequest
+    let sync = Message::ChannelSyncRequest(ChannelSyncRequestMessage {
+        subscriber_onion: "bob.onion".to_string(),
+        channel_type: ChannelType::FriendsOnly,
+        since_timestamp: 500,
+    });
+    let json = serde_json::to_string(&sync).unwrap();
+    let deser: Message = serde_json::from_str(&json).unwrap();
+    assert!(matches!(deser, Message::ChannelSyncRequest(_)));
+}
