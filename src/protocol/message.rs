@@ -288,6 +288,19 @@ mod tests {
     }
 
     #[test]
+    fn test_channel_unsubscribe_serialization() {
+        let msg = Message::ChannelUnsubscribe(ChannelUnsubscribeMessage {
+            subscriber_onion: "bob.onion".into(),
+            channel_type: ChannelType::FriendsOnly,
+            timestamp: 1234567890,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("channel_unsubscribe"));
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+    }
+
+    #[test]
     fn test_channel_post_receipt_serialization() {
         let msg = Message::ChannelPostReceipt(ChannelPostReceiptMessage {
             post_id: Uuid::new_v4(),
