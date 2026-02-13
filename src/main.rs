@@ -584,35 +584,7 @@ async fn main() -> Result<()> {
                         None => {} // Just state change
                     }
                 }
-                Event::Mouse(mouse_event) => {
-                    use crossterm::event::{MouseEventKind, MouseButton};
-                    if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                        let app_lock = app.lock().await;
-                        // Check if click is in setup wizard area (when no friends)
-                        let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
-                        if friends.is_empty() {
-                            if let Some(ref onion) = app_lock.onion_address {
-                                // Rough check: click in the identity box area
-                                let row = mouse_event.row;
-                                let term_height = terminal.size().map(|s| s.height).unwrap_or(24);
-                                let wizard_start = term_height / 4;
-
-                                if row >= wizard_start + 4 && row <= wizard_start + 6 {
-                                    // Onion address area
-                                    ui::copy_to_clipboard(onion);
-                                } else if row >= wizard_start + 7 && row <= wizard_start + 9 {
-                                    // Friend code area
-                                    let code = crate::tor::address::onion_to_friend_code(onion)
-                                        .unwrap_or_default();
-                                    if !code.is_empty() {
-                                        ui::copy_to_clipboard(&code);
-                                    }
-                                }
-                            }
-                        }
-                        drop(app_lock);
-                    }
-                }
+                Event::Mouse(_) => {} // Reserved for future mouse interactions
                 _ => {} // Resize and other events
             }
         }

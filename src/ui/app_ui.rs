@@ -66,10 +66,6 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
             &ctx.channel_posts, &ctx.channel_post_read_counts,
             &ctx.theme,
         );
-    } else if ctx.friends.is_empty() && ctx.channel_subscriptions.is_empty() {
-        // Setup wizard
-        let (onion_ref, code_ref) = (ctx.own_onion.as_deref(), ctx.friend_code.as_deref());
-        crate::ui::conversation::render_setup_wizard(f, chunks[1], onion_ref, code_ref, &ctx.theme);
     } else {
         // Split into sidebar + conversation
         let main_chunks = Layout::default()
