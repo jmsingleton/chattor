@@ -35,11 +35,12 @@ cargo build --release    # Optimized build
 cargo run                # Run the TUI (press 'q' to quit)
 cargo run -- --help      # Show CLI options
 cargo run -- --debug     # Enable debug logging
+cargo run -- --theme cyberpunk  # Run with a specific theme
 ```
 
 ### Testing
 ```bash
-cargo test                            # Run all tests (~170 currently)
+cargo test                            # Run all tests (~180 currently)
 cargo test protocol::message          # Run specific module tests
 cargo test --test integration         # Integration tests only
 cargo test -- --nocapture             # Show test output
@@ -135,6 +136,7 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - Modals: add friend, friend requests, identity, ephemeral settings, channel subscribe
 - Channel feed view with post composition (own channels) and read-only view (subscriptions)
 - Sidebar shows friends list + channels section (own channels + subscriptions)
+- Theme struct provides consistent colors across all UI components
 
 **8. Broadcast Channels (`src/ui/channel_feed.rs`, `src/db/queries.rs`)**
 - Two auto-created channels per user: Public and Friends Only
@@ -193,8 +195,17 @@ Database path: `{data_dir}/messages.db`
 - Periodic channel sync task (every 5 minutes)
 - Integration tests for full channel flow
 
-### Phase 4: Polish & Theming
-- Animations, full theming system, vanity .onion mining UI
+### Phase 4: Polish & Theming ✅
+- Full theming system with Theme struct and 7 preset themes (dark, light, cyberpunk, minimal, rose-pine, rose-pine-moon, rose-pine-dawn)
+- TOML config overrides via ~/.config/chattor/theme.toml
+- --theme CLI flag for quick preset switching
+- All UI components themed (header, sidebar, conversation, modals, bootstrap, channels)
+- Rounded borders throughout, wider sidebar (24 chars)
+- Connection status indicator in header (◉ Connected / ◌ Connecting)
+- Themed keybinding hints in footer
+- Polished identity modal with copy feedback ([o] copy onion, [c] copy code)
+- Setup wizard removed, replaced with empty state welcome hint
+- Clipboard fix with fallback to wl-copy/xclip/xsel/pbcopy
 
 ### Phase 5: Hardening
 - Security audit, backup/restore, packaging for distributions
@@ -240,6 +251,7 @@ Database path: `{data_dir}/messages.db`
 - `src/protocol/message.rs` - All message types and wire format (12 types)
 - `src/net/queue.rs` - Offline message delivery queue
 - `src/ui/channel_feed.rs` - Channel post feed rendering
+- `src/ui/theme.rs` - Theme struct, 7 preset definitions, hex color parsing, TOML config loading
 - `docs/plans/2026-02-06-chattor-design.md` - Complete design vision
 - `docs/plans/2026-02-12-broadcast-channels-design.md` - Phase 3 broadcast channels design
 
