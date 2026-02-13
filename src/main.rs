@@ -164,6 +164,22 @@ async fn main() -> Result<()> {
     }
 
     // --- Main App Phase ---
+    // Spawn periodic channel sync task (every 5 minutes)
+    let app_sync = Arc::clone(&app);
+    tokio::spawn(async move {
+        // Initial sync after 10 seconds
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        loop {
+            {
+                let app_lock = app_sync.lock().await;
+                if let Err(e) = sync_channel_subscriptions(&*app_lock).await {
+                    eprintln!("Channel sync error: {}", e);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        }
+    });
+
     // Initialize state machine
     let mut app_state = AppState::default();
 
