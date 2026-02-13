@@ -4,7 +4,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
-use crate::db::queries::{FriendEntry, ChatMessage};
+use crate::db::queries::{FriendEntry, ChatMessage, ChannelPost, ChannelSubscription};
 use super::AppState;
 
 /// Data needed for rendering (populated by main loop before render)
@@ -16,6 +16,9 @@ pub struct RenderContext {
     pub tor_connected: bool,
     pub pending_request_count: i64,
     pub conversation_ephemeral_ttl: Option<i64>,
+    pub channel_subscriptions: Vec<ChannelSubscription>,
+    pub channel_posts: Vec<ChannelPost>,
+    pub channel_post_read_counts: std::collections::HashMap<String, i64>,
 }
 
 /// Render the application UI based on current state
@@ -43,8 +46,14 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
 
-    // Main area -- depends on whether we have friends
-    if ctx.friends.is_empty() {
+    // Main area -- depends on state
+    if let AppState::ViewingChannel { ref publisher_onion, ref channel_type, is_own, ref input, cursor, scroll_offset } = app_state {
+        crate::ui::channel_feed::render_channel_feed(
+            f, chunks[1], publisher_onion, channel_type, *is_own,
+            input, *cursor, *scroll_offset,
+            &ctx.channel_posts, &ctx.channel_post_read_counts,
+        );
+    } else if ctx.friends.is_empty() && ctx.channel_subscriptions.is_empty() {
         // Setup wizard
         let (onion_ref, code_ref) = (ctx.own_onion.as_deref(), ctx.friend_code.as_deref());
         crate::ui::conversation::render_setup_wizard(f, chunks[1], onion_ref, code_ref);
@@ -68,9 +77,10 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
                 (None, None, "", 0, false, 0)
             };
 
-        // Sidebar
-        crate::ui::sidebar::render_sidebar(
-            f, main_chunks[0], &ctx.friends, selected_idx, !input_focused, ctx.pending_request_count,
+        // Sidebar (with channels)
+        crate::ui::sidebar::render_sidebar_with_channels(
+            f, main_chunks[0], &ctx.friends, selected_idx, !input_focused,
+            ctx.pending_request_count, &ctx.channel_subscriptions,
         );
 
         // Right panel: conversation + input
@@ -136,6 +146,9 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         }
         AppState::SettingEphemeral { selected_idx, .. } => {
             crate::ui::modals::render_ephemeral_modal(f, *selected_idx);
+        }
+        AppState::SubscribingToChannel { input, error, .. } => {
+            crate::ui::modals::render_subscribe_channel_modal(f, input, error.as_deref());
         }
         _ => {}
     }

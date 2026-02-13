@@ -35,22 +35,135 @@ async fn main() -> Result<()> {
     // Initialize application wrapped in Arc<Mutex> for sharing between threads
     let app = Arc::new(Mutex::new(App::new()?));
 
-    // Initialize Tor in background
-    let app_tor = Arc::clone(&app);
-    tokio::spawn(async move {
-        let mut app_lock = app_tor.lock().await;
-        if let Err(e) = app_lock.init_tor().await {
-            eprintln!("Failed to initialize Tor: {}", e);
-        }
-    });
-
-    // Set up terminal
+    // Set up terminal FIRST so we can render immediately
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    // --- Bootstrap Phase ---
+    // Create watch channel for Tor init progress
+    let (bootstrap_tx, mut bootstrap_rx) = tokio::sync::watch::channel(
+        ui::BootstrapUpdate::Progress(0)
+    );
+
+    // Spawn Tor init in background, communicating via watch channel
+    let app_tor = Arc::clone(&app);
+    tokio::spawn(async move {
+        let mut app_lock = app_tor.lock().await;
+        match app_lock.init_tor().await {
+            Ok(()) => {
+                let _ = bootstrap_tx.send(ui::BootstrapUpdate::Connected);
+            }
+            Err(e) => {
+                let _ = bootstrap_tx.send(ui::BootstrapUpdate::Failed(format!("{}", e)));
+            }
+        }
+    });
+
+    // Run bootstrap animation loop
+    let mut phase = ui::BootstrapPhase::new();
+    let bootstrap_start = std::time::Instant::now();
+    let bootstrap_timeout = std::time::Duration::from_secs(60);
+
+    loop {
+        // Render current bootstrap frame
+        match &phase {
+            ui::BootstrapPhase::Connecting { frame, tick, progress } => {
+                let f = *frame;
+                let t = *tick;
+                let p = *progress;
+                terminal.draw(|fr| {
+                    ui::render_connecting(fr, f, t, p);
+                })?;
+            }
+            ui::BootstrapPhase::Failed { ref error, .. } => {
+                let err = error.clone();
+                terminal.draw(|fr| {
+                    ui::render_failure(fr, &err);
+                })?;
+            }
+            ui::BootstrapPhase::Done => {
+                break;
+            }
+        }
+
+        // Check for timeout (only during connecting)
+        if matches!(phase, ui::BootstrapPhase::Connecting { .. })
+            && bootstrap_start.elapsed() > bootstrap_timeout
+        {
+            phase.fail("connection timed out after 60 seconds".to_string());
+            continue;
+        }
+
+        // Check for updates from Tor init task
+        if bootstrap_rx.has_changed().unwrap_or(false) {
+            let update = bootstrap_rx.borrow_and_update().clone();
+            match update {
+                ui::BootstrapUpdate::Progress(p) => {
+                    phase.set_progress(p);
+                }
+                ui::BootstrapUpdate::Connected => {
+                    phase.done();
+                    continue;
+                }
+                ui::BootstrapUpdate::Failed(e) => {
+                    phase.fail(e);
+                }
+            }
+        }
+
+        // Handle key events
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if let Some(action) = ui::handle_bootstrap_key(&phase, key) {
+                    match action {
+                        ui::BootstrapAction::Quit => {
+                            // Clean up and exit
+                            disable_raw_mode()?;
+                            execute!(
+                                terminal.backend_mut(),
+                                LeaveAlternateScreen,
+                                DisableMouseCapture
+                            )?;
+                            terminal.show_cursor()?;
+                            return Ok(());
+                        }
+                        ui::BootstrapAction::ContinueOffline => {
+                            break;
+                        }
+                        ui::BootstrapAction::Retry => {
+                            phase = ui::BootstrapPhase::new();
+                            let (new_tx, new_rx) = tokio::sync::watch::channel(
+                                ui::BootstrapUpdate::Progress(0)
+                            );
+                            bootstrap_rx = new_rx;
+                            let app_retry = Arc::clone(&app);
+                            tokio::spawn(async move {
+                                let mut app_lock = app_retry.lock().await;
+                                match app_lock.init_tor().await {
+                                    Ok(()) => {
+                                        let _ = new_tx.send(ui::BootstrapUpdate::Connected);
+                                    }
+                                    Err(e) => {
+                                        let _ = new_tx.send(ui::BootstrapUpdate::Failed(
+                                            format!("{}", e)
+                                        ));
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Advance animation tick
+        phase.advance_tick();
+    }
+
+    // --- Main App Phase ---
     // Initialize state machine
     let mut app_state = AppState::default();
 
@@ -79,6 +192,30 @@ async fn main() -> Result<()> {
             (Vec::new(), None)
         };
 
+        // Load channel data
+        let channel_subscriptions = db::queries::get_channel_subscriptions(&app_lock.db).unwrap_or_default();
+
+        let (channel_posts, channel_post_read_counts) = if let AppState::ViewingChannel {
+            ref channel_type, is_own, ..
+        } = &app_state {
+            let channel_id = if *is_own {
+                if channel_type == "public" { 1 } else { 2 }
+            } else {
+                0 // remote posts stored with channel_id 0
+            };
+            let posts = db::queries::get_channel_posts(&app_lock.db, channel_id, 100).unwrap_or_default();
+            let mut counts = std::collections::HashMap::new();
+            if *is_own {
+                for post in &posts {
+                    let count = db::queries::get_channel_post_read_count(&app_lock.db, &post.post_id).unwrap_or(0);
+                    counts.insert(post.post_id.clone(), count);
+                }
+            }
+            (posts, counts)
+        } else {
+            (Vec::new(), std::collections::HashMap::new())
+        };
+
         // Release lock before rendering
         drop(app_lock);
 
@@ -90,6 +227,9 @@ async fn main() -> Result<()> {
             tor_connected,
             pending_request_count,
             conversation_ephemeral_ttl,
+            channel_subscriptions,
+            channel_posts,
+            channel_post_read_counts,
         };
 
         // Render current state
