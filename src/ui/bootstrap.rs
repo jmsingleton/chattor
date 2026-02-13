@@ -101,6 +101,105 @@ impl BootstrapPhase {
     }
 }
 
+/// Returns 6 animation frames of Unicode block art showing three onion relay
+/// nodes with a signal pulse traveling between them. Each frame is a Vec of
+/// string lines, designed for 60-70 chars wide maximum.
+pub fn connecting_frames() -> Vec<Vec<&'static str>> {
+    vec![
+        // Frame 0: "you" onion lit, pulse starting near it
+        vec![
+            "     ▄▄▄                                                       ",
+            "    ▄███▄              ▄▄▄                  ▄▄▄                ",
+            "   █▓▓▓▓▓█            ▄███▄                ▄███▄              ",
+            "   █▓▓▓▓▓█           █░░░░░█              █░░░░░█             ",
+            "    ▀███▀             █░░░░░█              █░░░░░█             ",
+            "     ▀▀▀    ░▒▓═══════▀███▀════════════════▀███▀              ",
+            "                       ▀▀▀                  ▀▀▀               ",
+            "     you              relay                 exit              ",
+        ],
+        // Frame 1: Pulse traveling between "you" and "relay"
+        vec![
+            "     ▄▄▄                                                       ",
+            "    ▄███▄              ▄▄▄                  ▄▄▄                ",
+            "   █▓▓▓▓▓█            ▄███▄                ▄███▄              ",
+            "   █▓▓▓▓▓█           █░░░░░█              █░░░░░█             ",
+            "    ▀███▀             █░░░░░█              █░░░░░█             ",
+            "     ▀▀▀  ═════░▒▓════▀███▀════════════════▀███▀              ",
+            "                       ▀▀▀                  ▀▀▀               ",
+            "     you              relay                 exit              ",
+        ],
+        // Frame 2: "relay" node lights up as pulse arrives
+        vec![
+            "     ▄▄▄                                                       ",
+            "    ▄███▄              ▄▄▄                  ▄▄▄                ",
+            "   █▓▓▓▓▓█            ▄███▄                ▄███▄              ",
+            "   █▓▓▓▓▓█           █▓▓▓▓▓█              █░░░░░█             ",
+            "    ▀███▀             █▓▓▓▓▓█              █░░░░░█             ",
+            "     ▀▀▀  ═══════════░▀███▀════════════════▀███▀              ",
+            "                       ▀▀▀                  ▀▀▀               ",
+            "     you              relay                 exit              ",
+        ],
+        // Frame 3: Pulse traveling between "relay" and "exit"
+        vec![
+            "     ▄▄▄                                                       ",
+            "    ▄███▄              ▄▄▄                  ▄▄▄                ",
+            "   █▓▓▓▓▓█            ▄███▄                ▄███▄              ",
+            "   █▓▓▓▓▓█           █▓▓▓▓▓█              █░░░░░█             ",
+            "    ▀███▀             █▓▓▓▓▓█              █░░░░░█             ",
+            "     ▀▀▀  ════════════▀███▀═════░▒▓════════▀███▀              ",
+            "                       ▀▀▀                  ▀▀▀               ",
+            "     you              relay                 exit              ",
+        ],
+        // Frame 4: "exit" node lights up as pulse arrives
+        vec![
+            "     ▄▄▄                                                       ",
+            "    ▄███▄              ▄▄▄                  ▄▄▄                ",
+            "   █▓▓▓▓▓█            ▄███▄                ▄███▄              ",
+            "   █▓▓▓▓▓█           █▓▓▓▓▓█              █▓▓▓▓▓█             ",
+            "    ▀███▀             █▓▓▓▓▓█              █▓▓▓▓▓█             ",
+            "     ▀▀▀  ════════════▀███▀═════════════░▒▓▀███▀              ",
+            "                       ▀▀▀                  ▀▀▀               ",
+            "     you              relay                 exit              ",
+        ],
+        // Frame 5: All three nodes lit (success flash)
+        vec![
+            "     ▄▄▄                                                       ",
+            "    ▄███▄              ▄▄▄                  ▄▄▄                ",
+            "   █▓▓▓▓▓█            ▄███▄                ▄███▄              ",
+            "   █▓▓▓▓▓█           █▓▓▓▓▓█              █▓▓▓▓▓█             ",
+            "    ▀███▀             █▓▓▓▓▓█              █▓▓▓▓▓█             ",
+            "     ▀▀▀  ════════════▀███▀════════════════▀███▀              ",
+            "                       ▀▀▀                  ▀▀▀               ",
+            "     you              relay                 exit              ",
+        ],
+    ]
+}
+
+/// Returns a single dim onion sprite for the failure screen, using lightest
+/// shading to appear "powered down".
+pub fn failure_art() -> Vec<&'static str> {
+    vec![
+        "                    ▄▄▄    ",
+        "                   ▄███▄   ",
+        "                  █░░░░░█  ",
+        "                  █░░░░░█  ",
+        "                   ▀███▀   ",
+        "                    ▀▀▀    ",
+    ]
+}
+
+/// Returns rotating cheeky status messages shown during Tor bootstrap.
+pub fn status_messages() -> Vec<&'static str> {
+    vec![
+        "Peeling onion layers...",
+        "Negotiating with relays...",
+        "Building circuits in the dark...",
+        "Routing through the underground...",
+        "Almost there, patience is a virtue...",
+        "Wrapping in layers of encryption...",
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,5 +341,26 @@ mod tests {
         let mut phase = BootstrapPhase::Done;
         phase.advance_tick();
         assert_eq!(phase, BootstrapPhase::Done);
+    }
+
+    #[test]
+    fn connecting_frames_exist_and_are_nonempty() {
+        let frames = connecting_frames();
+        assert!(frames.len() >= 4);
+        for frame in &frames {
+            assert!(!frame.is_empty());
+        }
+    }
+
+    #[test]
+    fn failure_art_exists() {
+        let art = failure_art();
+        assert!(!art.is_empty());
+    }
+
+    #[test]
+    fn status_messages_exist() {
+        let msgs = status_messages();
+        assert!(msgs.len() >= 3);
     }
 }
