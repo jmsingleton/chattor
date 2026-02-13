@@ -332,6 +332,15 @@ async fn main() -> Result<()> {
                             db::queries::set_conversation_ephemeral_ttl(&app_lock.db, conv_id, ttl).ok();
                             drop(app_lock);
                         }
+                        Some(AppAction::PublishChannelPost(_content, _channel_type)) => {
+                            // TODO: implement channel post publishing
+                        }
+                        Some(AppAction::SubscribeToChannel(_address)) => {
+                            // TODO: implement channel subscription
+                        }
+                        Some(AppAction::SelectChannel(_publisher, _ch_type, _is_own)) => {
+                            // TODO: implement channel selection
+                        }
                         Some(AppAction::Quit) => break Ok(()),
                         None => {} // Just state change
                     }

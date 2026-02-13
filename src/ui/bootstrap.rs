@@ -1,3 +1,11 @@
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Clear, Paragraph},
+    Frame,
+};
+
 /// Status updates sent from the Tor bootstrap process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapUpdate {
@@ -198,6 +206,182 @@ pub fn status_messages() -> Vec<&'static str> {
         "Almost there, patience is a virtue...",
         "Wrapping in layers of encryption...",
     ]
+}
+
+/// Render the connecting animation screen.
+///
+/// Shows the chattor title, ASCII relay animation, and a rotating status
+/// message. The `frame` selects which animation frame to display, and `tick`
+/// determines which status message to show (cycles every 10 ticks).
+pub fn render_connecting(f: &mut Frame, frame: usize, tick: u64, _progress: u8) {
+    let area = f.size();
+    f.render_widget(Clear, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(25), // top padding
+            Constraint::Length(1),      // title
+            Constraint::Length(1),      // spacer
+            Constraint::Length(8),      // ASCII art
+            Constraint::Length(1),      // spacer
+            Constraint::Length(1),      // status message
+            Constraint::Min(0),         // bottom fill
+        ])
+        .split(area);
+
+    // Title
+    let title = Paragraph::new(Line::from(vec![Span::styled(
+        "chattor",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )]))
+    .alignment(Alignment::Center);
+    f.render_widget(title, chunks[1]);
+
+    // ASCII art frame
+    let frames = connecting_frames();
+    let total_frames = frames.len();
+    let current_frame = &frames[frame % total_frames];
+    let art_lines: Vec<Line> = current_frame
+        .iter()
+        .map(|line| Line::from(Span::styled(*line, Style::default().fg(Color::Cyan))))
+        .collect();
+    let art = Paragraph::new(art_lines).alignment(Alignment::Center);
+    f.render_widget(art, chunks[3]);
+
+    // Rotating status message
+    let msgs = status_messages();
+    let msg_idx = (tick / 10) as usize % msgs.len();
+    let status = Paragraph::new(Line::from(Span::styled(
+        msgs[msg_idx],
+        Style::default().fg(Color::DarkGray),
+    )))
+    .alignment(Alignment::Center);
+    f.render_widget(status, chunks[5]);
+}
+
+/// Render the failure screen.
+///
+/// Shows the chattor title (dimmed), a sad onion sprite, the error message,
+/// troubleshooting tips, and action keys for retry/continue/quit.
+pub fn render_failure(f: &mut Frame, error: &str) {
+    let area = f.size();
+    f.render_widget(Clear, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(15), // top padding
+            Constraint::Length(1),      // title
+            Constraint::Length(1),      // spacer
+            Constraint::Length(6),      // failure art
+            Constraint::Length(1),      // spacer
+            Constraint::Length(1),      // "connection failed :("
+            Constraint::Length(1),      // spacer
+            Constraint::Length(1),      // error detail
+            Constraint::Length(1),      // spacer
+            Constraint::Length(4),      // troubleshooting tips
+            Constraint::Length(1),      // spacer
+            Constraint::Length(1),      // docs link
+            Constraint::Length(1),      // spacer
+            Constraint::Length(1),      // action keys
+            Constraint::Min(0),         // bottom fill
+        ])
+        .split(area);
+
+    // Title (dimmed)
+    let title = Paragraph::new(Line::from(Span::styled(
+        "chattor",
+        Style::default().fg(Color::DarkGray),
+    )))
+    .alignment(Alignment::Center);
+    f.render_widget(title, chunks[1]);
+
+    // Failure art
+    let art_data = failure_art();
+    let art_lines: Vec<Line> = art_data
+        .iter()
+        .map(|line| Line::from(Span::styled(*line, Style::default().fg(Color::DarkGray))))
+        .collect();
+    let art = Paragraph::new(art_lines).alignment(Alignment::Center);
+    f.render_widget(art, chunks[3]);
+
+    // "connection failed :("
+    let fail_msg = Paragraph::new(Line::from(Span::styled(
+        "connection failed :(",
+        Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD),
+    )))
+    .alignment(Alignment::Center);
+    f.render_widget(fail_msg, chunks[5]);
+
+    // Error detail
+    let err_detail = Paragraph::new(Line::from(Span::styled(
+        error,
+        Style::default().fg(Color::DarkGray),
+    )))
+    .alignment(Alignment::Center);
+    f.render_widget(err_detail, chunks[7]);
+
+    // Troubleshooting tips
+    let tips = vec![
+        Line::from(Span::styled(
+            "check your internet connection",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(Span::styled(
+            "your firewall may be blocking outbound traffic",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(Span::styled(
+            "tor network may be temporarily unreachable",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(Span::styled(
+            "try a different network — some block tor",
+            Style::default().fg(Color::Gray),
+        )),
+    ];
+    let tips_widget = Paragraph::new(tips).alignment(Alignment::Center);
+    f.render_widget(tips_widget, chunks[9]);
+
+    // Docs link
+    let docs = Paragraph::new(Line::from(Span::styled(
+        "docs: https://github.com/chattor/chattor/wiki/tor",
+        Style::default().fg(Color::DarkGray),
+    )))
+    .alignment(Alignment::Center);
+    f.render_widget(docs, chunks[11]);
+
+    // Action keys
+    let action_line = Line::from(vec![
+        Span::styled(
+            "[R]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Retry  ", Style::default().fg(Color::Gray)),
+        Span::styled(
+            "[C]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Continue  ", Style::default().fg(Color::Gray)),
+        Span::styled(
+            "[Q]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" Quit", Style::default().fg(Color::Gray)),
+    ]);
+    let actions = Paragraph::new(action_line).alignment(Alignment::Center);
+    f.render_widget(actions, chunks[13]);
 }
 
 #[cfg(test)]

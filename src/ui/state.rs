@@ -35,6 +35,19 @@ pub enum AppState {
         conversation_id: i64,
         selected_idx: usize,
     },
+    ViewingChannel {
+        publisher_onion: String,
+        channel_type: String,     // "public" or "friends_only"
+        is_own: bool,
+        input: String,            // for composing (own channels only)
+        cursor: usize,
+        scroll_offset: usize,
+    },
+    SubscribingToChannel {
+        input: String,
+        cursor: usize,
+        error: Option<String>,
+    },
 }
 
 impl Default for AppState {
@@ -60,6 +73,9 @@ pub enum AppAction {
     SetEphemeralTtl(i64, Option<i64>), // (conversation_id, ttl_seconds or None for off)
     ViewMyIdentity,
     ViewFriendRequests,
+    PublishChannelPost(String, String),     // (content, channel_type)
+    SubscribeToChannel(String),             // publisher .onion address
+    SelectChannel(String, String, bool),    // (publisher_onion, channel_type, is_own)
     Quit,
 }
 
@@ -143,6 +159,14 @@ impl AppState {
                                     selected_idx: 0,
                                 };
                             }
+                            Ok(None)
+                        }
+                        KeyCode::Char('s') => {
+                            *self = AppState::SubscribingToChannel {
+                                input: String::new(),
+                                cursor: 0,
+                                error: None,
+                            };
                             Ok(None)
                         }
                         KeyCode::Tab => {
@@ -334,6 +358,79 @@ impl AppState {
                         };
                         *self = AppState::default();
                         Ok(Some(AppAction::SetEphemeralTtl(conv_id, ttl)))
+                    }
+                    KeyCode::Esc => {
+                        *self = AppState::default();
+                        Ok(None)
+                    }
+                    _ => Ok(None),
+                }
+            }
+
+            AppState::ViewingChannel { input, cursor, is_own, publisher_onion, channel_type, .. } => {
+                if *is_own {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            input.insert(*cursor, c);
+                            *cursor += 1;
+                            Ok(None)
+                        }
+                        KeyCode::Backspace => {
+                            if *cursor > 0 {
+                                *cursor -= 1;
+                                input.remove(*cursor);
+                            }
+                            Ok(None)
+                        }
+                        KeyCode::Enter => {
+                            if input.is_empty() {
+                                Ok(None)
+                            } else {
+                                let content = input.clone();
+                                let ch_type = channel_type.clone();
+                                input.clear();
+                                *cursor = 0;
+                                Ok(Some(AppAction::PublishChannelPost(content, ch_type)))
+                            }
+                        }
+                        KeyCode::Esc => {
+                            *self = AppState::default();
+                            Ok(None)
+                        }
+                        _ => Ok(None),
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Esc => {
+                            *self = AppState::default();
+                            Ok(None)
+                        }
+                        _ => Ok(None),
+                    }
+                }
+            }
+
+            AppState::SubscribingToChannel { input, cursor, error } => {
+                match key.code {
+                    KeyCode::Char(c) => {
+                        input.insert(*cursor, c);
+                        *cursor += 1;
+                        Ok(None)
+                    }
+                    KeyCode::Backspace => {
+                        if *cursor > 0 {
+                            *cursor -= 1;
+                            input.remove(*cursor);
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Enter => {
+                        if input.is_empty() {
+                            *error = Some("Please enter a channel address".to_string());
+                            Ok(None)
+                        } else {
+                            Ok(Some(AppAction::SubscribeToChannel(input.clone())))
+                        }
                     }
                     KeyCode::Esc => {
                         *self = AppState::default();

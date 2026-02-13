@@ -112,6 +112,9 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         AppState::ViewingFriendRequest { .. } => "[A]ccept  [R]eject  [Esc] Back",
         AppState::ViewingMyIdentity { .. } => "[i/Esc] Close",
         AppState::SettingEphemeral { .. } => "[\u{2191}\u{2193}] Select  [Enter] Confirm  [Esc] Cancel",
+        AppState::ViewingChannel { is_own: true, .. } => "[Enter] Post  [Esc] Back",
+        AppState::ViewingChannel { .. } => "[Esc] Back",
+        AppState::SubscribingToChannel { .. } => "[Enter] Subscribe  [Esc] Cancel",
     };
     let footer = Paragraph::new(format!("  {}", footer_text))
         .style(Style::default().fg(Color::DarkGray));
