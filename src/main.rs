@@ -83,13 +83,13 @@ async fn main() -> Result<()> {
                 let t = *tick;
                 let p = *progress;
                 terminal.draw(|fr| {
-                    ui::render_connecting(fr, f, t, p);
+                    ui::render_connecting(fr, f, t, p, &theme);
                 })?;
             }
             ui::BootstrapPhase::Failed { ref error, .. } => {
                 let err = error.clone();
                 terminal.draw(|fr| {
-                    ui::render_failure(fr, &err);
+                    ui::render_failure(fr, &err, &theme);
                 })?;
             }
             ui::BootstrapPhase::Done => {
