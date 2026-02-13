@@ -6,6 +6,7 @@ pub mod modals;
 pub mod sidebar;
 pub mod state;
 pub mod error;
+pub mod theme;
 
 pub use app_ui::{render_app, RenderContext};
 pub use bootstrap::{
@@ -18,6 +19,7 @@ pub use modals::{render_add_friend_modal, render_friend_request_modal, render_id
 pub use sidebar::{render_sidebar, render_sidebar_with_channels};
 pub use state::{AppState, AppAction};
 pub use error::format_error_for_user;
+pub use theme::Theme;
 
 use crate::app::App;
 
