@@ -165,6 +165,7 @@ async fn main() -> Result<()> {
 
     // --- Main App Phase ---
     // Spawn periodic channel sync task (every 5 minutes)
+    // Queues sync requests in the message queue for delivery by the queue processor
     let app_sync = Arc::clone(&app);
     tokio::spawn(async move {
         // Initial sync after 10 seconds
@@ -172,8 +173,10 @@ async fn main() -> Result<()> {
         loop {
             {
                 let app_lock = app_sync.lock().await;
-                if let Err(e) = sync_channel_subscriptions(&*app_lock).await {
-                    eprintln!("Channel sync error: {}", e);
+                if let Ok(requests) = collect_sync_requests(&*app_lock) {
+                    for (peer_onion, sync_msg) in requests {
+                        app_lock.message_queue.enqueue(&app_lock.db, &peer_onion, &sync_msg, "low").ok();
+                    }
                 }
             }
             tokio::time::sleep(std::time::Duration::from_secs(300)).await;
@@ -1129,4 +1132,32 @@ fn handle_incoming_accept(
     eprintln!("Friend request accepted by {}", accept.from_onion);
 
     Ok(())
+}
+
+/// Collect channel sync requests (synchronous, safe to call under lock)
+fn collect_sync_requests(app: &App) -> Result<Vec<(String, protocol::message::Message)>> {
+    let subscriptions = db::queries::get_channel_subscriptions(&app.db)?;
+    let own_onion = app.onion_address.clone().unwrap_or_default();
+
+    let mut requests = Vec::new();
+    for sub in subscriptions {
+        let since = sub.last_sync_at.unwrap_or(0);
+        let channel_type = if sub.channel_type == "public" {
+            protocol::message::ChannelType::Public
+        } else {
+            protocol::message::ChannelType::FriendsOnly
+        };
+
+        let sync_req = protocol::message::Message::ChannelSyncRequest(
+            protocol::message::ChannelSyncRequestMessage {
+                subscriber_onion: own_onion.clone(),
+                channel_type,
+                since_timestamp: since,
+            }
+        );
+
+        requests.push((sub.publisher_onion, sync_req));
+    }
+
+    Ok(requests)
 }
