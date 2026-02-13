@@ -16,6 +16,7 @@ pub fn render_conversation(
     own_onion: Option<&str>,
     scroll_offset: usize,
     ephemeral_ttl: Option<i64>,
+    _theme: &crate::ui::theme::Theme,
 ) {
     let title = if let (Some(friend_entry), Some(ttl)) = (friend, ephemeral_ttl) {
         format!(" {} [⏱ {}] ", friend_entry.display(), format_ttl(ttl))
@@ -142,6 +143,7 @@ pub fn render_setup_wizard(
     area: Rect,
     onion_address: Option<&str>,
     friend_code: Option<&str>,
+    _theme: &crate::ui::theme::Theme,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -212,6 +214,7 @@ pub fn render_input(
     input: &str,
     cursor: usize,
     focused: bool,
+    _theme: &crate::ui::theme::Theme,
 ) {
     let border_color = if focused { Color::Cyan } else { Color::DarkGray };
     let prompt = if focused { "> " } else { "  " };

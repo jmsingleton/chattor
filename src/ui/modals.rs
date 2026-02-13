@@ -10,6 +10,7 @@ pub fn render_add_friend_modal(
     f: &mut Frame,
     input: &str,
     error: Option<&str>,
+    _theme: &crate::ui::theme::Theme,
 ) {
     let area = centered_rect(60, 40, f.size());
 
@@ -65,6 +66,7 @@ pub fn render_friend_request_modal(
     f: &mut Frame,
     from_onion: &str,
     friend_code: &str,
+    _theme: &crate::ui::theme::Theme,
 ) {
     let area = centered_rect(60, 40, f.size());
 
@@ -114,6 +116,7 @@ pub fn render_friend_request_list(
     f: &mut Frame,
     requests: &[crate::db::queries::PendingFriendRequest],
     selected_idx: usize,
+    _theme: &crate::ui::theme::Theme,
 ) {
     use ratatui::style::Modifier;
     use ratatui::widgets::{List, ListItem};
@@ -203,7 +206,7 @@ pub fn render_friend_request_list(
 }
 
 /// Render "My Identity" modal showing friend code and onion address
-pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &str) {
+pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &str, _theme: &crate::ui::theme::Theme) {
     use ratatui::style::Modifier;
 
     let area = centered_rect(60, 50, f.size());
@@ -264,7 +267,7 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
 }
 
 /// Render ephemeral messages duration picker modal
-pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize) {
+pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize, _theme: &crate::ui::theme::Theme) {
     use ratatui::style::Modifier;
     use ratatui::widgets::{List, ListItem};
     use ratatui::text::{Line, Span};
@@ -327,6 +330,7 @@ pub fn render_subscribe_channel_modal(
     f: &mut Frame,
     input: &str,
     error: Option<&str>,
+    _theme: &crate::ui::theme::Theme,
 ) {
     let area = centered_rect(60, 40, f.size());
 

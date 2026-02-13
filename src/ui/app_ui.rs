@@ -1,7 +1,8 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
-    widgets::{Block, Borders, Paragraph},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 use crate::db::queries::{FriendEntry, ChatMessage, ChannelPost, ChannelSubscription};
@@ -34,7 +35,6 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         .split(f.size());
 
     // Header
-    let tor_status = if ctx.tor_connected { "Connected" } else { "Connecting..." };
     let addr_display = ctx.own_onion.as_deref()
         .map(|a| {
             let trunc = if a.len() > 16 { &a[..16] } else { a };
@@ -42,9 +42,20 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         })
         .unwrap_or_default();
 
-    let header = Paragraph::new(format!("  chattor v0.1.0{}  [Tor: {}]", addr_display, tor_status))
-        .style(Style::default().fg(Color::Cyan))
-        .block(Block::default().borders(Borders::ALL));
+    let (tor_icon, tor_label, tor_color) = if ctx.tor_connected {
+        ("\u{25c9}", "Connected", ctx.theme.success)
+    } else {
+        ("\u{25cc}", "Connecting...", ctx.theme.warning)
+    };
+
+    let header_line = Line::from(vec![
+        Span::styled("  chattor", Style::default().fg(ctx.theme.header_accent).add_modifier(Modifier::BOLD)),
+        Span::styled(addr_display, Style::default().fg(ctx.theme.fg_dim)),
+        Span::raw("  "),
+        Span::styled(format!("{} {}", tor_icon, tor_label), Style::default().fg(tor_color)),
+    ]);
+    let header = Paragraph::new(header_line)
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(ctx.theme.border)));
     f.render_widget(header, chunks[0]);
 
     // Main area -- depends on state
@@ -53,17 +64,18 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
             f, chunks[1], publisher_onion, channel_type, *is_own,
             input, *cursor, *scroll_offset,
             &ctx.channel_posts, &ctx.channel_post_read_counts,
+            &ctx.theme,
         );
     } else if ctx.friends.is_empty() && ctx.channel_subscriptions.is_empty() {
         // Setup wizard
         let (onion_ref, code_ref) = (ctx.own_onion.as_deref(), ctx.friend_code.as_deref());
-        crate::ui::conversation::render_setup_wizard(f, chunks[1], onion_ref, code_ref);
+        crate::ui::conversation::render_setup_wizard(f, chunks[1], onion_ref, code_ref, &ctx.theme);
     } else {
         // Split into sidebar + conversation
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(20),  // Sidebar
+                Constraint::Length(24),  // Sidebar
                 Constraint::Min(0),      // Conversation
             ])
             .split(chunks[1]);
@@ -82,6 +94,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         crate::ui::sidebar::render_sidebar_with_channels(
             f, main_chunks[0], &ctx.friends, selected_idx, !input_focused,
             ctx.pending_request_count, &ctx.channel_subscriptions,
+            &ctx.theme,
         );
 
         // Right panel: conversation + input
@@ -106,51 +119,72 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
             ctx.own_onion.as_deref(),
             scroll_offset,
             ctx.conversation_ephemeral_ttl,
+            &ctx.theme,
         );
 
         // Input
         crate::ui::conversation::render_input(
             f, right_chunks[1], input, cursor, input_focused,
+            &ctx.theme,
         );
     }
 
     // Footer
-    let footer_text = match app_state {
-        AppState::Normal { input_focused: true, .. } => "[Enter] Send  [Esc] Navigation mode",
-        AppState::Normal { .. } => "[Tab/\u{2191}\u{2193}] Select  [Enter] Open  [a] Add  [e] Ephemeral  [i] Identity  [f] Requests  [q] Quit",
-        AppState::AddingFriend { .. } => "[Enter] Send request  [Esc] Cancel",
-        AppState::ViewingFriendRequests { .. } => "[\u{2191}\u{2193}] Navigate  [Enter] View  [Esc] Back",
-        AppState::ViewingFriendRequest { .. } => "[A]ccept  [R]eject  [Esc] Back",
-        AppState::ViewingMyIdentity { .. } => "[i/Esc] Close",
-        AppState::SettingEphemeral { .. } => "[\u{2191}\u{2193}] Select  [Enter] Confirm  [Esc] Cancel",
-        AppState::ViewingChannel { is_own: true, .. } => "[Enter] Post  [Esc] Back",
-        AppState::ViewingChannel { .. } => "[Esc] Back",
-        AppState::SubscribingToChannel { .. } => "[Enter] Subscribe  [Esc] Cancel",
-    };
-    let footer = Paragraph::new(format!("  {}", footer_text))
-        .style(Style::default().fg(Color::DarkGray));
+    let footer_spans = format_footer_spans(app_state, &ctx.theme);
+    let footer = Paragraph::new(Line::from(footer_spans));
     f.render_widget(footer, chunks[2]);
 
     // Modal overlays
     match app_state {
         AppState::AddingFriend { input, error, .. } => {
-            crate::ui::modals::render_add_friend_modal(f, input, error.as_deref());
+            crate::ui::modals::render_add_friend_modal(f, input, error.as_deref(), &ctx.theme);
         }
         AppState::ViewingFriendRequests { requests, selected_idx } => {
-            crate::ui::modals::render_friend_request_list(f, requests, *selected_idx);
+            crate::ui::modals::render_friend_request_list(f, requests, *selected_idx, &ctx.theme);
         }
         AppState::ViewingFriendRequest { from_onion, friend_code, .. } => {
-            crate::ui::modals::render_friend_request_modal(f, from_onion, friend_code);
+            crate::ui::modals::render_friend_request_modal(f, from_onion, friend_code, &ctx.theme);
         }
         AppState::ViewingMyIdentity { friend_code, onion_address } => {
-            crate::ui::modals::render_identity_modal(f, friend_code, onion_address);
+            crate::ui::modals::render_identity_modal(f, friend_code, onion_address, &ctx.theme);
         }
         AppState::SettingEphemeral { selected_idx, .. } => {
-            crate::ui::modals::render_ephemeral_modal(f, *selected_idx);
+            crate::ui::modals::render_ephemeral_modal(f, *selected_idx, &ctx.theme);
         }
         AppState::SubscribingToChannel { input, error, .. } => {
-            crate::ui::modals::render_subscribe_channel_modal(f, input, error.as_deref());
+            crate::ui::modals::render_subscribe_channel_modal(f, input, error.as_deref(), &ctx.theme);
         }
         _ => {}
     }
+}
+
+fn format_footer_spans<'a>(state: &AppState, theme: &'a Theme) -> Vec<Span<'a>> {
+    let pairs: Vec<(&str, &str)> = match state {
+        AppState::Normal { input_focused: true, .. } => vec![("Enter", "Send"), ("Esc", "Nav")],
+        AppState::Normal { .. } => vec![("Tab/\u{2191}\u{2193}", "Select"), ("Enter", "Open"), ("a", "Add"), ("e", "Ephemeral"), ("i", "Identity"), ("f", "Requests"), ("q", "Quit")],
+        AppState::AddingFriend { .. } => vec![("Enter", "Send"), ("Esc", "Cancel")],
+        AppState::ViewingFriendRequests { .. } => vec![("\u{2191}\u{2193}", "Navigate"), ("Enter", "View"), ("Esc", "Back")],
+        AppState::ViewingFriendRequest { .. } => vec![("A", "Accept"), ("R", "Reject"), ("Esc", "Back")],
+        AppState::ViewingMyIdentity { .. } => vec![("i/Esc", "Close")],
+        AppState::SettingEphemeral { .. } => vec![("\u{2191}\u{2193}", "Select"), ("Enter", "Confirm"), ("Esc", "Cancel")],
+        AppState::ViewingChannel { is_own: true, .. } => vec![("Enter", "Post"), ("Esc", "Back")],
+        AppState::ViewingChannel { .. } => vec![("Esc", "Back")],
+        AppState::SubscribingToChannel { .. } => vec![("Enter", "Subscribe"), ("Esc", "Cancel")],
+    };
+
+    let mut spans = vec![Span::raw("  ")];
+    for (i, (key, desc)) in pairs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled("  ", Style::default().fg(theme.fg_dim)));
+        }
+        spans.push(Span::styled(
+            format!("[{}]", key),
+            Style::default().fg(theme.accent),
+        ));
+        spans.push(Span::styled(
+            format!(" {}", desc),
+            Style::default().fg(theme.fg_dim),
+        ));
+    }
+    spans
 }

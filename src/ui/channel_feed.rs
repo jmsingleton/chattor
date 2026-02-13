@@ -19,6 +19,7 @@ pub fn render_channel_feed(
     scroll_offset: usize,
     posts: &[ChannelPost],
     read_counts: &std::collections::HashMap<String, i64>,
+    _theme: &crate::ui::theme::Theme,
 ) {
     let ch_label = if channel_type == "public" { "Public" } else { "Friends Only" };
     let owner_label = if is_own { "My" } else {

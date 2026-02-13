@@ -1,11 +1,12 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, BorderType, Borders, List, ListItem},
     Frame,
 };
 use crate::db::queries::{FriendEntry, ChannelSubscription};
+use crate::ui::theme::Theme;
 
 /// Render the friends sidebar with channels section
 pub fn render_sidebar(
@@ -15,8 +16,9 @@ pub fn render_sidebar(
     selected_idx: Option<usize>,
     focused: bool,
     pending_request_count: i64,
+    theme: &Theme,
 ) {
-    render_sidebar_with_channels(f, area, friends, selected_idx, focused, pending_request_count, &[]);
+    render_sidebar_with_channels(f, area, friends, selected_idx, focused, pending_request_count, &[], theme);
 }
 
 /// Render the friends sidebar with channels section
@@ -28,6 +30,7 @@ pub fn render_sidebar_with_channels(
     focused: bool,
     pending_request_count: i64,
     channel_subscriptions: &[ChannelSubscription],
+    theme: &Theme,
 ) {
     // Split sidebar into friends + channels
     let channel_height = if channel_subscriptions.is_empty() { 5 } else { 3 + channel_subscriptions.len() as u16 + 2 };
@@ -39,8 +42,8 @@ pub fn render_sidebar_with_channels(
         ])
         .split(area);
 
-    render_friends_list(f, sidebar_chunks[0], friends, selected_idx, focused, pending_request_count);
-    render_channels_section(f, sidebar_chunks[1], channel_subscriptions);
+    render_friends_list(f, sidebar_chunks[0], friends, selected_idx, focused, pending_request_count, theme);
+    render_channels_section(f, sidebar_chunks[1], channel_subscriptions, theme);
 }
 
 fn render_friends_list(
@@ -50,6 +53,7 @@ fn render_friends_list(
     selected_idx: Option<usize>,
     focused: bool,
     pending_request_count: i64,
+    theme: &Theme,
 ) {
     let title = if pending_request_count > 0 {
         format!(" Friends ({} new) ", pending_request_count)
@@ -57,11 +61,11 @@ fn render_friends_list(
         format!(" Friends ({}) ", friends.len())
     };
     let border_color = if pending_request_count > 0 {
-        Color::Yellow
+        theme.warning
     } else if focused {
-        Color::Cyan
+        theme.border_focused
     } else {
-        Color::DarkGray
+        theme.border
     };
 
     let items: Vec<ListItem> = friends
@@ -73,7 +77,7 @@ fn render_friends_list(
             let name = friend.display();
 
             // Truncate name to fit sidebar (leave room for arrow + status + unread)
-            let max_name_len = 10;
+            let max_name_len = 14;
             let truncated = if name.len() > max_name_len {
                 format!("{}…", &name[..max_name_len])
             } else {
@@ -86,20 +90,20 @@ fn render_friends_list(
                 Span::raw(arrow),
                 Span::raw(truncated),
                 Span::raw(" "),
-                Span::styled(status_icon, Style::default().fg(Color::DarkGray)),
+                Span::styled(status_icon, Style::default().fg(theme.fg_dim)),
             ];
 
             if friend.unread_count > 0 {
                 spans.push(Span::styled(
                     format!(" ({})", friend.unread_count),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.sidebar_unread).add_modifier(Modifier::BOLD),
                 ));
             }
 
             let style = if is_selected {
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.sidebar_selected_fg).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(theme.fg)
             };
 
             ListItem::new(Line::from(spans)).style(style)
@@ -111,6 +115,7 @@ fn render_friends_list(
             Block::default()
                 .title(title)
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(border_color)),
         );
 
@@ -122,24 +127,25 @@ fn render_channels_section(
     f: &mut Frame,
     area: Rect,
     subscriptions: &[ChannelSubscription],
+    theme: &Theme,
 ) {
     let mut items: Vec<ListItem> = Vec::new();
 
     // My channels header
     items.push(ListItem::new(Line::from(vec![
-        Span::styled("  My Channels", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled("  My Channels", Style::default().fg(theme.sidebar_channel_header).add_modifier(Modifier::BOLD)),
     ])));
     items.push(ListItem::new(Line::from(vec![
-        Span::styled("    Public", Style::default().fg(Color::Gray)),
+        Span::styled("    Public", Style::default().fg(theme.fg)),
     ])));
     items.push(ListItem::new(Line::from(vec![
-        Span::styled("    Friends", Style::default().fg(Color::Gray)),
+        Span::styled("    Friends", Style::default().fg(theme.fg)),
     ])));
 
     // Subscriptions
     if !subscriptions.is_empty() {
         items.push(ListItem::new(Line::from(vec![
-            Span::styled("  Subscriptions", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("  Subscriptions", Style::default().fg(theme.sidebar_channel_header).add_modifier(Modifier::BOLD)),
         ])));
 
         for sub in subscriptions {
@@ -150,7 +156,7 @@ fn render_channels_section(
             };
             let ch_label = if sub.channel_type == "public" { "pub" } else { "fri" };
             items.push(ListItem::new(Line::from(vec![
-                Span::styled(format!("    {} [{}]", name, ch_label), Style::default().fg(Color::Gray)),
+                Span::styled(format!("    {} [{}]", name, ch_label), Style::default().fg(theme.fg)),
             ])));
         }
     }
@@ -160,7 +166,8 @@ fn render_channels_section(
             Block::default()
                 .title(" Channels ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(theme.border)),
         );
 
     f.render_widget(list, area);
