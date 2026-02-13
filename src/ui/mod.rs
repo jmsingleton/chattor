@@ -66,25 +66,35 @@ pub fn copy_to_clipboard(text: &str) -> bool {
         }
     }
 
-    // Try arboard (works well on macOS, fallback on Linux)
-    match arboard::Clipboard::new() {
-        Ok(mut clipboard) => {
-            match clipboard.set_text(text) {
-                Ok(()) => return true,
-                Err(_) => {} // Fall through
+    // Try arboard. On Linux, use SetExtLinux::wait() in a background thread
+    // so the clipboard contents persist after the Clipboard struct is dropped.
+    #[cfg(target_os = "linux")]
+    {
+        let text_owned = text.to_owned();
+        std::thread::spawn(move || {
+            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                use arboard::SetExtLinux;
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                let _ = clipboard.set().wait_until(deadline).text(text_owned);
             }
-        }
-        Err(_) => {}
+        });
+        return true;
     }
 
-    // On non-Linux, try CLI tools as fallback
+    // On non-Linux, arboard works fine without wait()
     #[cfg(not(target_os = "linux"))]
     {
-        return clipboard_fallback(text);
+        match arboard::Clipboard::new() {
+            Ok(mut clipboard) => {
+                match clipboard.set_text(text) {
+                    Ok(()) => return true,
+                    Err(_) => {}
+                }
+            }
+            Err(_) => {}
+        }
+        clipboard_fallback(text)
     }
-
-    #[cfg(target_os = "linux")]
-    false
 }
 
 /// Fallback clipboard using command-line tools (wl-copy, xclip, xsel, pbcopy).
