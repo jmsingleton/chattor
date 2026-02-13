@@ -1,11 +1,12 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
     Frame,
 };
 use crate::db::queries::{ChatMessage, FriendEntry};
+use crate::ui::theme::Theme;
 
 /// Render the conversation area
 pub fn render_conversation(
@@ -16,7 +17,7 @@ pub fn render_conversation(
     own_onion: Option<&str>,
     scroll_offset: usize,
     ephemeral_ttl: Option<i64>,
-    _theme: &crate::ui::theme::Theme,
+    theme: &Theme,
 ) {
     let title = if let (Some(friend_entry), Some(ttl)) = (friend, ephemeral_ttl) {
         format!(" {} [⏱ {}] ", friend_entry.display(), format_ttl(ttl))
@@ -29,7 +30,8 @@ pub fn render_conversation(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.border));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -39,7 +41,7 @@ pub fn render_conversation(
             // No conversation selected
             let text = Paragraph::new("Select a friend to start chatting")
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::DarkGray));
+                .style(Style::default().fg(theme.fg_dim));
 
             // Center vertically
             let v_layout = Layout::default()
@@ -56,7 +58,7 @@ pub fn render_conversation(
             if messages.is_empty() {
                 let text = Paragraph::new("No messages yet. Say hello!")
                     .alignment(Alignment::Center)
-                    .style(Style::default().fg(Color::DarkGray));
+                    .style(Style::default().fg(theme.fg_dim));
                 let v_layout = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -67,7 +69,7 @@ pub fn render_conversation(
                     .split(inner);
                 f.render_widget(text, v_layout[1]);
             } else {
-                render_messages(f, inner, messages, own_onion, &friend_entry.display(), scroll_offset);
+                render_messages(f, inner, messages, own_onion, &friend_entry.display(), scroll_offset, theme);
             }
         }
     }
@@ -81,6 +83,7 @@ fn render_messages(
     own_onion: Option<&str>,
     friend_name: &str,
     scroll_offset: usize,
+    theme: &Theme,
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
@@ -91,27 +94,27 @@ fn render_messages(
 
         let (status_str, status_style) = if is_own {
             match msg.status.as_str() {
-                "sent" => (" ✓", Style::default().fg(Color::DarkGray)),
-                "queued" => (" ⏳", Style::default().fg(Color::DarkGray)),
-                "failed" => (" ✗", Style::default().fg(Color::Red)),
-                "delivered" => (" ✓✓", Style::default().fg(Color::DarkGray)),
-                "read" => (" ✓✓", Style::default().fg(Color::Green)),
-                _ => ("", Style::default().fg(Color::DarkGray)),
+                "sent" => (" ✓", Style::default().fg(theme.msg_status_sent)),
+                "queued" => (" ⏳", Style::default().fg(theme.msg_status_sent)),
+                "failed" => (" ✗", Style::default().fg(theme.msg_status_failed)),
+                "delivered" => (" ✓✓", Style::default().fg(theme.msg_status_delivered)),
+                "read" => (" ✓✓", Style::default().fg(theme.msg_status_read)),
+                _ => ("", Style::default().fg(theme.msg_status_sent)),
             }
         } else {
-            ("", Style::default().fg(Color::DarkGray))
+            ("", Style::default().fg(theme.msg_status_sent))
         };
 
         // Sender line
         let sender_style = if is_own {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default().fg(theme.msg_own_sender).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            Style::default().fg(theme.msg_peer_sender).add_modifier(Modifier::BOLD)
         };
 
         lines.push(Line::from(vec![
             Span::styled(sender.to_string(), sender_style),
-            Span::styled(format!("  {}", time), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("  {}", time), Style::default().fg(theme.msg_timestamp)),
             Span::styled(status_str.to_string(), status_style),
         ]));
 
@@ -143,11 +146,12 @@ pub fn render_setup_wizard(
     area: Rect,
     onion_address: Option<&str>,
     friend_code: Option<&str>,
-    _theme: &crate::ui::theme::Theme,
+    theme: &Theme,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.border));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -171,39 +175,39 @@ pub fn render_setup_wizard(
     // Welcome
     let welcome = Paragraph::new("Welcome to chattor")
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        .style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD));
     f.render_widget(welcome, chunks[1]);
 
     // Step 1
     let step1 = Paragraph::new("Step 1: Your identity")
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(theme.fg));
     f.render_widget(step1, chunks[3]);
 
     // Onion address
     let addr = onion_address.unwrap_or("(Waiting for Tor...)");
     let onion_widget = Paragraph::new(format!("  {}  [click to copy]", addr))
-        .block(Block::default().borders(Borders::ALL))
-        .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
+        .style(Style::default().fg(theme.success).add_modifier(Modifier::BOLD));
     f.render_widget(onion_widget, chunks[4]);
 
     // Friend code
     let code = friend_code.unwrap_or("(Waiting for Tor...)");
     let code_widget = Paragraph::new(format!("  {}  [click to copy]", code))
-        .block(Block::default().borders(Borders::ALL))
-        .style(Style::default().fg(Color::Yellow));
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
+        .style(Style::default().fg(theme.warning));
     f.render_widget(code_widget, chunks[5]);
 
     // Step 2
     let step2 = Paragraph::new("Step 2: Share your .onion address with a friend")
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(theme.fg));
     f.render_widget(step2, chunks[7]);
 
     // Step 3
     let step3 = Paragraph::new("Step 3: Press [a] to add their .onion address")
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(theme.fg));
     f.render_widget(step3, chunks[9]);
 }
 
@@ -214,9 +218,9 @@ pub fn render_input(
     input: &str,
     cursor: usize,
     focused: bool,
-    _theme: &crate::ui::theme::Theme,
+    theme: &Theme,
 ) {
-    let border_color = if focused { Color::Cyan } else { Color::DarkGray };
+    let border_color = if focused { theme.border_focused } else { theme.border };
     let prompt = if focused { "> " } else { "  " };
 
     // Show cursor when focused
@@ -228,7 +232,7 @@ pub fn render_input(
         }
     } else {
         if input.is_empty() {
-            format!("{}Press Enter on a friend to start typing", prompt)
+            format!("{}Type a message...", prompt)
         } else {
             format!("{}{}", prompt, input)
         }
@@ -238,9 +242,10 @@ pub fn render_input(
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(border_color)),
         )
-        .style(Style::default().fg(if focused { Color::White } else { Color::DarkGray }));
+        .style(Style::default().fg(if focused { theme.input_fg } else { theme.input_placeholder }));
 
     f.render_widget(widget, area);
 }

@@ -1,11 +1,12 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
     Frame,
 };
 use crate::db::queries::ChannelPost;
+use crate::ui::theme::Theme;
 
 /// Render the channel feed view
 pub fn render_channel_feed(
@@ -19,7 +20,7 @@ pub fn render_channel_feed(
     scroll_offset: usize,
     posts: &[ChannelPost],
     read_counts: &std::collections::HashMap<String, i64>,
-    _theme: &crate::ui::theme::Theme,
+    theme: &Theme,
 ) {
     let ch_label = if channel_type == "public" { "Public" } else { "Friends Only" };
     let owner_label = if is_own { "My" } else {
@@ -37,10 +38,10 @@ pub fn render_channel_feed(
             ])
             .split(area);
 
-        render_posts(f, chunks[0], &title, posts, read_counts, scroll_offset);
-        render_channel_input(f, chunks[1], input, cursor);
+        render_posts(f, chunks[0], &title, posts, read_counts, scroll_offset, theme);
+        render_channel_input(f, chunks[1], input, cursor, theme);
     } else {
-        render_posts(f, area, &title, posts, read_counts, scroll_offset);
+        render_posts(f, area, &title, posts, read_counts, scroll_offset, theme);
     }
 }
 
@@ -51,11 +52,13 @@ fn render_posts(
     posts: &[ChannelPost],
     read_counts: &std::collections::HashMap<String, i64>,
     scroll_offset: usize,
+    theme: &Theme,
 ) {
     let block = Block::default()
         .title(title.to_string())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.channel_border));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -63,7 +66,7 @@ fn render_posts(
     if posts.is_empty() {
         let text = Paragraph::new("No posts yet")
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(theme.fg_dim));
         let v_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -83,14 +86,14 @@ fn render_posts(
 
         // Header line with timestamp
         let mut header_spans = vec![
-            Span::styled(time, Style::default().fg(Color::DarkGray)),
+            Span::styled(time, Style::default().fg(theme.msg_timestamp)),
         ];
 
         // Show read count for own channel posts
         if let Some(&count) = read_counts.get(&post.post_id) {
             header_spans.push(Span::styled(
                 format!("  seen by {}", count),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.channel_read_count),
             ));
         }
 
@@ -99,7 +102,7 @@ fn render_posts(
         // Content
         lines.push(Line::from(Span::styled(
             format!("  {}", post.content),
-            Style::default().fg(Color::White),
+            Style::default().fg(theme.fg),
         )));
 
         // Separator
@@ -125,6 +128,7 @@ fn render_channel_input(
     area: Rect,
     input: &str,
     cursor: usize,
+    theme: &Theme,
 ) {
     let display_text = if cursor < input.len() {
         format!("> {}\u{2588}{}", &input[..cursor], &input[cursor..])
@@ -136,9 +140,10 @@ fn render_channel_input(
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Magenta)),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(theme.channel_border)),
         )
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(theme.input_fg));
 
     f.render_widget(widget, area);
 }
