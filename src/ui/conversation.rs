@@ -36,6 +36,14 @@ pub fn render_conversation(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    // Add 1-char horizontal padding
+    let padded = ratatui::layout::Rect {
+        x: inner.x + 1,
+        y: inner.y,
+        width: inner.width.saturating_sub(2),
+        height: inner.height,
+    };
+
     match friend {
         None => {
             // No conversation selected
@@ -51,7 +59,7 @@ pub fn render_conversation(
                     Constraint::Length(1),
                     Constraint::Percentage(45),
                 ])
-                .split(inner);
+                .split(padded);
             f.render_widget(text, v_layout[1]);
         }
         Some(friend_entry) => {
@@ -66,10 +74,10 @@ pub fn render_conversation(
                         Constraint::Length(1),
                         Constraint::Percentage(45),
                     ])
-                    .split(inner);
+                    .split(padded);
                 f.render_widget(text, v_layout[1]);
             } else {
-                render_messages(f, inner, messages, own_onion, &friend_entry.display(), scroll_offset, theme);
+                render_messages(f, padded, messages, own_onion, &friend_entry.display(), scroll_offset, theme);
             }
         }
     }
