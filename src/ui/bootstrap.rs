@@ -1,3 +1,4 @@
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
@@ -384,6 +385,29 @@ pub fn render_failure(f: &mut Frame, error: &str) {
     f.render_widget(actions, chunks[13]);
 }
 
+/// Handle keyboard input during the bootstrap phase.
+///
+/// - Ctrl+C always returns `Quit` regardless of phase.
+/// - In `Failed` state: `r/R` retries, `c/C` continues offline, `q/Q` quits.
+/// - In `Connecting` or `Done` states: all other keys are ignored.
+pub fn handle_bootstrap_key(phase: &BootstrapPhase, key: KeyEvent) -> Option<BootstrapAction> {
+    // Ctrl+C always quits
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return Some(BootstrapAction::Quit);
+    }
+
+    match phase {
+        BootstrapPhase::Failed { .. } => match key.code {
+            KeyCode::Char('r') | KeyCode::Char('R') => Some(BootstrapAction::Retry),
+            KeyCode::Char('c') | KeyCode::Char('C') => Some(BootstrapAction::ContinueOffline),
+            KeyCode::Char('q') | KeyCode::Char('Q') => Some(BootstrapAction::Quit),
+            _ => None,
+        },
+        BootstrapPhase::Connecting { .. } => None,
+        BootstrapPhase::Done => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -546,5 +570,40 @@ mod tests {
     fn status_messages_exist() {
         let msgs = status_messages();
         assert!(msgs.len() >= 3);
+    }
+
+    #[test]
+    fn failure_screen_r_retries() {
+        let phase = BootstrapPhase::Failed { error: "test".into(), frame: 0, tick: 0 };
+        let key = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
+        assert_eq!(handle_bootstrap_key(&phase, key), Some(BootstrapAction::Retry));
+    }
+
+    #[test]
+    fn failure_screen_c_continues() {
+        let phase = BootstrapPhase::Failed { error: "test".into(), frame: 0, tick: 0 };
+        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
+        assert_eq!(handle_bootstrap_key(&phase, key), Some(BootstrapAction::ContinueOffline));
+    }
+
+    #[test]
+    fn failure_screen_q_quits() {
+        let phase = BootstrapPhase::Failed { error: "test".into(), frame: 0, tick: 0 };
+        let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert_eq!(handle_bootstrap_key(&phase, key), Some(BootstrapAction::Quit));
+    }
+
+    #[test]
+    fn connecting_screen_ctrl_c_quits() {
+        let phase = BootstrapPhase::new();
+        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(handle_bootstrap_key(&phase, key), Some(BootstrapAction::Quit));
+    }
+
+    #[test]
+    fn connecting_screen_ignores_other_keys() {
+        let phase = BootstrapPhase::new();
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert_eq!(handle_bootstrap_key(&phase, key), None);
     }
 }
