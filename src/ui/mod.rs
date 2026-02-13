@@ -53,10 +53,55 @@ pub fn display_connection_status(app: &App) {
 
 /// Copy text to system clipboard. Returns true on success.
 pub fn copy_to_clipboard(text: &str) -> bool {
+    // Try arboard first
     match arboard::Clipboard::new() {
-        Ok(mut clipboard) => clipboard.set_text(text).is_ok(),
-        Err(_) => false,
+        Ok(mut clipboard) => {
+            match clipboard.set_text(text) {
+                Ok(()) => return true,
+                Err(_) => {} // Fall through to CLI fallback
+            }
+        }
+        Err(_) => {} // Fall through to CLI fallback
     }
+
+    // Fallback: try command-line clipboard tools
+    clipboard_fallback(text)
+}
+
+/// Fallback clipboard using command-line tools (wl-copy, xclip, xsel, pbcopy).
+fn clipboard_fallback(text: &str) -> bool {
+    use std::process::{Command, Stdio};
+    use std::io::Write;
+
+    let tools: &[(&str, &[&str])] = &[
+        ("wl-copy", &[]),
+        ("xclip", &["-selection", "clipboard"]),
+        ("xsel", &["--clipboard", "--input"]),
+        ("pbcopy", &[]),
+    ];
+
+    for (cmd, args) in tools {
+        if let Ok(mut child) = Command::new(cmd)
+            .args(*args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            if let Some(mut stdin) = child.stdin.take() {
+                if stdin.write_all(text.as_bytes()).is_ok() {
+                    drop(stdin);
+                    if let Ok(status) = child.wait() {
+                        if status.success() {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
