@@ -332,14 +332,85 @@ async fn main() -> Result<()> {
                             db::queries::set_conversation_ephemeral_ttl(&app_lock.db, conv_id, ttl).ok();
                             drop(app_lock);
                         }
-                        Some(AppAction::PublishChannelPost(_content, _channel_type)) => {
-                            // TODO: implement channel post publishing
+                        Some(AppAction::PublishChannelPost(content, channel_type)) => {
+                            let app_lock = app.lock().await;
+                            let own_onion = app_lock.onion_address.clone().unwrap_or_default();
+                            let channel_id = if channel_type == "public" { 1 } else { 2 };
+                            let post_id = uuid::Uuid::new_v4().to_string();
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs() as i64;
+
+                            // Sign the post
+                            let sign_data = format!("{}{}{}", post_id, content, now);
+                            let signature = base64::encode(&app_lock.identity.sign(sign_data.as_bytes()).to_bytes());
+
+                            // Store locally
+                            db::queries::store_channel_post(
+                                &app_lock.db, channel_id, &content, &post_id, now, &signature
+                            ).ok();
+
+                            // Enforce retention
+                            db::queries::enforce_channel_retention(&app_lock.db, channel_id).ok();
+
+                            // Push to online subscribers
+                            let channel_type_enum = if channel_type == "public" {
+                                protocol::message::ChannelType::Public
+                            } else {
+                                protocol::message::ChannelType::FriendsOnly
+                            };
+
+                            let post_msg = protocol::message::Message::ChannelPost(
+                                protocol::message::ChannelPostMessage {
+                                    publisher_onion: own_onion,
+                                    channel_type: channel_type_enum,
+                                    post_id: uuid::Uuid::parse_str(&post_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                                    content,
+                                    created_at: now,
+                                    signature,
+                                }
+                            );
+
+                            let subscribers = db::queries::get_channel_subscribers(&app_lock.db, &channel_type).unwrap_or_default();
+                            for sub_onion in subscribers {
+                                app_lock.message_queue.enqueue(&app_lock.db, &sub_onion, &post_msg, "normal").ok();
+                            }
+
+                            drop(app_lock);
                         }
-                        Some(AppAction::SubscribeToChannel(_address)) => {
-                            // TODO: implement channel subscription
+                        Some(AppAction::SubscribeToChannel(publisher_onion)) => {
+                            let app_lock = app.lock().await;
+                            let own_onion = app_lock.onion_address.clone().unwrap_or_default();
+
+                            // Store subscription locally
+                            db::queries::add_channel_subscription(&app_lock.db, &publisher_onion, "public").ok();
+
+                            // Send subscribe message to publisher
+                            let sub_msg = protocol::message::Message::ChannelSubscribe(
+                                protocol::message::ChannelSubscribeMessage {
+                                    subscriber_onion: own_onion,
+                                    channel_type: protocol::message::ChannelType::Public,
+                                    timestamp: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_secs() as i64,
+                                }
+                            );
+                            app_lock.message_queue.enqueue(&app_lock.db, &publisher_onion, &sub_msg, "normal").ok();
+
+                            drop(app_lock);
+                            app_state = AppState::default();
                         }
-                        Some(AppAction::SelectChannel(_publisher, _ch_type, _is_own)) => {
-                            // TODO: implement channel selection
+                        Some(AppAction::SelectChannel(publisher_onion, channel_type, is_own)) => {
+                            app_state = AppState::ViewingChannel {
+                                publisher_onion,
+                                channel_type,
+                                is_own,
+                                input: String::new(),
+                                cursor: 0,
+                                scroll_offset: 0,
+                            };
                         }
                         Some(AppAction::Quit) => break Ok(()),
                         None => {} // Just state change
