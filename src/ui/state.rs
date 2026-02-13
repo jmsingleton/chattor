@@ -49,6 +49,14 @@ pub enum AppState {
         cursor: usize,
         error: Option<String>,
     },
+    MiningPrefixInput {
+        prefix: String,
+        cursor: usize,
+    },
+    MiningActive {
+        prefix: String,
+        show_fullscreen: bool,
+    },
 }
 
 impl Default for AppState {
@@ -78,6 +86,10 @@ pub enum AppAction {
     SubscribeToChannel(String),             // publisher .onion address
     SelectChannel(String, String, bool),    // (publisher_onion, channel_type, is_own)
     ViewOwnChannel,
+    StartMining(String),           // prefix to mine
+    AcceptMiningResult,
+    CancelMining,
+    ToggleMiningView,
     Quit,
 }
 
@@ -451,6 +463,60 @@ impl AppState {
                         *self = AppState::default();
                         Ok(None)
                     }
+                    _ => Ok(None),
+                }
+            }
+
+            AppState::MiningPrefixInput { prefix, cursor } => {
+                match key.code {
+                    KeyCode::Char(c) => {
+                        // Only allow valid base32 characters (a-z, 2-7)
+                        let c_lower = c.to_ascii_lowercase();
+                        if (c_lower.is_ascii_lowercase() || (c_lower >= '2' && c_lower <= '7'))
+                            && c_lower != '0' && c_lower != '1' && c_lower != '8' && c_lower != '9'
+                        {
+                            if prefix.len() < 7 {
+                                prefix.push(c_lower);
+                                *cursor += 1;
+                            }
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Backspace => {
+                        if *cursor > 0 {
+                            *cursor -= 1;
+                            prefix.remove(*cursor);
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Enter => {
+                        if prefix.is_empty() {
+                            // Skip mining, generate random
+                            Ok(Some(AppAction::CancelMining))
+                        } else {
+                            Ok(Some(AppAction::StartMining(prefix.clone())))
+                        }
+                    }
+                    KeyCode::Esc => {
+                        // Skip mining
+                        Ok(Some(AppAction::CancelMining))
+                    }
+                    _ => Ok(None),
+                }
+            }
+
+            AppState::MiningActive { show_fullscreen, .. } => {
+                match key.code {
+                    KeyCode::Esc => {
+                        *show_fullscreen = false;
+                        Ok(None)
+                    }
+                    KeyCode::Char('m') if !*show_fullscreen => {
+                        *show_fullscreen = true;
+                        Ok(None)
+                    }
+                    KeyCode::Enter => Ok(Some(AppAction::AcceptMiningResult)),
+                    KeyCode::Char('q') => Ok(Some(AppAction::CancelMining)),
                     _ => Ok(None),
                 }
             }
@@ -1061,5 +1127,93 @@ mod tests {
             }
             _ => panic!("Expected ViewingChannel state"),
         }
+    }
+
+    #[test]
+    fn test_mining_prefix_input_typing() {
+        let mut state = AppState::MiningPrefixInput {
+            prefix: String::new(),
+            cursor: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE)).unwrap();
+        match &state {
+            AppState::MiningPrefixInput { prefix, .. } => assert_eq!(prefix, "chat"),
+            _ => panic!("Expected MiningPrefixInput"),
+        }
+    }
+
+    #[test]
+    fn test_mining_prefix_rejects_invalid_chars() {
+        let mut state = AppState::MiningPrefixInput {
+            prefix: String::new(),
+            cursor: 0,
+        };
+        // '8', '9', '0', '1' should be rejected
+        state.handle_key(KeyEvent::new(KeyCode::Char('8'), KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE)).unwrap();
+        match &state {
+            AppState::MiningPrefixInput { prefix, .. } => assert_eq!(prefix, ""),
+            _ => panic!("Expected MiningPrefixInput"),
+        }
+    }
+
+    #[test]
+    fn test_mining_prefix_enter_starts() {
+        let mut state = AppState::MiningPrefixInput {
+            prefix: "chat".to_string(),
+            cursor: 4,
+        };
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        assert_eq!(action, Some(AppAction::StartMining("chat".to_string())));
+    }
+
+    #[test]
+    fn test_mining_prefix_esc_cancels() {
+        let mut state = AppState::MiningPrefixInput {
+            prefix: "chat".to_string(),
+            cursor: 4,
+        };
+        let action = state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert_eq!(action, Some(AppAction::CancelMining));
+    }
+
+    #[test]
+    fn test_mining_active_esc_hides_fullscreen() {
+        let mut state = AppState::MiningActive {
+            prefix: "chat".to_string(),
+            show_fullscreen: true,
+        };
+        let action = state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(action.is_none());
+        match &state {
+            AppState::MiningActive { show_fullscreen, .. } => assert!(!show_fullscreen),
+            _ => panic!("Expected MiningActive"),
+        }
+    }
+
+    #[test]
+    fn test_mining_active_m_shows_fullscreen() {
+        let mut state = AppState::MiningActive {
+            prefix: "chat".to_string(),
+            show_fullscreen: false,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)).unwrap();
+        match &state {
+            AppState::MiningActive { show_fullscreen, .. } => assert!(show_fullscreen),
+            _ => panic!("Expected MiningActive"),
+        }
+    }
+
+    #[test]
+    fn test_mining_active_enter_accepts() {
+        let mut state = AppState::MiningActive {
+            prefix: "chat".to_string(),
+            show_fullscreen: true,
+        };
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        assert_eq!(action, Some(AppAction::AcceptMiningResult));
     }
 }

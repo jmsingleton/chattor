@@ -166,6 +166,9 @@ fn format_footer_spans<'a>(state: &AppState, theme: &'a Theme) -> Vec<Span<'a>> 
         AppState::ViewingChannel { is_own: true, .. } => vec![("Enter", "Post"), ("Esc", "Back")],
         AppState::ViewingChannel { .. } => vec![("Esc", "Back")],
         AppState::SubscribingToChannel { .. } => vec![("Enter", "Subscribe"), ("Esc", "Cancel")],
+        AppState::MiningPrefixInput { .. } => vec![("Enter", "Start Mining"), ("Esc", "Skip")],
+        AppState::MiningActive { show_fullscreen: true, .. } => vec![("Enter", "Accept"), ("Esc", "Minimize"), ("q", "Cancel")],
+        AppState::MiningActive { .. } => vec![("Enter", "Accept"), ("m", "Fullscreen"), ("q", "Cancel")],
     };
 
     let mut spans = vec![Span::raw("  ")];
