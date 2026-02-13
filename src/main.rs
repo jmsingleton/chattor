@@ -537,6 +537,10 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
         [request_id],
     ).map_err(|e| error::TorrentChatError::Database(format!("Failed to update request: {}", e)))?;
 
+    // Auto-subscribe to their channels
+    db::queries::add_channel_subscription(&app.db, &from_onion, "public")?;
+    db::queries::add_channel_subscription(&app.db, &from_onion, "friends_only")?;
+
     // Send the accept message over Tor (try direct, queue on failure)
     let message = protocol::message::Message::FriendRequestAccept(accept_msg);
     match try_send_direct(app, &from_onion, &message).await {
@@ -683,14 +687,120 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
         protocol::message::Message::ReadReceipt(receipt) => {
             db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "read").ok();
         }
-        // Channel messages will be handled in a future task
-        protocol::message::Message::ChannelSubscribe(_)
-        | protocol::message::Message::ChannelUnsubscribe(_)
-        | protocol::message::Message::ChannelPost(_)
-        | protocol::message::Message::ChannelSyncRequest(_)
-        | protocol::message::Message::ChannelSyncResponse(_)
-        | protocol::message::Message::ChannelPostReceipt(_) => {
-            eprintln!("Received channel message (not yet handled)");
+        protocol::message::Message::ChannelSubscribe(sub) => {
+            // Check if subscriber is blocked
+            let blocked: bool = app.db.connection().query_row(
+                "SELECT COUNT(*) FROM blocked_onions WHERE onion_address = ?1",
+                [&sub.subscriber_onion],
+                |row| row.get::<_, i64>(0),
+            ).map(|c| c > 0).unwrap_or(false);
+
+            if !blocked {
+                let channel_type = match sub.channel_type {
+                    protocol::message::ChannelType::Public => "public",
+                    protocol::message::ChannelType::FriendsOnly => "friends_only",
+                };
+
+                // For friends_only, verify they are a friend
+                if channel_type == "friends_only" {
+                    if db::queries::find_friend_by_onion(&app.db, &sub.subscriber_onion)?.is_none() {
+                        eprintln!("Rejected friends_only subscription from non-friend {}", sub.subscriber_onion);
+                        return Ok(());
+                    }
+                }
+
+                db::queries::add_channel_subscriber(&app.db, &sub.subscriber_onion, channel_type)?;
+                eprintln!("New {} channel subscriber: {}", channel_type, sub.subscriber_onion);
+            }
+        }
+        protocol::message::Message::ChannelUnsubscribe(unsub) => {
+            let channel_type = match unsub.channel_type {
+                protocol::message::ChannelType::Public => "public",
+                protocol::message::ChannelType::FriendsOnly => "friends_only",
+            };
+            db::queries::remove_channel_subscriber(&app.db, &unsub.subscriber_onion, channel_type)?;
+            eprintln!("Unsubscribed: {} from {} channel", unsub.subscriber_onion, channel_type);
+        }
+        protocol::message::Message::ChannelPost(post) => {
+            // Store remote post (channel_id 0 for remote posts)
+            db::queries::store_channel_post(
+                &app.db, 0, &post.content, &post.post_id.to_string(),
+                post.created_at, &post.signature,
+            )?;
+
+            // Send read receipt back to publisher
+            let receipt = protocol::message::ChannelPostReceiptMessage {
+                post_id: post.post_id,
+                reader_onion: app.onion_address.clone().unwrap_or_default(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+            };
+            let receipt_msg = protocol::message::Message::ChannelPostReceipt(receipt);
+            app.message_queue.enqueue(&app.db, &post.publisher_onion, &receipt_msg, "low").ok();
+        }
+        protocol::message::Message::ChannelSyncRequest(req) => {
+            let channel_type_str = match req.channel_type {
+                protocol::message::ChannelType::Public => "public",
+                protocol::message::ChannelType::FriendsOnly => "friends_only",
+            };
+
+            // For friends_only, verify they are a friend
+            if channel_type_str == "friends_only" {
+                if db::queries::find_friend_by_onion(&app.db, &req.subscriber_onion)?.is_none() {
+                    return Ok(());
+                }
+            }
+
+            let channel_id = if channel_type_str == "public" { 1 } else { 2 };
+            let posts = db::queries::get_channel_posts_since(&app.db, channel_id, req.since_timestamp)?;
+
+            let post_messages: Vec<protocol::message::ChannelPostMessage> = posts.into_iter().map(|p| {
+                protocol::message::ChannelPostMessage {
+                    publisher_onion: app.onion_address.clone().unwrap_or_default(),
+                    channel_type: req.channel_type.clone(),
+                    post_id: uuid::Uuid::parse_str(&p.post_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                    content: p.content,
+                    created_at: p.created_at,
+                    signature: p.signature,
+                }
+            }).collect();
+
+            if !post_messages.is_empty() {
+                let response = protocol::message::Message::ChannelSyncResponse(
+                    protocol::message::ChannelSyncResponseMessage {
+                        publisher_onion: app.onion_address.clone().unwrap_or_default(),
+                        channel_type: req.channel_type.clone(),
+                        posts: post_messages,
+                    }
+                );
+                app.message_queue.enqueue(&app.db, &req.subscriber_onion, &response, "normal").ok();
+            }
+        }
+        protocol::message::Message::ChannelSyncResponse(resp) => {
+            for post in &resp.posts {
+                db::queries::store_channel_post(
+                    &app.db, 0, &post.content, &post.post_id.to_string(),
+                    post.created_at, &post.signature,
+                )?;
+            }
+            // Update sync time
+            let channel_type_str = match resp.channel_type {
+                protocol::message::ChannelType::Public => "public",
+                protocol::message::ChannelType::FriendsOnly => "friends_only",
+            };
+            let max_time = resp.posts.iter().map(|p| p.created_at).max().unwrap_or(0);
+            if max_time > 0 {
+                db::queries::update_subscription_sync_time(
+                    &app.db, &resp.publisher_onion, channel_type_str, max_time
+                )?;
+            }
+        }
+        protocol::message::Message::ChannelPostReceipt(receipt) => {
+            db::queries::store_channel_post_receipt(
+                &app.db, &receipt.post_id.to_string(), &receipt.reader_onion, receipt.timestamp
+            )?;
         }
     }
 
@@ -772,6 +882,13 @@ fn handle_incoming_accept(
     ).map_err(|e| error::TorrentChatError::Database(
         format!("Failed to add friend: {}", e)
     ))?;
+
+    // Auto-subscribe to their channels
+    db::queries::add_channel_subscription(&app.db, &accept.from_onion, "public")?;
+    db::queries::add_channel_subscription(&app.db, &accept.from_onion, "friends_only")?;
+
+    // Also subscribe them to our friends_only channel
+    db::queries::add_channel_subscriber(&app.db, &accept.from_onion, "friends_only")?;
 
     eprintln!("Friend request accepted by {}", accept.from_onion);
 
