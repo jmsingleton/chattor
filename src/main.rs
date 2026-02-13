@@ -427,14 +427,14 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
     // Validate it looks like a .onion address
     let peer_onion = peer_input.trim();
     if !peer_onion.ends_with(".onion") {
-        return Err(error::TorrentChatError::Tor(
+        return Err(error::ChattorError::Tor(
             "Please enter a .onion address (e.g., abc123.onion)".into()
         ));
     }
 
     // Get our .onion address
     let own_onion = app.onion_address.as_ref()
-        .ok_or_else(|| error::TorrentChatError::Tor("Tor not initialized yet".into()))?;
+        .ok_or_else(|| error::ChattorError::Tor("Tor not initialized yet".into()))?;
 
     // Generate our own friend code to include in the request
     let own_friend_code = crate::tor::address::onion_to_friend_code(own_onion)
@@ -468,7 +468,7 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
 
     // Get our .onion address
     let own_onion = app.onion_address.as_ref()
-        .ok_or_else(|| error::TorrentChatError::Tor("Tor not initialized yet".into()))?;
+        .ok_or_else(|| error::ChattorError::Tor("Tor not initialized yet".into()))?;
 
     // Get the friend request from database
     let conn = app.db.connection();
@@ -476,7 +476,7 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
         "SELECT from_onion, friend_code FROM friend_requests WHERE id = ?1",
         [request_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
-    ).map_err(|e| error::TorrentChatError::Database(format!("Failed to load request: {}", e)))?;
+    ).map_err(|e| error::ChattorError::Database(format!("Failed to load request: {}", e)))?;
 
     // Generate PreKey bundle for the accept message
     let (bundle, private_keys) = PreKeyBundle::generate_real(&app.identity)?;
@@ -493,7 +493,7 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
 
     // Serialize bundle to JSON
     let bundle_json = serde_json::to_string(&bundle)
-        .map_err(|e| error::TorrentChatError::Crypto(format!("Failed to serialize bundle: {}", e)))?;
+        .map_err(|e| error::ChattorError::Crypto(format!("Failed to serialize bundle: {}", e)))?;
 
     let accept_msg = protocol::message::FriendRequestAcceptMessage {
         from_onion: own_onion.to_string(),
@@ -529,13 +529,13 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
             &from_onion[..std::cmp::min(10, from_onion.len())],
             timestamp,
         ),
-    ).map_err(|e| error::TorrentChatError::Database(format!("Failed to add friend: {}", e)))?;
+    ).map_err(|e| error::ChattorError::Database(format!("Failed to add friend: {}", e)))?;
 
     // Mark request as accepted
     conn.execute(
         "UPDATE friend_requests SET status = 'accepted' WHERE id = ?1",
         [request_id],
-    ).map_err(|e| error::TorrentChatError::Database(format!("Failed to update request: {}", e)))?;
+    ).map_err(|e| error::ChattorError::Database(format!("Failed to update request: {}", e)))?;
 
     // Send the accept message over Tor (try direct, queue on failure)
     let message = protocol::message::Message::FriendRequestAccept(accept_msg);
@@ -562,7 +562,7 @@ fn handle_reject_friend_request(app: &App, request_id: i64) -> Result<()> {
     let rows_affected = conn.execute(
         "DELETE FROM friend_requests WHERE id = ?1",
         [request_id],
-    ).map_err(|e| error::TorrentChatError::Database(format!("Failed to delete request: {}", e)))?;
+    ).map_err(|e| error::ChattorError::Database(format!("Failed to delete request: {}", e)))?;
 
     if rows_affected == 0 {
         eprintln!("Friend request #{} not found", request_id);
@@ -586,7 +586,7 @@ async fn try_send_direct(
     message: &protocol::message::Message,
 ) -> Result<()> {
     let tor_client = app.tor_client.as_ref()
-        .ok_or_else(|| error::TorrentChatError::Tor("Tor not initialized".into()))?;
+        .ok_or_else(|| error::ChattorError::Tor("Tor not initialized".into()))?;
 
     // Connect with 5-second timeout
     let mut conn = tokio::time::timeout(
@@ -594,7 +594,7 @@ async fn try_send_direct(
         crate::tor::connection::TorConnection::connect(tor_client.as_ref(), peer_onion)
     )
     .await
-    .map_err(|_| error::TorrentChatError::Network("Connection timed out (5s)".into()))??;
+    .map_err(|_| error::ChattorError::Network("Connection timed out (5s)".into()))??;
 
     // Send with 5-second timeout
     tokio::time::timeout(
@@ -602,7 +602,7 @@ async fn try_send_direct(
         conn.send(message)
     )
     .await
-    .map_err(|_| error::TorrentChatError::Network("Send timed out (5s)".into()))??;
+    .map_err(|_| error::ChattorError::Network("Send timed out (5s)".into()))??;
 
     Ok(())
 }
@@ -622,7 +622,7 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
                 "INSERT INTO friend_requests (from_onion, friend_code, received_at, status)
                  VALUES (?1, ?2, ?3, 'pending')",
                 (&req.from_onion, &req.from_friendcode, now),
-            ).map_err(|e| error::TorrentChatError::Database(
+            ).map_err(|e| error::ChattorError::Database(
                 format!("Failed to save friend request: {}", e)
             ))?;
 
@@ -643,13 +643,13 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
             let (content, ephemeral_ttl) = match store.load_session(from_onion)? {
                 Some(mut session) => {
                     let ciphertext = base64::decode(&text_msg.signal_ciphertext)
-                        .map_err(|e| error::TorrentChatError::Crypto(
+                        .map_err(|e| error::ChattorError::Crypto(
                             format!("Failed to decode base64: {}", e)
                         ))?;
                     let plaintext = session.decrypt(&ciphertext)?;
                     store.store_session(&session)?;
                     let payload: protocol::message::PlaintextPayload = serde_json::from_slice(&plaintext)
-                        .map_err(|e| error::TorrentChatError::Crypto(
+                        .map_err(|e| error::ChattorError::Crypto(
                             format!("Failed to parse payload: {}", e)
                         ))?;
                     (payload.content, payload.ephemeral_ttl)
@@ -682,6 +682,15 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
         }
         protocol::message::Message::ReadReceipt(receipt) => {
             db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "read").ok();
+        }
+        // Channel messages will be handled in a future task
+        protocol::message::Message::ChannelSubscribe(_)
+        | protocol::message::Message::ChannelUnsubscribe(_)
+        | protocol::message::Message::ChannelPost(_)
+        | protocol::message::Message::ChannelSyncRequest(_)
+        | protocol::message::Message::ChannelSyncResponse(_)
+        | protocol::message::Message::ChannelPostReceipt(_) => {
+            eprintln!("Received channel message (not yet handled)");
         }
     }
 
@@ -731,7 +740,7 @@ fn handle_incoming_accept(
 
     // Deserialize PreKey bundle
     let bundle: PreKeyBundle = serde_json::from_str(&accept.signal_prekey_bundle)
-        .map_err(|e| error::TorrentChatError::Crypto(
+        .map_err(|e| error::ChattorError::Crypto(
             format!("Failed to parse PreKey bundle: {}", e)
         ))?;
 
@@ -760,7 +769,7 @@ fn handle_incoming_accept(
             &accept.from_onion[..std::cmp::min(10, accept.from_onion.len())],
             accept.timestamp,
         ),
-    ).map_err(|e| error::TorrentChatError::Database(
+    ).map_err(|e| error::ChattorError::Database(
         format!("Failed to add friend: {}", e)
     ))?;
 
