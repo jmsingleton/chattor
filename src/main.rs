@@ -30,10 +30,18 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
 
     // Initialize application wrapped in Arc<Mutex> for sharing between threads
     let app = Arc::new(Mutex::new(App::new()?));
+
+    // Load theme
+    let theme = {
+        let app_lock = app.lock().await;
+        let config_path = app_lock.settings.config_dir.join("theme.toml");
+        drop(app_lock);
+        ui::theme::load_theme(cli.theme.as_deref(), &config_path)
+    };
 
     // Set up terminal FIRST so we can render immediately
     enable_raw_mode()?;
@@ -75,13 +83,13 @@ async fn main() -> Result<()> {
                 let t = *tick;
                 let p = *progress;
                 terminal.draw(|fr| {
-                    ui::render_connecting(fr, f, t, p);
+                    ui::render_connecting(fr, f, t, p, &theme);
                 })?;
             }
             ui::BootstrapPhase::Failed { ref error, .. } => {
                 let err = error.clone();
                 terminal.draw(|fr| {
-                    ui::render_failure(fr, &err);
+                    ui::render_failure(fr, &err, &theme);
                 })?;
             }
             ui::BootstrapPhase::Done => {
@@ -249,6 +257,7 @@ async fn main() -> Result<()> {
             channel_subscriptions,
             channel_posts,
             channel_post_read_counts,
+            theme: theme.clone(),
         };
 
         // Render current state
@@ -345,12 +354,14 @@ async fn main() -> Result<()> {
                                 app_state = AppState::ViewingMyIdentity {
                                     friend_code,
                                     onion_address: onion.clone(),
+                                    copied_field: None,
                                 };
                             } else {
                                 // Tor not ready yet - can't show identity
                                 app_state = AppState::ViewingMyIdentity {
                                     friend_code: "(Waiting for Tor...)".to_string(),
                                     onion_address: "(Waiting for Tor...)".to_string(),
+                                    copied_field: None,
                                 };
                             }
                             drop(app_lock);
@@ -575,35 +586,7 @@ async fn main() -> Result<()> {
                         None => {} // Just state change
                     }
                 }
-                Event::Mouse(mouse_event) => {
-                    use crossterm::event::{MouseEventKind, MouseButton};
-                    if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                        let app_lock = app.lock().await;
-                        // Check if click is in setup wizard area (when no friends)
-                        let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
-                        if friends.is_empty() {
-                            if let Some(ref onion) = app_lock.onion_address {
-                                // Rough check: click in the identity box area
-                                let row = mouse_event.row;
-                                let term_height = terminal.size().map(|s| s.height).unwrap_or(24);
-                                let wizard_start = term_height / 4;
-
-                                if row >= wizard_start + 4 && row <= wizard_start + 6 {
-                                    // Onion address area
-                                    ui::copy_to_clipboard(onion);
-                                } else if row >= wizard_start + 7 && row <= wizard_start + 9 {
-                                    // Friend code area
-                                    let code = crate::tor::address::onion_to_friend_code(onion)
-                                        .unwrap_or_default();
-                                    if !code.is_empty() {
-                                        ui::copy_to_clipboard(&code);
-                                    }
-                                }
-                            }
-                        }
-                        drop(app_lock);
-                    }
-                }
+                Event::Mouse(_) => {} // Reserved for future mouse interactions
                 _ => {} // Resize and other events
             }
         }

@@ -1,15 +1,18 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    style::Style,
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
+
+use crate::ui::theme::Theme;
 
 /// Render "Add Friend" modal
 pub fn render_add_friend_modal(
     f: &mut Frame,
     input: &str,
     error: Option<&str>,
+    theme: &Theme,
 ) {
     let area = centered_rect(60, 40, f.size());
 
@@ -19,7 +22,8 @@ pub fn render_add_friend_modal(
     let block = Block::default()
         .title("Add New Friend")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.modal_border));
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -38,23 +42,23 @@ pub fn render_add_friend_modal(
 
     // Input field
     let input_widget = Paragraph::new(format!("{}_", input))
-        .block(Block::default().borders(Borders::ALL))
-        .style(Style::default().fg(Color::White));
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
+        .style(Style::default().fg(theme.input_fg));
     f.render_widget(input_widget, chunks[1]);
 
     // Help text or error
     let help = if let Some(err) = error {
-        Paragraph::new(err).style(Style::default().fg(Color::Red))
+        Paragraph::new(err).style(Style::default().fg(theme.error))
     } else {
         Paragraph::new("e.g., abc123...xyz.onion")
-            .style(Style::default().fg(Color::Gray))
+            .style(Style::default().fg(theme.fg_dim))
     };
     f.render_widget(help, chunks[2]);
 
     // Controls
     let controls = Paragraph::new("[Enter] Send    [Esc] Cancel")
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::Gray));
+        .style(Style::default().fg(theme.fg_dim));
     f.render_widget(controls, chunks[3]);
 
     f.render_widget(block, area);
@@ -65,6 +69,7 @@ pub fn render_friend_request_modal(
     f: &mut Frame,
     from_onion: &str,
     friend_code: &str,
+    theme: &Theme,
 ) {
     let area = centered_rect(60, 40, f.size());
 
@@ -73,7 +78,8 @@ pub fn render_friend_request_modal(
     let block = Block::default()
         .title(format!("Friend Request from {}", &from_onion[..10]))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.warning));
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -92,7 +98,7 @@ pub fn render_friend_request_modal(
 
     // Timestamp (simplified)
     let time = Paragraph::new("Received: just now")
-        .style(Style::default().fg(Color::Gray));
+        .style(Style::default().fg(theme.fg_dim));
     f.render_widget(time, chunks[1]);
 
     // Message
@@ -103,7 +109,7 @@ pub fn render_friend_request_modal(
     // Controls
     let controls = Paragraph::new("[A]ccept    [R]eject    [Esc] Back")
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::Gray));
+        .style(Style::default().fg(theme.fg_dim));
     f.render_widget(controls, chunks[3]);
 
     f.render_widget(block, area);
@@ -114,6 +120,7 @@ pub fn render_friend_request_list(
     f: &mut Frame,
     requests: &[crate::db::queries::PendingFriendRequest],
     selected_idx: usize,
+    theme: &Theme,
 ) {
     use ratatui::style::Modifier;
     use ratatui::widgets::{List, ListItem};
@@ -126,14 +133,15 @@ pub fn render_friend_request_list(
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.warning));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     if requests.is_empty() {
         let msg = Paragraph::new("No pending friend requests.")
-            .style(Style::default().fg(Color::Gray))
+            .style(Style::default().fg(theme.fg_dim))
             .alignment(Alignment::Center);
         f.render_widget(msg, inner);
         return;
@@ -158,7 +166,7 @@ pub fn render_friend_request_list(
         .enumerate()
         .map(|(i, req)| {
             let is_selected = i == selected_idx;
-            let arrow = if is_selected { "▸ " } else { "  " };
+            let arrow = if is_selected { "\u{25b8} " } else { "  " };
 
             let onion_display = if req.from_onion.len() > 16 {
                 format!("{}...", &req.from_onion[..16])
@@ -178,15 +186,15 @@ pub fn render_friend_request_list(
             };
 
             let style = if is_selected {
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.sidebar_selected_fg).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(theme.fg)
             };
 
             let line = Line::from(vec![
                 Span::raw(arrow.to_string()),
                 Span::styled(onion_display, style),
-                Span::styled(format!("  {}", time_ago), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("  {}", time_ago), Style::default().fg(theme.fg_dim)),
             ]);
 
             ListItem::new(line)
@@ -198,12 +206,12 @@ pub fn render_friend_request_list(
 
     let controls = Paragraph::new("[Enter] View    [Esc] Back")
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::Gray));
+        .style(Style::default().fg(theme.fg_dim));
     f.render_widget(controls, chunks[1]);
 }
 
 /// Render "My Identity" modal showing friend code and onion address
-pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &str) {
+pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &str, copied_field: Option<&str>, theme: &Theme) {
     use ratatui::style::Modifier;
 
     let area = centered_rect(60, 50, f.size());
@@ -214,7 +222,8 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
     let block = Block::default()
         .title(" My Identity ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.modal_border));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -224,47 +233,59 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
         .margin(1)
         .constraints([
             Constraint::Length(1),  // Label
-            Constraint::Length(3),  // Friend code box
+            Constraint::Length(3),  // Onion address box
             Constraint::Length(1),  // Spacer
             Constraint::Length(1),  // Label
-            Constraint::Length(3),  // Onion address box
+            Constraint::Length(3),  // Friend code box
             Constraint::Length(1),  // Spacer
             Constraint::Length(1),  // Help text
         ])
         .split(inner);
 
-    // Onion address label
-    let label1 = Paragraph::new("Share this address with friends:")
-        .style(Style::default().fg(Color::White));
+    // Onion address label with copy feedback
+    let onion_label = if copied_field == Some("onion") {
+        "Onion Address  [Copied!]"
+    } else {
+        "Onion Address  [o] copy"
+    };
+    let label_color = if copied_field == Some("onion") { theme.success } else { theme.fg };
+    let label1 = Paragraph::new(onion_label)
+        .style(Style::default().fg(label_color));
     f.render_widget(label1, chunks[0]);
 
     // Onion address value (primary - this is what friends need to add you)
     let onion_widget_top = Paragraph::new(onion_address)
-        .block(Block::default().borders(Borders::ALL))
-        .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
+        .style(Style::default().fg(theme.success).add_modifier(Modifier::BOLD))
         .wrap(Wrap { trim: false });
     f.render_widget(onion_widget_top, chunks[1]);
 
-    // Friend code label
-    let label2 = Paragraph::new("Friend Code:")
-        .style(Style::default().fg(Color::DarkGray));
+    // Friend code label with copy feedback
+    let code_label = if copied_field == Some("code") {
+        "Friend Code  [Copied!]"
+    } else {
+        "Friend Code  [c] copy"
+    };
+    let code_label_color = if copied_field == Some("code") { theme.success } else { theme.fg_dim };
+    let label2 = Paragraph::new(code_label)
+        .style(Style::default().fg(code_label_color));
     f.render_widget(label2, chunks[3]);
 
     // Friend code value
     let code_widget = Paragraph::new(friend_code)
-        .block(Block::default().borders(Borders::ALL))
-        .style(Style::default().fg(Color::Yellow))
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
+        .style(Style::default().fg(theme.warning))
         .wrap(Wrap { trim: false });
     f.render_widget(code_widget, chunks[4]);
 
     // Help text
     let help = Paragraph::new("[Esc/i] Close")
-        .style(Style::default().fg(Color::DarkGray));
+        .style(Style::default().fg(theme.fg_dim));
     f.render_widget(help, chunks[6]);
 }
 
 /// Render ephemeral messages duration picker modal
-pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize) {
+pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize, theme: &Theme) {
     use ratatui::style::Modifier;
     use ratatui::widgets::{List, ListItem};
     use ratatui::text::{Line, Span};
@@ -275,7 +296,8 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize) {
     let block = Block::default()
         .title(" Ephemeral Messages ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.modal_border));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -299,9 +321,9 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize) {
             let arrow = if is_selected { "\u{25b8} " } else { "  " };
 
             let style = if is_selected {
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.sidebar_selected_fg).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(theme.fg)
             };
 
             let line = Line::from(vec![
@@ -318,7 +340,7 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize) {
 
     let controls = Paragraph::new("[Enter] Select    [Esc] Cancel")
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::Gray));
+        .style(Style::default().fg(theme.fg_dim));
     f.render_widget(controls, chunks[1]);
 }
 
@@ -327,6 +349,7 @@ pub fn render_subscribe_channel_modal(
     f: &mut Frame,
     input: &str,
     error: Option<&str>,
+    theme: &Theme,
 ) {
     let area = centered_rect(60, 40, f.size());
 
@@ -335,7 +358,8 @@ pub fn render_subscribe_channel_modal(
     let block = Block::default()
         .title(" Subscribe to Channel ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.channel_border));
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -352,21 +376,21 @@ pub fn render_subscribe_channel_modal(
     f.render_widget(prompt, chunks[0]);
 
     let input_widget = Paragraph::new(format!("{}_", input))
-        .block(Block::default().borders(Borders::ALL))
-        .style(Style::default().fg(Color::White));
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
+        .style(Style::default().fg(theme.input_fg));
     f.render_widget(input_widget, chunks[1]);
 
     let help = if let Some(err) = error {
-        Paragraph::new(err).style(Style::default().fg(Color::Red))
+        Paragraph::new(err).style(Style::default().fg(theme.error))
     } else {
         Paragraph::new("Subscribes to their public channel")
-            .style(Style::default().fg(Color::Gray))
+            .style(Style::default().fg(theme.fg_dim))
     };
     f.render_widget(help, chunks[2]);
 
     let controls = Paragraph::new("[Enter] Subscribe    [Esc] Cancel")
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::Gray));
+        .style(Style::default().fg(theme.fg_dim));
     f.render_widget(controls, chunks[3]);
 
     f.render_widget(block, area);

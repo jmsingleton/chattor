@@ -6,6 +6,7 @@ use ratatui::{
     widgets::{Clear, Paragraph},
     Frame,
 };
+use crate::ui::theme::Theme;
 
 /// Status updates sent from the Tor bootstrap process.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,7 +216,7 @@ pub fn status_messages() -> Vec<&'static str> {
 /// Shows the chattor title, ASCII relay animation, and a rotating status
 /// message. The `frame` selects which animation frame to display, and `tick`
 /// determines which status message to show (cycles every 10 ticks).
-pub fn render_connecting(f: &mut Frame, frame: usize, tick: u64, _progress: u8) {
+pub fn render_connecting(f: &mut Frame, frame: usize, tick: u64, _progress: u8, theme: &Theme) {
     let area = f.size();
     f.render_widget(Clear, area);
 
@@ -236,7 +237,7 @@ pub fn render_connecting(f: &mut Frame, frame: usize, tick: u64, _progress: u8) 
     let title = Paragraph::new(Line::from(vec![Span::styled(
         "chattor",
         Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
     )]))
     .alignment(Alignment::Center);
@@ -248,7 +249,7 @@ pub fn render_connecting(f: &mut Frame, frame: usize, tick: u64, _progress: u8) 
     let current_frame = &frames[frame % total_frames];
     let art_lines: Vec<Line> = current_frame
         .iter()
-        .map(|line| Line::from(Span::styled(*line, Style::default().fg(Color::Cyan))))
+        .map(|line| Line::from(Span::styled(*line, Style::default().fg(theme.accent))))
         .collect();
     let art = Paragraph::new(art_lines).alignment(Alignment::Center);
     f.render_widget(art, chunks[3]);
@@ -258,7 +259,7 @@ pub fn render_connecting(f: &mut Frame, frame: usize, tick: u64, _progress: u8) 
     let msg_idx = (tick / 10) as usize % msgs.len();
     let status = Paragraph::new(Line::from(Span::styled(
         msgs[msg_idx],
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.fg_dim),
     )))
     .alignment(Alignment::Center);
     f.render_widget(status, chunks[5]);
@@ -268,7 +269,7 @@ pub fn render_connecting(f: &mut Frame, frame: usize, tick: u64, _progress: u8) 
 ///
 /// Shows the chattor title (dimmed), a sad onion sprite, the error message,
 /// troubleshooting tips, and action keys for retry/continue/quit.
-pub fn render_failure(f: &mut Frame, error: &str) {
+pub fn render_failure(f: &mut Frame, error: &str, theme: &Theme) {
     let area = f.size();
     f.render_widget(Clear, area);
 
@@ -296,7 +297,7 @@ pub fn render_failure(f: &mut Frame, error: &str) {
     // Title (dimmed)
     let title = Paragraph::new(Line::from(Span::styled(
         "chattor",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.fg_dim),
     )))
     .alignment(Alignment::Center);
     f.render_widget(title, chunks[1]);
@@ -305,7 +306,7 @@ pub fn render_failure(f: &mut Frame, error: &str) {
     let art_data = failure_art();
     let art_lines: Vec<Line> = art_data
         .iter()
-        .map(|line| Line::from(Span::styled(*line, Style::default().fg(Color::DarkGray))))
+        .map(|line| Line::from(Span::styled(*line, Style::default().fg(theme.fg_dim))))
         .collect();
     let art = Paragraph::new(art_lines).alignment(Alignment::Center);
     f.render_widget(art, chunks[3]);
@@ -314,7 +315,7 @@ pub fn render_failure(f: &mut Frame, error: &str) {
     let fail_msg = Paragraph::new(Line::from(Span::styled(
         "connection failed :(",
         Style::default()
-            .fg(Color::Red)
+            .fg(theme.error)
             .add_modifier(Modifier::BOLD),
     )))
     .alignment(Alignment::Center);
@@ -323,7 +324,7 @@ pub fn render_failure(f: &mut Frame, error: &str) {
     // Error detail
     let err_detail = Paragraph::new(Line::from(Span::styled(
         error,
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.fg_dim),
     )))
     .alignment(Alignment::Center);
     f.render_widget(err_detail, chunks[7]);
@@ -332,19 +333,19 @@ pub fn render_failure(f: &mut Frame, error: &str) {
     let tips = vec![
         Line::from(Span::styled(
             "check your internet connection",
-            Style::default().fg(Color::Gray),
+            Style::default().fg(theme.fg),
         )),
         Line::from(Span::styled(
             "your firewall may be blocking outbound traffic",
-            Style::default().fg(Color::Gray),
+            Style::default().fg(theme.fg),
         )),
         Line::from(Span::styled(
             "tor network may be temporarily unreachable",
-            Style::default().fg(Color::Gray),
+            Style::default().fg(theme.fg),
         )),
         Line::from(Span::styled(
             "try a different network — some block tor",
-            Style::default().fg(Color::Gray),
+            Style::default().fg(theme.fg),
         )),
     ];
     let tips_widget = Paragraph::new(tips).alignment(Alignment::Center);
@@ -353,7 +354,7 @@ pub fn render_failure(f: &mut Frame, error: &str) {
     // Docs link
     let docs = Paragraph::new(Line::from(Span::styled(
         "docs: https://github.com/chattor/chattor/wiki/tor",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.fg_dim),
     )))
     .alignment(Alignment::Center);
     f.render_widget(docs, chunks[11]);
@@ -363,24 +364,24 @@ pub fn render_failure(f: &mut Frame, error: &str) {
         Span::styled(
             "[R]",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" Retry  ", Style::default().fg(Color::Gray)),
+        Span::styled(" Retry  ", Style::default().fg(theme.fg)),
         Span::styled(
             "[C]",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" Continue  ", Style::default().fg(Color::Gray)),
+        Span::styled(" Continue  ", Style::default().fg(theme.fg)),
         Span::styled(
             "[Q]",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" Quit", Style::default().fg(Color::Gray)),
+        Span::styled(" Quit", Style::default().fg(theme.fg)),
     ]);
     let actions = Paragraph::new(action_line).alignment(Alignment::Center);
     f.render_widget(actions, chunks[13]);
