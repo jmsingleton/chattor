@@ -1,11 +1,3 @@
-use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
-};
-
 /// Status updates sent from the Tor bootstrap process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapUpdate {
@@ -45,6 +37,12 @@ pub enum BootstrapAction {
     ContinueOffline,
     /// Quit the application.
     Quit,
+}
+
+impl Default for BootstrapPhase {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BootstrapPhase {
