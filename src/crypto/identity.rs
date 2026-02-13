@@ -18,6 +18,13 @@ impl IdentityKeypair {
         Ok(IdentityKeypair { signing_key, verifying_key })
     }
 
+    /// Create an IdentityKeypair from an existing signing key.
+    /// Used when vanity mining produces a keypair externally.
+    pub fn from_signing_key(signing_key: SigningKey) -> Self {
+        let verifying_key = signing_key.verifying_key();
+        IdentityKeypair { signing_key, verifying_key }
+    }
+
     /// Load identity from database or generate new one
     pub fn load_or_generate(db: &Database) -> Result<Self> {
         let conn = db.connection();
@@ -52,14 +59,14 @@ impl IdentityKeypair {
     }
 
     /// Serialize keypair to bytes
-    fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(self.signing_key.to_bytes().as_ref());
         bytes
     }
 
     /// Deserialize keypair from bytes
-    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() != 32 {
             return Err(TorrentChatError::Crypto("Invalid identity key length".into()));
         }
@@ -73,6 +80,33 @@ impl IdentityKeypair {
             signing_key,
             verifying_key,
         })
+    }
+
+    /// Save this identity keypair to the database.
+    pub fn save_to_db(&self, db: &Database) -> Result<()> {
+        let bytes = self.to_bytes();
+        let conn = db.connection();
+
+        // Upsert: replace if exists, insert if not
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('identity_keypair', ?1)",
+            [&bytes],
+        ).map_err(|e| TorrentChatError::Database(format!("Failed to store identity: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Load identity from database. Returns None if no identity exists.
+    /// Unlike `load_or_generate`, does NOT generate a new identity — that's
+    /// deferred to the mining screen on first run.
+    pub fn load_from_db(db: &Database) -> Option<Self> {
+        let conn = db.connection();
+        let bytes: Vec<u8> = conn.query_row(
+            "SELECT value FROM settings WHERE key = 'identity_keypair'",
+            [],
+            |row| row.get(0),
+        ).ok()?;
+        Self::from_bytes(&bytes).ok()
     }
 
     /// Derive .onion address from identity key (v3 format)
@@ -155,5 +189,18 @@ mod tests {
         let result = keypair.verify(wrong_message, &signature);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_signing_key() {
+        let original = IdentityKeypair::generate().unwrap();
+        let onion1 = original.to_onion_address();
+
+        // Reconstruct from signing key bytes
+        let key_bytes = original.to_bytes();
+        let restored = IdentityKeypair::from_bytes(&key_bytes).unwrap();
+        let onion2 = restored.to_onion_address();
+
+        assert_eq!(onion1, onion2);
     }
 }
