@@ -1,5 +1,5 @@
 /// SQL schema for chattor database
-pub const SCHEMA_VERSION: i32 = 6;
+pub const SCHEMA_VERSION: i32 = 7;
 
 pub const CREATE_TABLES: &str = r#"
 -- Schema version tracking
@@ -123,6 +123,54 @@ CREATE INDEX IF NOT EXISTS idx_queue_pending
     ON message_queue(next_retry_at, status)
     WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_queue_peer ON message_queue(peer_onion);
+
+-- Phase 3: Broadcast channels
+CREATE TABLE IF NOT EXISTS channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_type TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS channel_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    post_id TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL,
+    signature TEXT NOT NULL,
+    FOREIGN KEY (channel_id) REFERENCES channels(id)
+);
+
+CREATE TABLE IF NOT EXISTS channel_subscribers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscriber_onion TEXT NOT NULL,
+    channel_type TEXT NOT NULL,
+    subscribed_at INTEGER NOT NULL,
+    UNIQUE(subscriber_onion, channel_type)
+);
+
+CREATE TABLE IF NOT EXISTS channel_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    publisher_onion TEXT NOT NULL,
+    channel_type TEXT NOT NULL,
+    subscribed_at INTEGER NOT NULL,
+    last_sync_at INTEGER,
+    UNIQUE(publisher_onion, channel_type)
+);
+
+CREATE TABLE IF NOT EXISTS channel_post_receipts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id TEXT NOT NULL,
+    reader_onion TEXT NOT NULL,
+    read_at INTEGER NOT NULL,
+    UNIQUE(post_id, reader_onion)
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_posts_channel ON channel_posts(channel_id);
+CREATE INDEX IF NOT EXISTS idx_channel_posts_post_id ON channel_posts(post_id);
+CREATE INDEX IF NOT EXISTS idx_channel_posts_created ON channel_posts(created_at);
+CREATE INDEX IF NOT EXISTS idx_channel_subs_onion ON channel_subscribers(subscriber_onion);
+CREATE INDEX IF NOT EXISTS idx_channel_subscriptions_publisher ON channel_subscriptions(publisher_onion);
 "#;
 
 #[cfg(test)]
@@ -132,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_schema_version_defined() {
-        assert_eq!(SCHEMA_VERSION, 6);
+        assert_eq!(SCHEMA_VERSION, 7);
     }
 
     #[test]
@@ -200,5 +248,61 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "messages_fts");
+    }
+
+    #[test]
+    fn test_channels_table_exists() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(CREATE_TABLES).unwrap();
+        let result = conn.query_row(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='channels'",
+            [], |row| row.get::<_, String>(0)
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "channels");
+    }
+
+    #[test]
+    fn test_channel_posts_table_exists() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(CREATE_TABLES).unwrap();
+        let result = conn.query_row(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='channel_posts'",
+            [], |row| row.get::<_, String>(0)
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_channel_subscribers_table_exists() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(CREATE_TABLES).unwrap();
+        let result = conn.query_row(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='channel_subscribers'",
+            [], |row| row.get::<_, String>(0)
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_channel_subscriptions_table_exists() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(CREATE_TABLES).unwrap();
+        let result = conn.query_row(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='channel_subscriptions'",
+            [], |row| row.get::<_, String>(0)
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_channel_post_receipts_table_exists() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(CREATE_TABLES).unwrap();
+        let result = conn.query_row(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='channel_post_receipts'",
+            [], |row| row.get::<_, String>(0)
+        );
+        assert!(result.is_ok());
     }
 }
