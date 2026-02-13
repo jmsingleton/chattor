@@ -30,6 +30,7 @@ pub enum AppState {
     ViewingMyIdentity {
         friend_code: String,
         onion_address: String,
+        copied_field: Option<String>,
     },
     SettingEphemeral {
         conversation_id: i64,
@@ -322,10 +323,22 @@ impl AppState {
                 }
             }
 
-            AppState::ViewingMyIdentity { .. } => {
+            AppState::ViewingMyIdentity { ref onion_address, ref friend_code, ref mut copied_field } => {
                 match key.code {
-                    KeyCode::Esc | KeyCode::Char('i') => {
+                    KeyCode::Char('i') | KeyCode::Esc => {
                         *self = AppState::default();
+                        Ok(None)
+                    }
+                    KeyCode::Char('o') | KeyCode::Char('1') => {
+                        if crate::ui::copy_to_clipboard(onion_address) {
+                            *copied_field = Some("onion".into());
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Char('c') | KeyCode::Char('2') => {
+                        if crate::ui::copy_to_clipboard(friend_code) {
+                            *copied_field = Some("code".into());
+                        }
                         Ok(None)
                     }
                     _ => Ok(None),
@@ -643,6 +656,7 @@ mod tests {
         let mut state = AppState::ViewingMyIdentity {
             friend_code: "test".to_string(),
             onion_address: "test.onion".to_string(),
+            copied_field: None,
         };
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         let action = state.handle_key(key).unwrap();
@@ -693,6 +707,7 @@ mod tests {
         let mut state = AppState::ViewingMyIdentity {
             friend_code: "test-code".to_string(),
             onion_address: "test.onion".to_string(),
+            copied_field: None,
         };
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
         state.handle_key(key).unwrap();

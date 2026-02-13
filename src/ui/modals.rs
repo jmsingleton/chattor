@@ -211,7 +211,7 @@ pub fn render_friend_request_list(
 }
 
 /// Render "My Identity" modal showing friend code and onion address
-pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &str, theme: &Theme) {
+pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &str, copied_field: Option<&str>, theme: &Theme) {
     use ratatui::style::Modifier;
 
     let area = centered_rect(60, 50, f.size());
@@ -233,18 +233,24 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
         .margin(1)
         .constraints([
             Constraint::Length(1),  // Label
-            Constraint::Length(3),  // Friend code box
+            Constraint::Length(3),  // Onion address box
             Constraint::Length(1),  // Spacer
             Constraint::Length(1),  // Label
-            Constraint::Length(3),  // Onion address box
+            Constraint::Length(3),  // Friend code box
             Constraint::Length(1),  // Spacer
             Constraint::Length(1),  // Help text
         ])
         .split(inner);
 
-    // Onion address label
-    let label1 = Paragraph::new("Share this address with friends:")
-        .style(Style::default().fg(theme.fg));
+    // Onion address label with copy feedback
+    let onion_label = if copied_field == Some("onion") {
+        "Onion Address  [Copied!]"
+    } else {
+        "Onion Address  [o] copy"
+    };
+    let label_color = if copied_field == Some("onion") { theme.success } else { theme.fg };
+    let label1 = Paragraph::new(onion_label)
+        .style(Style::default().fg(label_color));
     f.render_widget(label1, chunks[0]);
 
     // Onion address value (primary - this is what friends need to add you)
@@ -254,9 +260,15 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
         .wrap(Wrap { trim: false });
     f.render_widget(onion_widget_top, chunks[1]);
 
-    // Friend code label
-    let label2 = Paragraph::new("Friend Code:")
-        .style(Style::default().fg(theme.fg_dim));
+    // Friend code label with copy feedback
+    let code_label = if copied_field == Some("code") {
+        "Friend Code  [Copied!]"
+    } else {
+        "Friend Code  [c] copy"
+    };
+    let code_label_color = if copied_field == Some("code") { theme.success } else { theme.fg_dim };
+    let label2 = Paragraph::new(code_label)
+        .style(Style::default().fg(code_label_color));
     f.render_widget(label2, chunks[3]);
 
     // Friend code value

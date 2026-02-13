@@ -354,12 +354,14 @@ async fn main() -> Result<()> {
                                 app_state = AppState::ViewingMyIdentity {
                                     friend_code,
                                     onion_address: onion.clone(),
+                                    copied_field: None,
                                 };
                             } else {
                                 // Tor not ready yet - can't show identity
                                 app_state = AppState::ViewingMyIdentity {
                                     friend_code: "(Waiting for Tor...)".to_string(),
                                     onion_address: "(Waiting for Tor...)".to_string(),
+                                    copied_field: None,
                                 };
                             }
                             drop(app_lock);

@@ -141,8 +141,8 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         AppState::ViewingFriendRequest { from_onion, friend_code, .. } => {
             crate::ui::modals::render_friend_request_modal(f, from_onion, friend_code, &ctx.theme);
         }
-        AppState::ViewingMyIdentity { friend_code, onion_address } => {
-            crate::ui::modals::render_identity_modal(f, friend_code, onion_address, &ctx.theme);
+        AppState::ViewingMyIdentity { friend_code, onion_address, copied_field } => {
+            crate::ui::modals::render_identity_modal(f, friend_code, onion_address, copied_field.as_deref(), &ctx.theme);
         }
         AppState::SettingEphemeral { selected_idx, .. } => {
             crate::ui::modals::render_ephemeral_modal(f, *selected_idx, &ctx.theme);
@@ -161,7 +161,7 @@ fn format_footer_spans<'a>(state: &AppState, theme: &'a Theme) -> Vec<Span<'a>> 
         AppState::AddingFriend { .. } => vec![("Enter", "Send"), ("Esc", "Cancel")],
         AppState::ViewingFriendRequests { .. } => vec![("\u{2191}\u{2193}", "Navigate"), ("Enter", "View"), ("Esc", "Back")],
         AppState::ViewingFriendRequest { .. } => vec![("A", "Accept"), ("R", "Reject"), ("Esc", "Back")],
-        AppState::ViewingMyIdentity { .. } => vec![("i/Esc", "Close")],
+        AppState::ViewingMyIdentity { .. } => vec![("o", "Copy onion"), ("c", "Copy code"), ("i/Esc", "Close")],
         AppState::SettingEphemeral { .. } => vec![("\u{2191}\u{2193}", "Select"), ("Enter", "Confirm"), ("Esc", "Cancel")],
         AppState::ViewingChannel { is_own: true, .. } => vec![("Enter", "Post"), ("Esc", "Back")],
         AppState::ViewingChannel { .. } => vec![("Esc", "Back")],
