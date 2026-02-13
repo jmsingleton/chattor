@@ -98,7 +98,7 @@ async fn main() -> Result<()> {
         }
 
         // Check for updates from Tor init task
-        if bootstrap_rx.has_changed().unwrap_or(false) {
+        if bootstrap_rx.has_changed().unwrap_or(true) {
             let update = bootstrap_rx.borrow_and_update().clone();
             match update {
                 ui::BootstrapUpdate::Progress(p) => {
