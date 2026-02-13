@@ -66,19 +66,29 @@ pub fn copy_to_clipboard(text: &str) -> bool {
         }
     }
 
-    // Try arboard. On Linux, use SetExtLinux::wait() in a background thread
-    // so the clipboard contents persist after the Clipboard struct is dropped.
+    // Try arboard. On Linux/Wayland, spawn a background thread with wait()
+    // so the clipboard selection is served until replaced (up to 30s).
+    // We use a channel to know if the set actually succeeded.
     #[cfg(target_os = "linux")]
     {
         let text_owned = text.to_owned();
+        let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            let result = (|| -> std::result::Result<(), arboard::Error> {
+                let mut clipboard = arboard::Clipboard::new()?;
                 use arboard::SetExtLinux;
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-                let _ = clipboard.set().wait_until(deadline).text(text_owned);
-            }
+                clipboard.set().wait_until(deadline).text(text_owned)?;
+                Ok(())
+            })();
+            let _ = tx.send(result.is_ok());
         });
-        return true;
+        // Wait briefly for the clipboard to be set
+        if let Ok(true) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            return true;
+        }
+        // If arboard also failed, nothing we can do
+        return false;
     }
 
     // On non-Linux, arboard works fine without wait()
