@@ -77,6 +77,7 @@ pub enum AppAction {
     PublishChannelPost(String, String),     // (content, channel_type)
     SubscribeToChannel(String),             // publisher .onion address
     SelectChannel(String, String, bool),    // (publisher_onion, channel_type, is_own)
+    ViewOwnChannel,
     Quit,
 }
 
@@ -170,6 +171,7 @@ impl AppState {
                             };
                             Ok(None)
                         }
+                        KeyCode::Char('p') => Ok(Some(AppAction::ViewOwnChannel)),
                         KeyCode::Tab => {
                             if selected_friend_idx.is_none() {
                                 *selected_friend_idx = Some(0);
@@ -231,7 +233,7 @@ impl AppState {
                     }
                     KeyCode::Enter => {
                         if input.is_empty() {
-                            *error = Some("Please enter a .onion address".to_string());
+                            *error = Some("Please enter a .onion address or friend code".to_string());
                             Ok(None)
                         } else {
                             Ok(Some(AppAction::SendFriendRequest(input.clone())))
@@ -902,6 +904,14 @@ mod tests {
         let action = state.handle_key(key).unwrap();
         assert!(action.is_none());
         assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn test_view_own_channel_hotkey() {
+        let mut state = AppState::default();
+        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
+        let action = state.handle_key(key).unwrap();
+        assert_eq!(action, Some(AppAction::ViewOwnChannel));
     }
 
     #[test]

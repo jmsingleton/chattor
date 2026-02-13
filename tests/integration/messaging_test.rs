@@ -5,8 +5,9 @@
 use chattor::db::Database;
 use chattor::crypto::signal::SignalSession;
 use chattor::net::queue::MessageQueue;
-use chattor::tor::address::{onion_to_friend_code, friend_code_to_onion};
-use std::collections::HashMap;
+use chattor::tor::address::onion_to_friend_code;
+use chattor::protocol::friend_code::friend_code_to_onion;
+
 
 fn setup_test_db() -> Database {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -30,20 +31,20 @@ fn setup_test_db() -> Database {
 
 #[test]
 fn test_address_mapping_roundtrip() {
-    // Test that friend code generation is deterministic
-    let onion = "3g2upl4pq6kufc4m2kyd56yz3b4qbeteqbqndzvt3sp6hhfjdkhqiiqd.onion";
-    let friend_code = onion_to_friend_code(onion).unwrap();
+    // Generate a valid v3 .onion from a known identity
+    let identity = chattor::crypto::IdentityKeypair::generate().unwrap();
+    let onion = identity.to_onion_address();
 
-    // Verify format
+    // Encode to friend code
+    let friend_code = onion_to_friend_code(&onion).unwrap();
+
+    // Verify format: 8 groups of 4 words
     assert!(friend_code.contains('-'));
-    let parts: Vec<&str> = friend_code.split('-').collect();
-    assert_eq!(parts.len(), 4);
+    let groups: Vec<&str> = friend_code.split(' ').collect();
+    assert_eq!(groups.len(), 8);
 
-    // Test reverse lookup
-    let mut mapping = HashMap::new();
-    mapping.insert(friend_code.clone(), onion.to_string());
-
-    let result = friend_code_to_onion(&friend_code, &mapping).unwrap();
+    // Decode back to .onion — should be reversible
+    let result = friend_code_to_onion(&friend_code).unwrap();
     assert_eq!(result, onion);
 }
 

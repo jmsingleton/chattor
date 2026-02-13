@@ -37,7 +37,7 @@ pub fn render_add_friend_modal(
         .split(area);
 
     // Prompt
-    let prompt = Paragraph::new("Enter their .onion address:");
+    let prompt = Paragraph::new("Enter their .onion address or friend code:");
     f.render_widget(prompt, chunks[0]);
 
     // Input field
@@ -50,7 +50,7 @@ pub fn render_add_friend_modal(
     let help = if let Some(err) = error {
         Paragraph::new(err).style(Style::default().fg(theme.error))
     } else {
-        Paragraph::new("e.g., abc123...xyz.onion")
+        Paragraph::new("Paste .onion or friend code (from [i] Identity)")
             .style(Style::default().fg(theme.fg_dim))
     };
     f.render_widget(help, chunks[2]);
@@ -210,11 +210,13 @@ pub fn render_friend_request_list(
     f.render_widget(controls, chunks[1]);
 }
 
-/// Render "My Identity" modal showing friend code and onion address
+/// Render "My Identity" modal showing friend code and onion address.
+/// The friend code is primary (human-friendly, shareable) and the .onion
+/// address is secondary (raw identifier).
 pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &str, copied_field: Option<&str>, theme: &Theme) {
     use ratatui::style::Modifier;
 
-    let area = centered_rect(60, 50, f.size());
+    let area = centered_rect(70, 70, f.size());
 
     // Clear area first
     f.render_widget(Clear, area);
@@ -232,51 +234,56 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(1),  // Label
+            Constraint::Length(1),  // Friend code label
+            Constraint::Length(1),  // Hint
+            Constraint::Min(4),    // Friend code box (needs room for 32 words)
+            Constraint::Length(1),  // Spacer
+            Constraint::Length(1),  // Onion address label
             Constraint::Length(3),  // Onion address box
-            Constraint::Length(1),  // Spacer
-            Constraint::Length(1),  // Label
-            Constraint::Length(3),  // Friend code box
-            Constraint::Length(1),  // Spacer
             Constraint::Length(1),  // Help text
         ])
         .split(inner);
 
-    // Onion address label with copy feedback
-    let onion_label = if copied_field == Some("onion") {
-        "Onion Address  [Copied!]"
-    } else {
-        "Onion Address  [o] copy"
-    };
-    let label_color = if copied_field == Some("onion") { theme.success } else { theme.fg };
-    let label1 = Paragraph::new(onion_label)
-        .style(Style::default().fg(label_color));
-    f.render_widget(label1, chunks[0]);
-
-    // Onion address value (primary - this is what friends need to add you)
-    let onion_widget_top = Paragraph::new(onion_address)
-        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
-        .style(Style::default().fg(theme.success).add_modifier(Modifier::BOLD))
-        .wrap(Wrap { trim: false });
-    f.render_widget(onion_widget_top, chunks[1]);
-
-    // Friend code label with copy feedback
+    // Friend code label with copy feedback (primary — this is what users share)
     let code_label = if copied_field == Some("code") {
         "Friend Code  [Copied!]"
     } else {
         "Friend Code  [c] copy"
     };
-    let code_label_color = if copied_field == Some("code") { theme.success } else { theme.fg_dim };
-    let label2 = Paragraph::new(code_label)
-        .style(Style::default().fg(code_label_color));
-    f.render_widget(label2, chunks[3]);
+    let code_label_color = if copied_field == Some("code") { theme.success } else { theme.fg };
+    let label1 = Paragraph::new(code_label)
+        .style(Style::default().fg(code_label_color).add_modifier(Modifier::BOLD));
+    f.render_widget(label1, chunks[0]);
 
-    // Friend code value
+    // Hint text
+    let hint = Paragraph::new("Share this with friends so they can add you")
+        .style(Style::default().fg(theme.fg_dim));
+    f.render_widget(hint, chunks[1]);
+
+    // Friend code value (primary, prominent)
     let code_widget = Paragraph::new(friend_code)
         .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
-        .style(Style::default().fg(theme.warning))
+        .style(Style::default().fg(theme.success).add_modifier(Modifier::BOLD))
         .wrap(Wrap { trim: false });
-    f.render_widget(code_widget, chunks[4]);
+    f.render_widget(code_widget, chunks[2]);
+
+    // Onion address label with copy feedback (secondary)
+    let onion_label = if copied_field == Some("onion") {
+        "Onion Address  [Copied!]"
+    } else {
+        "Onion Address  [o] copy"
+    };
+    let onion_label_color = if copied_field == Some("onion") { theme.success } else { theme.fg_dim };
+    let label2 = Paragraph::new(onion_label)
+        .style(Style::default().fg(onion_label_color));
+    f.render_widget(label2, chunks[4]);
+
+    // Onion address value (secondary)
+    let onion_widget = Paragraph::new(onion_address)
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
+        .style(Style::default().fg(theme.fg_dim))
+        .wrap(Wrap { trim: false });
+    f.render_widget(onion_widget, chunks[5]);
 
     // Help text
     let help = Paragraph::new("[Esc/i] Close")

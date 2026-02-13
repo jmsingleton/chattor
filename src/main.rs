@@ -582,6 +582,19 @@ async fn main() -> Result<()> {
                                 scroll_offset: 0,
                             };
                         }
+                        Some(AppAction::ViewOwnChannel) => {
+                            let app_lock = app.lock().await;
+                            let own_onion = app_lock.onion_address.clone().unwrap_or_default();
+                            drop(app_lock);
+                            app_state = AppState::ViewingChannel {
+                                publisher_onion: own_onion,
+                                channel_type: "public".to_string(),
+                                is_own: true,
+                                input: String::new(),
+                                cursor: 0,
+                                scroll_offset: 0,
+                            };
+                        }
                         Some(AppAction::Quit) => break Ok(()),
                         None => {} // Just state change
                     }
@@ -645,14 +658,21 @@ async fn main() -> Result<()> {
 async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendResult> {
     use crate::protocol::friend_request::FriendRequestHandler;
 
-    // For MVP: peer_input is a .onion address directly
-    // Validate it looks like a .onion address
-    let peer_onion = peer_input.trim();
-    if !peer_onion.ends_with(".onion") {
-        return Err(error::TorrentChatError::Tor(
-            "Please enter a .onion address (e.g., abc123.onion)".into()
-        ));
-    }
+    let trimmed = peer_input.trim();
+
+    // Accept both .onion addresses and friend codes (word sequences)
+    let peer_onion = if trimmed.ends_with(".onion") {
+        trimmed.to_string()
+    } else {
+        // Try to decode as a friend code (reversible word encoding of .onion)
+        match crate::protocol::friend_code::friend_code_to_onion(trimmed) {
+            Ok(onion) => onion,
+            Err(_) => return Err(error::TorrentChatError::Tor(
+                "Enter a .onion address or friend code (word sequence from their Identity)".into()
+            )),
+        }
+    };
+    let peer_onion = peer_onion.as_str();
 
     // Get our .onion address
     let own_onion = app.onion_address.as_ref()

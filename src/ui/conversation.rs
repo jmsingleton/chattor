@@ -51,6 +51,8 @@ pub fn render_conversation(
                 Line::from(""),
                 Line::from(Span::styled("Press [a] to add a friend", Style::default().fg(theme.fg))),
                 Line::from(Span::styled("Press [i] to view your identity", Style::default().fg(theme.fg))),
+                Line::from(Span::styled("Press [p] to open your public channel", Style::default().fg(theme.fg))),
+                Line::from(Span::styled("Press [s] to subscribe to a channel", Style::default().fg(theme.fg))),
             ];
 
             let text = Paragraph::new(hint)
@@ -59,9 +61,9 @@ pub fn render_conversation(
             let v_layout = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Percentage(40),
-                    Constraint::Length(4),
-                    Constraint::Percentage(40),
+                    Constraint::Percentage(35),
+                    Constraint::Length(6),
+                    Constraint::Percentage(35),
                 ])
                 .split(padded);
             f.render_widget(text, v_layout[1]);

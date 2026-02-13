@@ -157,7 +157,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
 fn format_footer_spans<'a>(state: &AppState, theme: &'a Theme) -> Vec<Span<'a>> {
     let pairs: Vec<(&str, &str)> = match state {
         AppState::Normal { input_focused: true, .. } => vec![("Enter", "Send"), ("Esc", "Nav")],
-        AppState::Normal { .. } => vec![("Tab/\u{2191}\u{2193}", "Select"), ("Enter", "Open"), ("a", "Add"), ("e", "Ephemeral"), ("i", "Identity"), ("f", "Requests"), ("q", "Quit")],
+        AppState::Normal { .. } => vec![("Tab/\u{2191}\u{2193}", "Select"), ("Enter", "Open"), ("a", "Add"), ("s", "Subscribe"), ("p", "Channel"), ("i", "Identity"), ("f", "Requests"), ("q", "Quit")],
         AppState::AddingFriend { .. } => vec![("Enter", "Send"), ("Esc", "Cancel")],
         AppState::ViewingFriendRequests { .. } => vec![("\u{2191}\u{2193}", "Navigate"), ("Enter", "View"), ("Esc", "Back")],
         AppState::ViewingFriendRequest { .. } => vec![("A", "Accept"), ("R", "Reject"), ("Esc", "Back")],
