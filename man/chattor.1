@@ -1,0 +1,254 @@
+.TH CHATTOR 1 "February 2026" "chattor 0.1.0" "User Commands"
+.SH NAME
+chattor \- peer\-to\-peer encrypted chat over Tor
+.SH SYNOPSIS
+.B chattor
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B chattor
+is a terminal chat application where each user runs their own Tor hidden
+service. Messages are end\-to\-end encrypted with Signal Protocol (X3DH key
+exchange + Double Ratchet). There are no central servers, no accounts, and no
+metadata leakage. Each peer is both a client and a server.
+.PP
+Your identity is an Ed25519 keypair. The public key directly derives your v3
+\&.onion address \(em no registration required. On first launch,
+.B chattor
+offers vanity .onion mining: choose a custom prefix and the app brute\-forces
+keypairs in parallel until a match is found. Press Esc to skip and get a random
+address.
+.PP
+All data is stored locally in a SQLCipher\-encrypted database. Messages are
+searchable via FTS5 full\-text search. Nothing is stored on remote servers or
+third\-party infrastructure.
+.SH OPTIONS
+.TP
+\fB\-d\fR, \fB\-\-debug\fR
+Enable debug logging. Output goes to stderr.
+.TP
+\fB\-t\fR, \fB\-\-theme\fR \fINAME\fR
+Set the color theme. Available presets:
+.BR dark " (default),"
+.BR light ,
+.BR cyberpunk ,
+.BR minimal ,
+.BR rose\-pine ,
+.BR rose\-pine\-moon ,
+.BR rose\-pine\-dawn .
+See
+.B THEMES
+section.
+.TP
+\fB\-c\fR, \fB\-\-config\-dir\fR \fIPATH\fR
+Use a custom configuration and data directory instead of the platform default.
+Useful for running multiple isolated instances.
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help information and exit. Use \fB\-\-help\fR for extended help with
+keybindings.
+.SH GETTING STARTED
+.TP
+.B 1.
+Build and run:
+.B cargo build \-\-release && cargo run
+.TP
+.B 2.
+On first launch, the mining screen appears. Type a prefix for your .onion
+address (e.g., "chat") and press Enter to start mining, or Esc to skip.
+.TP
+.B 3.
+Once mining completes, the main TUI loads. Press
+.B i
+to view your identity \(em your .onion address and friend code.
+.TP
+.B 4.
+Share your friend code or .onion address with someone. They press
+.B a
+and paste it to send you a friend request.
+.TP
+.B 5.
+When a friend request arrives, press
+.B f
+to view requests, select one, then
+.B A
+to accept or
+.B R
+to reject.
+.TP
+.B 6.
+Select a friend with Tab/arrows and press Enter. Type a message and press
+Enter to send.
+.SH KEYBINDINGS
+.SS "Navigation (sidebar focused)"
+.TP
+.BR Tab ", " Up / Down
+Move between friends and channels.
+.TP
+.B Enter
+Select friend or open conversation.
+.TP
+.B a
+Add a friend.
+.TP
+.B i
+View identity (onion address and friend code).
+.TP
+.B s
+Subscribe to a channel.
+.TP
+.B p
+Open your public channel.
+.TP
+.B f
+View friend requests.
+.TP
+.B q
+Quit chattor.
+.SS "Chat (input focused)"
+.TP
+.B Enter
+Send message.
+.TP
+.B Esc
+Return to sidebar navigation.
+.SS "Identity Modal"
+.TP
+.B o
+Copy .onion address to clipboard.
+.TP
+.B c
+Copy friend code to clipboard.
+.TP
+.BR i " or " Esc
+Close modal.
+.SS "Friend Requests"
+.TP
+.BR Up / Down
+Navigate request list.
+.TP
+.B Enter
+View request details.
+.TP
+.B A
+Accept friend request.
+.TP
+.B R
+Reject friend request.
+.TP
+.B Esc
+Go back.
+.SS "Ephemeral Messages"
+.TP
+.BR Up / Down
+Select expiry duration.
+.TP
+.B Enter
+Confirm selection.
+.TP
+.B Esc
+Cancel.
+.SS "Channel View (own channel)"
+.TP
+.B Enter
+Compose and publish a post.
+.TP
+.B Esc
+Return to sidebar.
+.SS "Channel View (subscribed)"
+.TP
+.B Esc
+Return to sidebar.
+.SS "Mining Screen"
+.TP
+.B Enter
+Start mining with the entered prefix.
+.TP
+.B Esc
+Skip mining, use a random address.
+.SH FRIEND CODES
+Friend codes are 32\-word mnemonics derived from your Ed25519 public key. Each
+byte of the 32\-byte key maps to one word from a fixed 256\-word dictionary,
+making the encoding deterministic and reversible.
+.PP
+Codes are displayed as 8 groups of 4 words. Words within a group are separated
+by dashes; groups are separated by spaces. Example:
+.PP
+.RS
+ace\-act\-add\-age ago\-aid\-aim\-air ale\-all\-and\-ant ...
+.RE
+.PP
+When adding a friend, you can paste either a friend code or a raw .onion
+address \(em both are accepted.
+.SH BROADCAST CHANNELS
+Each user automatically has two broadcast channels: Public and Friends Only.
+Public channels are visible to anyone who knows your .onion address. Friends
+Only channels are limited to accepted friends.
+.PP
+Posts are Ed25519\-signed by the publisher, ensuring authenticity. Subscribers
+pull new posts periodically (every 5 minutes) via sync requests. Publishers see
+a "seen by N" read receipt count per post.
+.PP
+Channels retain the 100 most recent posts. When friends accept each other, they
+automatically subscribe to each other's channels.
+.SH THEMES
+.B chattor
+ships with 7 color themes. Set via
+.B \-\-theme
+flag or in the TOML config file.
+.TP
+.B dark
+Muted grays with blue accents. Default theme.
+.TP
+.B light
+Bright background with dark text.
+.TP
+.B cyberpunk
+Neon greens and magentas on a dark background.
+.TP
+.B minimal
+Monochrome, low contrast.
+.TP
+.B rose\-pine
+Soft pink and gold tones on a dark background.
+.TP
+.B rose\-pine\-moon
+Rose Pine variant with cooler tones.
+.TP
+.B rose\-pine\-dawn
+Light variant of Rose Pine.
+.PP
+Custom colors can be set in
+.I ~/.config/chattor/theme.toml
+(Linux) or
+.I ~/Library/Application\\ Support/chattor/theme.toml
+(macOS). Any color field from the built\-in themes can be overridden using hex
+color values.
+.SH FILES
+.TP
+.I ~/.config/chattor/theme.toml
+Theme color overrides (Linux).
+.TP
+.I ~/.local/share/chattor/messages.db
+SQLCipher\-encrypted database containing messages, friends, channels, and
+identity (Linux).
+.TP
+.I ~/Library/Application\\ Support/chattor/
+Configuration and data directory (macOS). Contains both theme config and
+database.
+.SH EXAMPLES
+.TP
+.B chattor
+Start with default settings and dark theme.
+.TP
+.B chattor \-\-theme cyberpunk
+Start with the cyberpunk color theme.
+.TP
+.B chattor \-\-config\-dir /tmp/alice
+Run an isolated instance with a separate database. Useful for testing with two
+users side by side.
+.TP
+.B chattor \-\-debug 2>chattor.log
+Run with debug logging redirected to a file.
+.SH SEE ALSO
+.BR tor (1),
+.BR arti (1)
