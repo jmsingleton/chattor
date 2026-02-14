@@ -18,7 +18,7 @@ The plan files contain the source of truth for what needs to be built and how. A
 
 **chattor** is a privacy-first TUI (Terminal User Interface) chat application built in Rust. The architecture is pure peer-to-peer over Tor hidden services with no central servers. Each user runs their own hidden service (.onion address) for receiving messages, with end-to-end encryption via Signal Protocol (Double Ratchet).
 
-**Current Status:** Phase 5 complete (Crypto & Identity Hardening). All phases through 5 implemented.
+**Current Status:** Phase 6 partial (Real Tor Hidden Service). All phases through 5 implemented, plus real arti onion service hosting.
 
 **Core Design Principles:**
 - Privacy-first: No central servers, no telemetry, no metadata leakage
@@ -40,7 +40,7 @@ cargo run -- --theme cyberpunk  # Run with a specific theme
 
 ### Testing
 ```bash
-cargo test                            # Run all tests (~213 currently)
+cargo test                            # Run all tests (~199 currently)
 cargo test protocol::message          # Run specific module tests
 cargo test --test integration         # Integration tests only
 cargo test -- --nocapture             # Show test output
@@ -52,11 +52,6 @@ cargo test --test e2e_messaging -- --ignored --nocapture
 # Two-instance manual testing
 ./scripts/test-two-instances.sh
 ```
-
-> **⚠️ Warning: Vanity mining tests are CPU-intensive.** `cargo test crypto::vanity` spawns
-> rayon worker threads across all CPU cores. If a test hangs or multiple instances run
-> concurrently, they will peg the CPU at 100%. Always verify no orphaned vanity test
-> processes are running (`ps aux | grep vanity`) if load is unexpectedly high.
 
 ### Database Management
 ```bash
@@ -70,7 +65,7 @@ rm -rf ~/.local/share/chattor/
 sqlite3 ~/Library/Application\ Support/chattor/messages.db
 # .schema messages       # View table structure
 # .tables                # List all tables
-# SELECT * FROM schema_version;  # Current schema version (should be 7)
+# SELECT * FROM schema_version;  # Current schema version (should be 8)
 ```
 
 ### Linting & Formatting
@@ -102,25 +97,24 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - `App::new()` initializes everything synchronously (Tor init is async via `init_tor()`)
 
 **2. Database Layer (`src/db/`)**
-- Schema version 7 (Phase 3) - see `src/db/schema.rs`
+- Schema version 8 - see `src/db/schema.rs`
 - SQLCipher for at-rest encryption (bundled via rusqlite)
 - Key tables: `friends`, `conversations`, `messages`, `message_queue`, `signal_sessions`, `blocked_onions`
 - Channel tables: `channels`, `channel_posts`, `channel_subscribers`, `channel_subscriptions`, `channel_post_receipts`
 - FTS5 virtual table (`messages_fts`) for full-text search with auto-sync triggers
-- Automatic migrations from v2 through v7 in `src/db/connection.rs`
+- Automatic migrations from v2 through v8 in `src/db/connection.rs`
 
 **3. Identity & Crypto (`src/crypto/`)**
 - Ed25519 keypair for identity and signing (`identity.rs`)
 - Signal Protocol with real X3DH key exchange and ChaCha20-Poly1305 encryption (`signal.rs`)
-- Vanity .onion mining with rayon parallel workers (`vanity.rs`)
-- Identity key derives v3 .onion address; `Option<IdentityKeypair>` defers creation to first-run mining
+- Identity key used for signing; .onion address managed by arti (not derived from identity key)
 
-**4. Tor Integration (`src/tor/`) - STUBS**
-- `client.rs`: TorClient wrapper (arti integration planned)
-- `hidden_service.rs`: Hidden service hosting
+**4. Tor Integration (`src/tor/`)**
+- `client.rs`: TorClient wrapper around arti-client with persistent state directory
+- `hidden_service.rs`: Real arti onion service hosting via `launch_onion_service()`
 - `connection.rs`: Peer-to-peer connections over Tor
 - `address.rs`: Friend code ↔ .onion mapping (SHA-256 based, deterministic)
-- **All currently return success without real Tor connections**
+- Onion service key managed by arti (persistent across restarts)
 
 **5. Protocol Layer (`src/protocol/`)**
 - Friend codes: `word-NNNN-word-NNNN` format with checksum validation
@@ -177,11 +171,11 @@ Database path: `{data_dir}/messages.db`
 - Integration tests (52 total, all passing)
 
 **What's Stubbed (returns success without real implementation):**
-- `TorClient::bootstrap()` - doesn't connect to actual Tor network
-- `TorConnection::send()` / `receive()` - no real network I/O
-- `HiddenService::new()` - no real .onion hosting
+- `TorConnection::send()` / `receive()` - no real network I/O (use Tor rendezvous instead)
 
-**What's Real (Phase 2b + Phase 5):**
+**What's Real (Phase 2b + Phase 5 + Phase 6):**
+- `TorClient::new_with_data_dir()` - real arti bootstrap with persistent state
+- `HiddenService::launch()` - real arti onion service hosting
 - `SignalSession::encrypt()` / `decrypt()` - real ChaCha20-Poly1305 encryption (plaintext fallback removed)
 - X3DH key exchange via `from_prekey_bundle_real()` / `from_prekey_message_real()`
 - TCP framing layer for message I/O
@@ -212,30 +206,31 @@ Database path: `{data_dir}/messages.db`
 - Clipboard fix with fallback to wl-copy/xclip/xsel/pbcopy
 
 ### Phase 5: Crypto & Identity Hardening ✅
-- Vanity .onion mining with rayon-based parallel workers
-- First-run mining screen: prefix input with live ETA estimate
-- Full-screen mining UI with animated ASCII art and live stats
-- Auto-accept on prefix match, random fallback on skip/cancel
-- Identity lifecycle: `Option<IdentityKeypair>` — load from DB, defer to mining on first run
 - Signal Protocol: removed plaintext fallback from encrypt/decrypt (hard error without session)
 - PreKeyBundle exchange and real X3DH already wired (from Phase 2b)
 
 ### Phase 6: Hardening (In Progress)
-**Chunk 1 — Polish & Fixes:**
+**Chunk 1 — Polish & Fixes: ✅**
 - Friend request Ed25519 signature verification (closed security gap)
 - Dead code removal (QueueProcessor, ConnectionPool, MiningActive)
 - Real PreKeyBundle generation in friend request accept flow
 - Zero TODOs remaining in src/
 
+**Chunk 2 — Real Tor Hidden Service: ✅**
+- Real arti onion service hosting (replaces stubs)
+- Tor rendezvous stream listener for incoming connections
+- .onion address persistence across restarts (app_settings table, schema v8)
+- Vanity mining system removed (arti manages .onion keys)
+
 **Remaining:**
 - Typing indicators, online status, desktop notifications
-- Hidden service hosting (waiting on arti onion service APIs)
+- Real peer-to-peer message sending over Tor circuits
 - Backup/restore, packaging for distributions
 
 ## Important Technical Details
 
 ### Database Schema Migrations
-- Automatic migrations from v2 through v7 in `src/db/connection.rs::Database::initialize()`
+- Automatic migrations from v2 through v8 in `src/db/connection.rs::Database::initialize()`
 - Each version has a `migrate_to_vN()` method that checks current version and applies changes
 - Migrations run before `CREATE_TABLES` (which uses `IF NOT EXISTS` for idempotency)
 - v3: Clear old Signal sessions (production crypto migration)
@@ -243,9 +238,11 @@ Database path: `{data_dir}/messages.db`
 - v5: Add `last_read_at` for unread tracking
 - v6: Add ephemeral message columns (`expires_at`, `ephemeral_ttl`)
 - v7: Add 5 broadcast channel tables
+- v8: Add `app_settings` key-value table for .onion address persistence
 
 ### Tor Hidden Service Identity
-- Each user's .onion address derived from Ed25519 identity keypair (v3 onion format)
+- .onion address generated and managed by arti (v3 onion format, persistent via arti state dir)
+- .onion address cached in `app_settings` table for display before Tor connects
 - Friend codes map deterministically to .onion via SHA-256 hash
 - Reverse lookup requires in-memory mapping table (HashMap<friend_code, onion>)
 
@@ -263,19 +260,18 @@ Database path: `{data_dir}/messages.db`
 - **Unit tests:** Per-module in `#[cfg(test)]` blocks
 - **Integration tests:** `tests/integration/messaging_test.rs` (cross-module interaction)
 - **Database tests:** Use tempfile crate for isolated test databases
-- **Stub behavior:** Tor connection stubs return `Ok(())` to enable integration testing; Signal crypto and friend request signatures are real
+- **Stub behavior:** Tor connection send/receive stubs return `Ok(())` to enable integration testing; Tor client and hidden service are real (arti); Signal crypto and friend request signatures are real
 
 ## Key Files to Understand
 
 - `src/app.rs` - Central application state and initialization
-- `src/db/schema.rs` - Complete database schema (version 7)
+- `src/db/schema.rs` - Complete database schema (version 8)
 - `src/db/queries.rs` - All database queries including channel operations
 - `src/protocol/message.rs` - All message types and wire format (12 types)
 - `src/net/queue.rs` - Offline message delivery queue
 - `src/ui/channel_feed.rs` - Channel post feed rendering
 - `src/ui/theme.rs` - Theme struct, 7 preset definitions, hex color parsing, TOML config loading
-- `src/ui/mining.rs` - Mining prefix input and full-screen mining UI
-- `src/crypto/vanity.rs` - Vanity .onion mining with rayon parallel workers
+- `src/tor/hidden_service.rs` - Real arti onion service hosting
 - `docs/plans/2026-02-06-chattor-design.md` - Complete design vision
 - `docs/plans/2026-02-12-broadcast-channels-design.md` - Phase 3 broadcast channels design
 

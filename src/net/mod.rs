@@ -2,11 +2,9 @@
 
 pub mod queue;
 pub mod listener;
-pub mod pool;
 pub mod framing;
 pub mod sender;
 pub mod receiver;
-pub mod queue_processor;
 
 pub use queue::MessageQueue;
 pub use listener::{listen_for_connections, listen_for_tor_connections, IncomingMessage};
