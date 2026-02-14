@@ -25,6 +25,7 @@ use ratatui::{
 };
 use std::time::Duration;
 use std::io;
+use crate::crypto::IdentityKeypair;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -49,6 +50,60 @@ async fn main() -> Result<()> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+
+    // --- First-Run Identity Mining ---
+    let needs_identity = {
+        let app_lock = app.lock().await;
+        app_lock.identity.is_none()
+    };
+
+    if needs_identity {
+        let estimated_rate = 150_000.0 * num_cpus() as f64;
+        let mut mining_state = AppState::MiningPrefixInput {
+            prefix: String::new(),
+            cursor: 0,
+        };
+
+        let mined_identity = loop {
+            // Render prefix input screen
+            if let AppState::MiningPrefixInput { ref prefix, cursor, .. } = mining_state {
+                let p = prefix.clone();
+                let c = cursor;
+                terminal.draw(|f| {
+                    ui::mining::render_prefix_input(f, &p, c, estimated_rate, &theme);
+                })?;
+            }
+
+            // Handle input
+            if event::poll(Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
+                    match mining_state.handle_key(key)? {
+                        Some(AppAction::StartMining(prefix)) => {
+                            // Transition to active mining
+                            break run_mining_loop(&mut terminal, &prefix, &theme)?;
+                        }
+                        Some(AppAction::CancelMining) => {
+                            // Skip — generate random identity
+                            break IdentityKeypair::generate()?;
+                        }
+                        Some(AppAction::Quit) => {
+                            disable_raw_mode()?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+                            terminal.show_cursor()?;
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        };
+
+        // Save the mined/generated identity
+        let mut app_lock = app.lock().await;
+        mined_identity.save_to_db(&app_lock.db)?;
+        app_lock.identity = Some(mined_identity);
+        drop(app_lock);
+    }
 
     // --- Bootstrap Phase ---
     // Create watch channel for Tor init progress
@@ -1177,4 +1232,83 @@ fn collect_sync_requests(app: &App) -> Result<Vec<(String, protocol::message::Me
     }
 
     Ok(requests)
+}
+
+/// Run the mining loop — blocks until a match is found, accepted, or cancelled.
+fn run_mining_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    prefix: &str,
+    theme: &ui::theme::Theme,
+) -> Result<IdentityKeypair> {
+    use crate::crypto::vanity::{start_mining, MiningProgress};
+
+    let initial_progress = MiningProgress {
+        attempts: 0,
+        keys_per_sec: 0.0,
+        best_prefix_len: 0,
+        best_onion: None,
+        found: false,
+    };
+
+    let (progress_tx, progress_rx) = tokio::sync::watch::channel(initial_progress);
+    let (result_tx, mut result_rx) = tokio::sync::oneshot::channel();
+
+    let _handle = start_mining(prefix, progress_tx, result_tx)?;
+    let start_time = std::time::Instant::now();
+
+    let mut found_keypair: Option<IdentityKeypair> = None;
+
+    loop {
+        let progress = progress_rx.borrow().clone();
+        let elapsed = start_time.elapsed().as_secs_f64();
+
+        // Check if result arrived
+        if found_keypair.is_none() {
+            if let Ok(keypair) = result_rx.try_recv() {
+                found_keypair = Some(keypair);
+            }
+        }
+
+        // Render fullscreen mining view
+        {
+            let p = prefix.to_string();
+            let prog = progress.clone();
+            terminal.draw(|f| {
+                ui::mining::render_mining_fullscreen(f, &p, &prog, elapsed, theme);
+            })?;
+        }
+
+        // Auto-accept on match found
+        if progress.found {
+            if let Some(kp) = found_keypair.take() {
+                return Ok(kp);
+            }
+        }
+
+        // Handle input
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    crossterm::event::KeyCode::Enter => {
+                        // Accept best match or generate random
+                        if let Some(kp) = found_keypair.take() {
+                            return Ok(kp);
+                        }
+                        return IdentityKeypair::generate();
+                    }
+                    crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Esc => {
+                        // Cancel — generate random
+                        return IdentityKeypair::generate();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+fn num_cpus() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
 }
