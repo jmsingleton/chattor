@@ -514,7 +514,7 @@ async fn main() -> Result<()> {
 
                             // Sign the post
                             let sign_data = format!("{}{}{}", post_id, content, now);
-                            let signature = base64::encode(&app_lock.identity.sign(sign_data.as_bytes()).to_bytes());
+                            let signature = base64::encode(&app_lock.identity.as_ref().expect("identity set during init").sign(sign_data.as_bytes()).to_bytes());
 
                             // Store locally
                             db::queries::store_channel_post(
@@ -594,6 +594,18 @@ async fn main() -> Result<()> {
                                 cursor: 0,
                                 scroll_offset: 0,
                             };
+                        }
+                        Some(AppAction::StartMining(_prefix)) => {
+                            // TODO: wire up vanity mining
+                        }
+                        Some(AppAction::AcceptMiningResult) => {
+                            // TODO: wire up vanity mining result acceptance
+                        }
+                        Some(AppAction::CancelMining) => {
+                            // TODO: wire up mining cancellation
+                        }
+                        Some(AppAction::ToggleMiningView) => {
+                            // TODO: wire up mining view toggle
                         }
                         Some(AppAction::Quit) => break Ok(()),
                         None => {} // Just state change
@@ -684,7 +696,7 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
 
     // Create friend request message
     let request_msg = FriendRequestHandler::create_request(
-        &app.identity,
+        app.identity.as_ref().expect("identity set during init"),
         own_onion,
         &own_friend_code,
     )?;
@@ -721,7 +733,8 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
     ).map_err(|e| error::TorrentChatError::Database(format!("Failed to load request: {}", e)))?;
 
     // Generate PreKey bundle for the accept message
-    let (bundle, private_keys) = PreKeyBundle::generate_real(&app.identity)?;
+    let identity = app.identity.as_ref().expect("identity set during init");
+    let (bundle, private_keys) = PreKeyBundle::generate_real(identity)?;
 
     // Create accept message (inline to avoid Database clone issue)
     let timestamp = std::time::SystemTime::now()
@@ -731,7 +744,7 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
 
     // Sign message
     let data = format!("{}{}{}", own_onion, from_onion, timestamp);
-    let signature = app.identity.sign(data.as_bytes());
+    let signature = identity.sign(data.as_bytes());
 
     // Serialize bundle to JSON
     let bundle_json = serde_json::to_string(&bundle)
@@ -750,7 +763,7 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
         from_onion.clone(),
         &bundle,
         &private_keys,
-        &app.identity,
+        identity,
     )?;
 
     // Store the session
@@ -1097,14 +1110,15 @@ fn handle_incoming_accept(
         ))?;
 
     // Generate our own key material for X3DH
-    let (_, local_private) = PreKeyBundle::generate_real(&app.identity)?;
+    let identity = app.identity.as_ref().expect("identity set during init");
+    let (_, local_private) = PreKeyBundle::generate_real(identity)?;
 
     // Initialize Signal session with real X3DH key exchange
     let session = SignalSession::from_prekey_bundle_real(
         accept.from_onion.clone(),
         &bundle,
         &local_private,
-        &app.identity,
+        identity,
     )?;
 
     // Store session
