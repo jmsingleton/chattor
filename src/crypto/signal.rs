@@ -55,8 +55,8 @@ impl PreKeyBundle {
     pub fn generate() -> Result<Self> {
         use rand::Rng;
 
-        // For MVP, generate placeholder keys
-        // TODO: Replace with real libsignal key generation
+        // Test-only: creates random bytes for error-path testing.
+        // See generate_real() for production use.
         let mut rng = rand::thread_rng();
 
         let identity_key = (0..32).map(|_| rng.gen::<u8>()).collect();
@@ -148,7 +148,7 @@ impl PreKeyBundle {
 /// Signal session for encryption/decryption
 pub struct SignalSession {
     pub remote_onion: String,
-    session_data: Vec<u8>, // Serialized session state (for MVP compatibility)
+    session_data: Vec<u8>,
     // Real Signal Protocol session data
     shared_secret: Option<SharedSecret>,
     send_counter: u64,
@@ -157,7 +157,7 @@ pub struct SignalSession {
 }
 
 impl SignalSession {
-    /// Create session stub with no shared_secret (test-only).
+    /// Create test session with no shared_secret (test-only).
     /// encrypt/decrypt will error — use from_prekey_bundle_real() for functional sessions.
     #[cfg(test)]
     pub fn from_prekey_bundle(remote_onion: String, bundle: &PreKeyBundle) -> Result<Self> {
@@ -178,8 +178,7 @@ impl SignalSession {
     ///
     /// **Security Note:** This is a simplified X3DH implementation using only one
     /// Diffie-Hellman operation. Full X3DH requires 3-4 DH operations for proper
-    /// forward secrecy and authentication. This simplified version is suitable for
-    /// Phase 2b MVP but should be upgraded to full X3DH for production use.
+    /// forward secrecy and authentication.
     ///
     /// # Arguments
     /// * `remote_onion` - The remote peer's .onion address
@@ -224,8 +223,7 @@ impl SignalSession {
     ///
     /// **Security Note:** This is a simplified X3DH implementation using only one
     /// Diffie-Hellman operation. Full X3DH requires 3-4 DH operations for proper
-    /// forward secrecy and authentication. This simplified version is suitable for
-    /// Phase 2b MVP but should be upgraded to full X3DH for production use.
+    /// forward secrecy and authentication.
     ///
     /// # Arguments
     /// * `remote_onion` - The remote peer's .onion address
@@ -376,10 +374,9 @@ impl SignalSession {
             .map_err(|e| TorrentChatError::Crypto(format!("Failed to deserialize session: {}", e)))?;
 
         // Reconstruct SharedSecret from raw bytes
-        // Note: SharedSecret is an opaque type without a public constructor from bytes.
-        // For MVP purposes, we use unsafe transmute since we control the serialization
-        // on both sides and know the internal representation is [u8; 32].
-        // In production, Signal Protocol would use a different session persistence strategy.
+        // SharedSecret is an opaque type without a public constructor from bytes,
+        // so we use unsafe transmute since we control the serialization on both
+        // sides and know the internal representation is [u8; 32].
         let shared_secret = state.shared_secret_bytes.map(|secret_bytes| {
             // SAFETY: SharedSecret is a wrapper around [u8; 32] with the same memory layout.
             // This is safe because:

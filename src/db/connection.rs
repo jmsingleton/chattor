@@ -247,7 +247,7 @@ impl Database {
 
             let conn = self.connection();
 
-            // Clear old stub sessions (incompatible format)
+            // Clear old sessions (incompatible with v3 format)
             let deleted = conn.execute("DELETE FROM signal_sessions", [])
                 .map_err(|e| TorrentChatError::Database(format!("Failed to clear sessions: {}", e)))?;
             info!("   Cleared {} old Signal sessions", deleted);
@@ -324,7 +324,7 @@ mod tests {
             // Set version to 2
             conn.execute("UPDATE schema_version SET version = 2", []).unwrap();
 
-            // Add some stub sessions
+            // Add pre-v3 sessions to test migration clears them
             conn.execute(
                 "INSERT INTO signal_sessions (remote_onion, session_state, updated_at) VALUES ('test.onion', X'00', 12345)",
                 []

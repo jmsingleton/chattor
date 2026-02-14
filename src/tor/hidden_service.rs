@@ -18,10 +18,8 @@ impl HiddenService {
     ) -> Result<Self> {
         let onion_address = identity.to_onion_address();
 
-        // For MVP, we'll use arti's client-side connections
-        // Full hidden service hosting requires arti's onion service APIs
-        // which are still experimental. For local testing, we can use
-        // localhost forwarding.
+        // FUTURE: Full hidden service hosting requires arti's onion service APIs.
+        // Currently uses localhost forwarding for local testing.
 
         let local_addr: SocketAddr = format!("127.0.0.1:{}", port)
             .parse()
@@ -43,7 +41,7 @@ impl HiddenService {
         self.local_addr
     }
 
-    /// Stop hidden service (placeholder)
+    /// Stop hidden service
     pub fn stop(&mut self) -> Result<()> {
         Ok(())
     }

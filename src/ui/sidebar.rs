@@ -84,7 +84,7 @@ fn render_friends_list(
                 name
             };
 
-            let status_icon = "○"; // MVP: always gray for now
+            let status_icon = "○"; // FUTURE: show online/offline status via Tor
 
             let mut spans = vec![
                 Span::raw(arrow),

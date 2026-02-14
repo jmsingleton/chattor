@@ -1,1 +1,1 @@
-// Connection pooling placeholder — needs redesign for arti DataStream.
+// FUTURE: Connection pooling for arti DataStream.

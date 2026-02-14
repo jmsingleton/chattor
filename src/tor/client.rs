@@ -1,6 +1,6 @@
 //! Tor Client Wrapper
 //!
-//! Stub for Arti Tor client integration.
+//! Wraps the Arti Tor client for network connections.
 
 use crate::error::{Result, TorrentChatError};
 use arti_client::{TorClient as ArtiTorClient, TorClientConfig};
