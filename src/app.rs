@@ -43,11 +43,14 @@ impl App {
         // Load identity from DB (None on first run — generated automatically)
         let identity = IdentityKeypair::load_from_db(&db);
 
+        // Load previously-persisted .onion address (set during Tor init)
+        let onion_address = crate::db::queries::get_app_setting(&db, "onion_address")
+            .unwrap_or(None);
+
         // Initialize Phase 2 components
         let message_queue = MessageQueue::new();
         let tor_client = None; // Will be initialized when Tor is enabled
         let hidden_service = None;
-        let onion_address = None;
 
         Ok(App {
             settings,
@@ -72,13 +75,22 @@ impl App {
         let client = crate::tor::client::TorClient::new_with_data_dir(&self.settings.data_dir).await?;
 
         // Launch onion service (arti manages the identity/keys internally)
-        let (hidden_service, _rend_requests) =
+        let (hidden_service, rend_requests) =
             crate::tor::hidden_service::HiddenService::launch(&client).await?;
 
         let onion_address = hidden_service.address().to_string();
 
-        // TODO (Task 5): Spawn rendezvous listener task using _rend_requests stream
-        // For now, incoming connections are not yet wired up via Tor rendezvous.
+        // Persist the .onion address in database
+        crate::db::queries::set_app_setting(&self.db, "onion_address", &onion_address)?;
+
+        // Spawn Tor rendezvous listener for incoming connections
+        let (msg_tx, msg_rx) = tokio::sync::mpsc::channel(100);
+        tokio::spawn(async move {
+            if let Err(e) = crate::net::listener::listen_for_tor_connections(rend_requests, msg_tx).await {
+                eprintln!("Tor listener task error: {}", e);
+            }
+        });
+        self.incoming_message_rx = Some(msg_rx);
 
         // Spawn queue processor task (sends ProcessQueue command every 30 seconds)
         let (queue_cmd_tx, queue_cmd_rx) = tokio::sync::mpsc::channel(10);
@@ -110,6 +122,10 @@ impl App {
         let identity = IdentityKeypair::load_from_db(&db);
         let message_queue = MessageQueue::new();
 
+        // Load previously-persisted .onion address (set during Tor init)
+        let onion_address = crate::db::queries::get_app_setting(&db, "onion_address")
+            .unwrap_or(None);
+
         Ok(App {
             settings,
             db,
@@ -117,7 +133,7 @@ impl App {
             tor_client: None,
             hidden_service: None,
             message_queue,
-            onion_address: None,
+            onion_address,
             incoming_message_rx: None,
             queue_command_rx: None,
         })
