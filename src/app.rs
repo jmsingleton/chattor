@@ -16,7 +16,7 @@ pub enum QueueCommand {
 pub struct App {
     pub settings: Settings,
     pub db: Database,
-    pub identity: IdentityKeypair,
+    pub identity: Option<IdentityKeypair>,
     pub tor_client: Option<Arc<TorClient>>,
     pub hidden_service: Option<HiddenService>,
     pub message_queue: MessageQueue,
@@ -40,9 +40,8 @@ impl App {
         // Initialize broadcast channels
         crate::db::queries::initialize_channels(&db)?;
 
-        // Generate or load identity
-        // TODO: In future, load from database if exists
-        let identity = IdentityKeypair::generate()?;
+        // Load identity from DB (None on first run — mining screen will create it)
+        let identity = IdentityKeypair::load_from_db(&db);
 
         // Initialize Phase 2 components
         let message_queue = MessageQueue::new();
@@ -72,8 +71,10 @@ impl App {
         // Bootstrap Tor client
         let client = crate::tor::client::TorClient::new().await?;
 
-        // Load or generate identity
-        let identity = crate::crypto::IdentityKeypair::load_or_generate(&self.db)?;
+        let identity = self.identity.as_ref()
+            .ok_or_else(|| crate::error::TorrentChatError::Crypto(
+                "No identity keypair — complete mining or skip first".into()
+            ))?;
 
         // Create hidden service
         let hidden_service = crate::tor::hidden_service::HiddenService::new(
@@ -130,7 +131,7 @@ impl App {
 
         let db = Database::open(&settings.db_path)?;
         crate::db::queries::initialize_channels(&db)?;
-        let identity = IdentityKeypair::generate()?;
+        let identity = IdentityKeypair::load_from_db(&db);
         let message_queue = MessageQueue::new();
 
         Ok(App {
@@ -183,6 +184,15 @@ mod tests {
         std::env::set_var("HOME", temp_dir.path());
 
         let mut app = App::new().unwrap();
+
+        // Identity is None on fresh DB — init_tor should fail
+        assert!(app.identity.is_none());
+        let result = app.init_tor().await;
+        assert!(result.is_err());
+
+        // Give the app an identity so init_tor succeeds
+        let identity = IdentityKeypair::generate().unwrap();
+        app.identity = Some(identity);
 
         // Initialize Tor
         let result = app.init_tor().await;
