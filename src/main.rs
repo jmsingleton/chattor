@@ -28,6 +28,7 @@ use std::io;
 use crate::crypto::IdentityKeypair;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use base64::Engine;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -511,7 +512,7 @@ async fn main() -> Result<()> {
                                                                 Some(protocol::message::TextMessage {
                                                                     from_onion: own_onion.clone(),
                                                                     to_onion: peer_onion.clone(),
-                                                                    signal_ciphertext: base64::encode(&ciphertext),
+                                                                    signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
                                                                     signal_type: if is_prekey {
                                                                         protocol::message::SignalMessageType::PrekeyMessage
                                                                     } else {
@@ -569,7 +570,7 @@ async fn main() -> Result<()> {
 
                             // Sign the post
                             let sign_data = format!("{}{}{}", post_id, content, now);
-                            let signature = base64::encode(&app_lock.identity.as_ref().expect("identity set during init").sign(sign_data.as_bytes()).to_bytes());
+                            let signature = base64::engine::general_purpose::STANDARD.encode(&app_lock.identity.as_ref().expect("identity set during init").sign(sign_data.as_bytes()).to_bytes());
 
                             // Store locally
                             db::queries::store_channel_post(
@@ -810,7 +811,7 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
         to_onion: from_onion.clone(),
         signal_prekey_bundle: bundle_json,
         timestamp,
-        signature: format!("{}", base64::encode(&signature.to_bytes())),
+        signature: format!("{}", base64::engine::general_purpose::STANDARD.encode(&signature.to_bytes())),
     };
 
     // Initialize Signal session with real X3DH key exchange
@@ -956,7 +957,7 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
             let store = crypto::SessionStore::new(&app.db);
             let (content, ephemeral_ttl) = match store.load_session(from_onion)? {
                 Some(mut session) => {
-                    let ciphertext = base64::decode(&text_msg.signal_ciphertext)
+                    let ciphertext = base64::engine::general_purpose::STANDARD.decode(&text_msg.signal_ciphertext)
                         .map_err(|e| error::TorrentChatError::Crypto(
                             format!("Failed to decode base64: {}", e)
                         ))?;

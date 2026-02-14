@@ -1,11 +1,12 @@
 use crate::db::Database;
 use crate::error::{Result, TorrentChatError};
-use crate::crypto::{SessionStore, SignalSession};
+use crate::crypto::SessionStore;
 use crate::protocol::message::*;
 use crate::tor::connection::TorConnection;
 use crate::tor::client::TorClient;
 use uuid::Uuid;
 use std::sync::Arc;
+use base64::Engine;
 
 /// Handles sending encrypted messages
 pub struct MessageSender {
@@ -55,7 +56,7 @@ impl MessageSender {
         let message = TextMessage {
             from_onion: from_onion.to_string(),
             to_onion: to_onion.to_string(),
-            signal_ciphertext: base64::encode(&ciphertext),
+            signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
             signal_type: if is_prekey {
                 SignalMessageType::PrekeyMessage
             } else {
@@ -111,11 +112,16 @@ mod tests {
         let temp_db = NamedTempFile::new().unwrap();
         let db = crate::db::Database::open(temp_db.path()).unwrap();
 
-        // Create session
-        let bundle = crate::crypto::PreKeyBundle::generate().unwrap();
-        let session = crate::crypto::SignalSession::from_prekey_bundle(
+        // Create real session
+        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let (bob_bundle, bob_private) = crate::crypto::PreKeyBundle::generate_real(&bob_identity).unwrap();
+
+        let session = crate::crypto::SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),
-            &bundle
+            &bob_bundle,
+            &bob_private,
+            &alice_identity,
         ).unwrap();
 
         let store = crate::crypto::SessionStore::new(&db);
@@ -172,7 +178,7 @@ mod tests {
         assert!(!message.signal_ciphertext.contains("Hello Bob!"));
 
         // 2. Decode base64 and verify it's not the plaintext bytes
-        let decoded_ciphertext = base64::decode(&message.signal_ciphertext).unwrap();
+        let decoded_ciphertext = base64::engine::general_purpose::STANDARD.decode(&message.signal_ciphertext).unwrap();
         assert_ne!(decoded_ciphertext, b"Hello Bob!");
 
         // 3. Should be longer than plaintext due to encryption overhead

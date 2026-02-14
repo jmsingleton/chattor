@@ -2,7 +2,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use crate::error::Result;
 use crate::protocol::message::Message;
-use std::io;
+
 
 /// Message received from peer
 pub struct IncomingMessage {

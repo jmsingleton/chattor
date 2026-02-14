@@ -394,7 +394,7 @@ impl AppState {
                 }
             }
 
-            AppState::ViewingChannel { input, cursor, is_own, publisher_onion, channel_type, .. } => {
+            AppState::ViewingChannel { input, cursor, is_own, channel_type, .. } => {
                 if *is_own {
                     match key.code {
                         KeyCode::Char(c) => {

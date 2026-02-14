@@ -12,7 +12,7 @@ pub struct HiddenService {
 impl HiddenService {
     /// Create hidden service with identity
     pub async fn new(
-        tor_client: &TorClient,
+        _tor_client: &TorClient,
         identity: &IdentityKeypair,
         port: u16,
     ) -> Result<Self> {

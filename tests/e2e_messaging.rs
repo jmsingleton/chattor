@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use chattor::{
@@ -7,7 +6,7 @@ use chattor::{
 };
 
 /// Helper to create test instance
-async fn create_test_instance(name: &str) -> (App, TempDir) {
+async fn create_test_instance(_name: &str) -> (App, TempDir) {
     let temp_dir = TempDir::new().unwrap();
 
     let settings = Settings {
@@ -38,8 +37,8 @@ async fn test_two_instance_friend_request() {
     bob.init_tor().await.unwrap();
 
     // Get Bob's friend code
-    let bob_onion = bob.onion_address.as_ref().unwrap();
-    let bob_friend_code = "test-1234-code-5678"; // Simplified for test
+    let _bob_onion = bob.onion_address.as_ref().unwrap();
+    let _bob_friend_code = "test-1234-code-5678"; // Simplified for test
 
     println!("Alice sending friend request to Bob...");
 

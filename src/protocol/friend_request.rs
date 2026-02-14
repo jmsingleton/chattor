@@ -2,6 +2,7 @@ use crate::error::{Result, TorrentChatError};
 use crate::crypto::{IdentityKeypair, PreKeyBundle};
 use crate::protocol::message::*;
 use crate::db::Database;
+use base64::Engine;
 
 /// Handles friend request protocol
 pub struct FriendRequestHandler {
@@ -30,7 +31,7 @@ impl FriendRequestHandler {
 
         // Sign with identity key
         let signature = identity.sign(data.as_bytes());
-        let signature_base64 = base64::encode(&signature.to_bytes());
+        let signature_base64 = base64::engine::general_purpose::STANDARD.encode(&signature.to_bytes());
 
         Ok(FriendRequestMessage {
             from_onion: own_onion.to_string(),
@@ -95,7 +96,7 @@ impl FriendRequestHandler {
         // Sign message
         let data = format!("{}{}{}", own_onion, peer_onion, timestamp);
         let signature = identity.sign(data.as_bytes());
-        let signature_base64 = base64::encode(&signature.to_bytes());
+        let signature_base64 = base64::engine::general_purpose::STANDARD.encode(&signature.to_bytes());
 
         // Serialize bundle to JSON then base64
         let bundle_json = serde_json::to_string(&bundle)

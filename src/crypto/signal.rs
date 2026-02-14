@@ -385,7 +385,7 @@ impl SignalSession {
     }
 
     /// Deserialize session state from storage
-    pub fn from_bytes(remote_onion: String, bytes: Vec<u8>) -> Result<Self> {
+    pub fn from_bytes(_remote_onion: String, bytes: Vec<u8>) -> Result<Self> {
         let state: SessionState = bincode::deserialize(&bytes)
             .map_err(|e| TorrentChatError::Crypto(format!("Failed to deserialize session: {}", e)))?;
 
