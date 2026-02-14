@@ -131,6 +131,8 @@ cargo run -- --config-dir /tmp/bob
 src/
 ├── app.rs                  # Application state and initialization
 ├── cli.rs                  # CLI argument parsing (clap)
+├── config/
+│   └── settings.rs         # Application settings and preferences
 ├── error.rs                # Error types (thiserror)
 ├── main.rs                 # Entry point, event loop, key handling
 ├── crypto/
