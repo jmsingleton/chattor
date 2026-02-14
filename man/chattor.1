@@ -223,6 +223,28 @@ Custom colors can be set in
 .I ~/Library/Application\\ Support/chattor/theme.toml
 (macOS). Any color field from the built\-in themes can be overridden using hex
 color values.
+.SH SHELL COMPLETIONS
+Shell completion scripts are included in the
+.B completions/
+directory of the source distribution.
+.TP
+.B Bash
+Copy
+.I completions/chattor.bash
+to
+.IR ~/.local/share/bash\-completion/completions/chattor .
+.TP
+.B Zsh
+Copy
+.I completions/_chattor
+to a directory in your
+.BR $fpath .
+.TP
+.B Fish
+Copy
+.I completions/chattor.fish
+to
+.IR ~/.config/fish/completions/ .
 .SH FILES
 .TP
 .I ~/.config/chattor/theme.toml
