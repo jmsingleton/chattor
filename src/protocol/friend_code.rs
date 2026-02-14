@@ -129,7 +129,7 @@ pub fn validate_friend_code(code: &str) -> Result<()> {
 }
 
 /// Extract the 32-byte Ed25519 public key from a v3 .onion address.
-fn onion_to_pubkey(onion: &str) -> Result<[u8; 32]> {
+pub(crate) fn onion_to_pubkey(onion: &str) -> Result<[u8; 32]> {
     let addr = onion.strip_suffix(".onion")
         .ok_or_else(|| TorrentChatError::Crypto("Missing .onion suffix".into()))?;
 

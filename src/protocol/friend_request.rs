@@ -54,10 +54,39 @@ impl FriendRequestHandler {
             return Ok(false);
         }
 
-        // TODO: Verify signature using public key from .onion
-        // For MVP, accept all requests
+        // Extract public key from sender's .onion address
+        let pubkey_bytes = match crate::protocol::friend_code::onion_to_pubkey(&request.from_onion) {
+            Ok(bytes) => bytes,
+            Err(_) => return Ok(false),
+        };
 
-        Ok(true)
+        // Reconstruct the signed data
+        let data = format!("{}{}{}", request.from_onion, request.from_friendcode, request.timestamp);
+
+        // Decode signature from base64
+        let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(&request.signature) {
+            Ok(bytes) => bytes,
+            Err(_) => return Ok(false),
+        };
+
+        // Verify Ed25519 signature
+        use ed25519_dalek::{VerifyingKey, Verifier, Signature};
+
+        let verifying_key = match VerifyingKey::from_bytes(&pubkey_bytes) {
+            Ok(key) => key,
+            Err(_) => return Ok(false),
+        };
+
+        let sig_array: [u8; 64] = match sig_bytes.try_into() {
+            Ok(arr) => arr,
+            Err(_) => return Ok(false),
+        };
+        let signature = Signature::from_bytes(&sig_array);
+
+        match verifying_key.verify(data.as_bytes(), &signature) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
     }
 
     /// Store friend request in database
@@ -189,6 +218,40 @@ mod tests {
         assert_eq!(request.from_friendcode, friend_code);
         assert!(request.signature.len() > 0);
         assert!(request.timestamp > 0);
+    }
+
+    #[test]
+    fn test_validate_request_verifies_signature() {
+        let identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let onion = identity.to_onion_address();
+        let friend_code = "happy-1234-tiger-5678";
+
+        let request = FriendRequestHandler::create_request(&identity, &onion, friend_code).unwrap();
+
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+        let db = crate::db::Database::open(temp_db.path()).unwrap();
+        let handler = FriendRequestHandler::new(db);
+
+        assert!(handler.validate_request(&request).unwrap());
+    }
+
+    #[test]
+    fn test_validate_request_rejects_forged_signature() {
+        let identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let onion = identity.to_onion_address();
+        let friend_code = "happy-1234-tiger-5678";
+
+        let mut request = FriendRequestHandler::create_request(&identity, &onion, friend_code).unwrap();
+
+        // Forge: change the from_onion to a different identity's address
+        let other_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        request.from_onion = other_identity.to_onion_address();
+
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+        let db = crate::db::Database::open(temp_db.path()).unwrap();
+        let handler = FriendRequestHandler::new(db);
+
+        assert!(!handler.validate_request(&request).unwrap());
     }
 
     #[test]
