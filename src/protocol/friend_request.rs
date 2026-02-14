@@ -115,7 +115,7 @@ impl FriendRequestHandler {
         peer_onion: &str,
     ) -> Result<FriendRequestAcceptMessage> {
         // Generate PreKey bundle
-        let bundle = PreKeyBundle::generate()?;
+        let (bundle, _private_material) = PreKeyBundle::generate_real(identity)?;
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
