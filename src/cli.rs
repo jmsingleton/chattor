@@ -2,7 +2,15 @@ use clap::Parser;
 
 #[derive(Parser, Debug)]
 #[command(name = "chattor")]
-#[command(about = "Privacy-first TUI chat application over Tor", long_about = None)]
+#[command(
+    about = "Privacy-first TUI chat application over Tor",
+    long_about = "Peer-to-peer encrypted chat over Tor, right in your terminal.\n\n\
+        Each user runs their own Tor hidden service. Messages are end-to-end\n\
+        encrypted with Signal Protocol (Double Ratchet), stored in a local\n\
+        encrypted database, and routed through Tor. No servers, no accounts,\n\
+        no metadata leakage.",
+    after_long_help = "KEYBINDINGS\n  Tab / ↑↓     Navigate friends list\n  Enter        Select friend / send message\n  a            Add friend        i   Identity\n  s            Subscribe         p   Public channel\n  f            Friend requests   q   Quit\n  Esc          Back / cancel\n\nFIRST RUN\n  On first launch you'll choose a vanity .onion prefix (or press Esc to skip).\n  Your identity is generated and saved locally.\n\nFILES\n  ~/.config/chattor/theme.toml    Theme overrides\n  ~/.local/share/chattor/         Database & identity (Linux)\n  ~/Library/Application Support/chattor/  (macOS)\n\nSee chattor(1) man page for the full manual."
+)]
 pub struct Cli {
     /// Enable debug logging
     #[arg(short, long)]
