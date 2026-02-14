@@ -19,7 +19,7 @@ impl IdentityKeypair {
     }
 
     /// Create an IdentityKeypair from an existing signing key.
-    /// Used when vanity mining produces a keypair externally.
+    /// Create from an existing signing key.
     pub fn from_signing_key(signing_key: SigningKey) -> Self {
         let verifying_key = signing_key.verifying_key();
         IdentityKeypair { signing_key, verifying_key }
@@ -98,7 +98,7 @@ impl IdentityKeypair {
 
     /// Load identity from database. Returns None if no identity exists.
     /// Unlike `load_or_generate`, does NOT generate a new identity — that's
-    /// deferred to the mining screen on first run.
+    /// handled by the first-run flow in main.rs.
     pub fn load_from_db(db: &Database) -> Option<Self> {
         let conn = db.connection();
         let bytes: Vec<u8> = conn.query_row(

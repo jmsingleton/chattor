@@ -40,7 +40,7 @@ impl App {
         // Initialize broadcast channels
         crate::db::queries::initialize_channels(&db)?;
 
-        // Load identity from DB (None on first run — mining screen will create it)
+        // Load identity from DB (None on first run — generated automatically)
         let identity = IdentityKeypair::load_from_db(&db);
 
         // Initialize Phase 2 components
@@ -73,7 +73,7 @@ impl App {
 
         let identity = self.identity.as_ref()
             .ok_or_else(|| crate::error::TorrentChatError::Crypto(
-                "No identity keypair — complete mining or skip first".into()
+                "No identity keypair — generate identity first".into()
             ))?;
 
         // Create hidden service

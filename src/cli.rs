@@ -9,7 +9,7 @@ use clap::Parser;
         encrypted with Signal Protocol (Double Ratchet), stored in a local\n\
         encrypted database, and routed through Tor. No servers, no accounts,\n\
         no metadata leakage.",
-    after_long_help = "KEYBINDINGS\n  Tab / ↑↓     Navigate friends list\n  Enter        Select friend / send message\n  a            Add friend        i   Identity\n  s            Subscribe         p   Public channel\n  f            Friend requests   q   Quit\n  Esc          Back / cancel\n\nFIRST RUN\n  On first launch you'll choose a vanity .onion prefix (or press Esc to skip).\n  Your identity is generated and saved locally.\n\nFILES\n  ~/.config/chattor/theme.toml    Theme overrides\n  ~/.local/share/chattor/         Database & identity (Linux)\n  ~/Library/Application Support/chattor/  (macOS)\n\nSee chattor(1) man page for the full manual."
+    after_long_help = "KEYBINDINGS\n  Tab / ↑↓     Navigate friends list\n  Enter        Select friend / send message\n  a            Add friend        i   Identity\n  s            Subscribe         p   Public channel\n  f            Friend requests   q   Quit\n  Esc          Back / cancel\n\nFIRST RUN\n  On first launch an Ed25519 identity is generated automatically.\n  Your .onion address is assigned when Tor connects.\n\nFILES\n  ~/.config/chattor/theme.toml    Theme overrides\n  ~/.local/share/chattor/         Database & identity (Linux)\n  ~/Library/Application Support/chattor/  (macOS)\n\nSee chattor(1) man page for the full manual."
 )]
 pub struct Cli {
     /// Enable debug logging
