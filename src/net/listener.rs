@@ -2,6 +2,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use crate::error::Result;
 use crate::protocol::message::Message;
+use tor_hsservice::{handle_rend_requests, RendRequest};
+use tor_cell::relaycell::msg::Connected;
+use futures::StreamExt;
 
 
 /// Message received from peer
@@ -45,6 +48,44 @@ async fn handle_connection(
     // Send to app
     tx.send(IncomingMessage { message, remote_addr }).await
         .map_err(|e| crate::error::TorrentChatError::Network(format!("Failed to send to app: {}", e)))?;
+
+    Ok(())
+}
+
+/// Listen for incoming connections via Tor onion service rendezvous.
+///
+/// Takes the RendRequest stream from `HiddenService::launch()` and
+/// converts each into a framed message using the same protocol as TCP.
+pub async fn listen_for_tor_connections(
+    rend_requests: impl futures::Stream<Item = RendRequest> + Send + 'static,
+    tx: mpsc::Sender<IncomingMessage>,
+) -> Result<()> {
+    let stream_requests = handle_rend_requests(rend_requests);
+    futures::pin_mut!(stream_requests);
+
+    while let Some(stream_request) = stream_requests.next().await {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            match stream_request.accept(Connected::new_empty()).await {
+                Ok(mut data_stream) => {
+                    match crate::net::framing::receive_message(&mut data_stream).await {
+                        Ok(message) => {
+                            let _ = tx.send(IncomingMessage {
+                                message,
+                                remote_addr: "tor-rendezvous".to_string(),
+                            }).await;
+                        }
+                        Err(e) => {
+                            eprintln!("Tor connection framing error: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to accept Tor stream: {}", e);
+                }
+            }
+        });
+    }
 
     Ok(())
 }

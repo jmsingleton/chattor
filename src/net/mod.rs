@@ -9,7 +9,7 @@ pub mod receiver;
 pub mod queue_processor;
 
 pub use queue::MessageQueue;
-pub use listener::{listen_for_connections, IncomingMessage};
+pub use listener::{listen_for_connections, listen_for_tor_connections, IncomingMessage};
 pub use framing::{send_message, receive_message};
 pub use sender::MessageSender;
 pub use receiver::MessageReceiver;
