@@ -18,7 +18,7 @@ The plan files contain the source of truth for what needs to be built and how. A
 
 **chattor** is a privacy-first TUI (Terminal User Interface) chat application built in Rust. The architecture is pure peer-to-peer over Tor hidden services with no central servers. Each user runs their own hidden service (.onion address) for receiving messages, with end-to-end encryption via Signal Protocol (Double Ratchet).
 
-**Current Status:** Phase 3 complete (Broadcast Channels). Phase 2b real Tor + Signal Protocol also implemented.
+**Current Status:** Phase 5 complete (Crypto & Identity Hardening). All phases through 5 implemented.
 
 **Core Design Principles:**
 - Privacy-first: No central servers, no telemetry, no metadata leakage
@@ -40,7 +40,7 @@ cargo run -- --theme cyberpunk  # Run with a specific theme
 
 ### Testing
 ```bash
-cargo test                            # Run all tests (~180 currently)
+cargo test                            # Run all tests (~207 currently)
 cargo test protocol::message          # Run specific module tests
 cargo test --test integration         # Integration tests only
 cargo test -- --nocapture             # Show test output
@@ -52,6 +52,11 @@ cargo test --test e2e_messaging -- --ignored --nocapture
 # Two-instance manual testing
 ./scripts/test-two-instances.sh
 ```
+
+> **⚠️ Warning: Vanity mining tests are CPU-intensive.** `cargo test crypto::vanity` spawns
+> rayon worker threads across all CPU cores. If a test hangs or multiple instances run
+> concurrently, they will peg the CPU at 100%. Always verify no orphaned vanity test
+> processes are running (`ps aux | grep vanity`) if load is unexpectedly high.
 
 ### Database Management
 ```bash
@@ -106,8 +111,9 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 
 **3. Identity & Crypto (`src/crypto/`)**
 - Ed25519 keypair for identity and signing (`identity.rs`)
-- Signal Protocol stubs for E2E encryption (`signal.rs`) - **currently returns plaintext**
-- Identity key derives .onion address (not yet implemented)
+- Signal Protocol with real X3DH key exchange and ChaCha20-Poly1305 encryption (`signal.rs`)
+- Vanity .onion mining with rayon parallel workers (`vanity.rs`)
+- Identity key derives v3 .onion address; `Option<IdentityKeypair>` defers creation to first-run mining
 
 **4. Tor Integration (`src/tor/`) - STUBS**
 - `client.rs`: TorClient wrapper (arti integration planned)
@@ -174,13 +180,11 @@ Database path: `{data_dir}/messages.db`
 - `TorClient::bootstrap()` - doesn't connect to actual Tor network
 - `TorConnection::send()` / `receive()` - no real network I/O
 - `HiddenService::new()` - no real .onion hosting
-- `SignalSession::encrypt()` / `decrypt()` - no real encryption (passes through plaintext)
 
-**Next Steps for Phase 2b (Optional):**
-- Replace Tor stubs with real arti integration
-- Replace Signal stubs with libsignal-dezire implementation
-- Add TCP framing and network I/O layer
-- Background async task for message queue processing
+**What's Real (Phase 2b + Phase 5):**
+- `SignalSession::encrypt()` / `decrypt()` - real ChaCha20-Poly1305 encryption (plaintext fallback removed)
+- X3DH key exchange via `from_prekey_bundle_real()` / `from_prekey_message_real()`
+- TCP framing layer for message I/O
 
 ### Phase 3: Broadcast Channels ✅
 **What's Complete:**
@@ -207,7 +211,16 @@ Database path: `{data_dir}/messages.db`
 - Setup wizard removed, replaced with empty state welcome hint
 - Clipboard fix with fallback to wl-copy/xclip/xsel/pbcopy
 
-### Phase 5: Hardening
+### Phase 5: Crypto & Identity Hardening ✅
+- Vanity .onion mining with rayon-based parallel workers
+- First-run mining screen: prefix input with live ETA estimate
+- Full-screen mining UI with animated ASCII art and live stats
+- Auto-accept on prefix match, random fallback on skip/cancel
+- Identity lifecycle: `Option<IdentityKeypair>` — load from DB, defer to mining on first run
+- Signal Protocol: removed plaintext fallback from encrypt/decrypt (hard error without session)
+- PreKeyBundle exchange and real X3DH already wired (from Phase 2b)
+
+### Phase 6: Hardening
 - Security audit, backup/restore, packaging for distributions
 
 ## Important Technical Details
@@ -241,7 +254,7 @@ Database path: `{data_dir}/messages.db`
 - **Unit tests:** Per-module in `#[cfg(test)]` blocks
 - **Integration tests:** `tests/integration/messaging_test.rs` (cross-module interaction)
 - **Database tests:** Use tempfile crate for isolated test databases
-- **Stub behavior:** All Phase 2 stubs return `Ok(())` to enable integration testing
+- **Stub behavior:** Tor stubs return `Ok(())` to enable integration testing; Signal crypto is real (requires established session)
 
 ## Key Files to Understand
 
@@ -252,6 +265,8 @@ Database path: `{data_dir}/messages.db`
 - `src/net/queue.rs` - Offline message delivery queue
 - `src/ui/channel_feed.rs` - Channel post feed rendering
 - `src/ui/theme.rs` - Theme struct, 7 preset definitions, hex color parsing, TOML config loading
+- `src/ui/mining.rs` - Mining prefix input and full-screen mining UI
+- `src/crypto/vanity.rs` - Vanity .onion mining with rayon parallel workers
 - `docs/plans/2026-02-06-chattor-design.md` - Complete design vision
 - `docs/plans/2026-02-12-broadcast-channels-design.md` - Phase 3 broadcast channels design
 

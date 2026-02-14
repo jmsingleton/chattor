@@ -81,16 +81,36 @@ fn test_message_queue_integration() {
 #[test]
 fn test_signal_session_creation() {
     use chattor::crypto::signal::PreKeyBundle;
+    use chattor::crypto::IdentityKeypair;
 
-    // Test Signal session stub from PreKey bundle
-    let bundle = PreKeyBundle::generate().unwrap();
-    let mut session = SignalSession::from_prekey_bundle("bob.onion".to_string(), &bundle).unwrap();
-    assert_eq!(session.remote_onion, "bob.onion");
+    // Create real sessions for Alice (sender) and Bob (receiver)
+    let alice_identity = IdentityKeypair::generate().unwrap();
+    let bob_identity = IdentityKeypair::generate().unwrap();
+    let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_identity).unwrap();
 
-    // Test encrypt/decrypt stubs
+    // Alice creates session with Bob's bundle
+    let mut alice_session = SignalSession::from_prekey_bundle_real(
+        "bob.onion".into(),
+        &bob_bundle,
+        &bob_private,
+        &alice_identity,
+    ).unwrap();
+    assert_eq!(alice_session.remote_onion, "bob.onion");
+
+    // Alice encrypts a message
     let plaintext = b"Hello, Bob!";
-    let (ciphertext, _is_prekey) = session.encrypt(plaintext).unwrap();
-    let decrypted = session.decrypt(&ciphertext).unwrap();
+    let (ciphertext, is_prekey) = alice_session.encrypt(plaintext).unwrap();
+    assert!(is_prekey); // First message is PreKey type
+
+    // Bob creates session from Alice's PreKey message and decrypts
+    let mut bob_session = SignalSession::from_prekey_message_real(
+        "alice.onion".into(),
+        &ciphertext,
+        &bob_bundle,
+        &bob_private,
+        &bob_identity,
+    ).unwrap();
+    let decrypted = bob_session.decrypt(&ciphertext).unwrap();
     assert_eq!(plaintext, &decrypted[..]);
 }
 
