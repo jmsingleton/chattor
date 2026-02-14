@@ -16,8 +16,11 @@ tokio = { version = "1.35", features = ["full"] }
 
 # Tor integration
 arti = "2.0"
-arti-client = "0.39"
+arti-client = { version = "0.39", features = ["onion-service-service", "onion-service-client"] }
 tor-rtcompat = "0.39"
+tor-hsservice = "0.39"
+tor-cell = "0.39"
+futures = "0.3"
 
 # Database
 rusqlite = { version = "0.38", features = ["bundled-sqlcipher"] }
