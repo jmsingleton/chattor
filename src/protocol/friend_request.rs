@@ -112,23 +112,12 @@ impl FriendRequestHandler {
     }
 
     /// Handle accept message - initialize session
+    ///
+    /// NOTE: This currently only stores the friend in the database.
+    /// Real session initialization requires the local identity keypair to perform
+    /// X3DH key exchange via `SignalSession::from_prekey_bundle_real()`.
+    /// The caller in main.rs handles session establishment directly.
     pub fn handle_accept(&self, accept: &FriendRequestAcceptMessage) -> Result<()> {
-        use crate::crypto::{SignalSession, SessionStore};
-
-        // Deserialize PreKey bundle from JSON
-        let bundle: PreKeyBundle = serde_json::from_str(&accept.signal_prekey_bundle)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to parse bundle: {}", e)))?;
-
-        // Initialize Signal session from PreKey bundle
-        let session = SignalSession::from_prekey_bundle(
-            accept.from_onion.clone(),
-            &bundle
-        )?;
-
-        // Store session
-        let store = SessionStore::new(&self.db);
-        store.store_session(&session)?;
-
         // Add friend to database
         let conn = self.db.connection();
         conn.execute(

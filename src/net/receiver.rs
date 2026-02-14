@@ -1,6 +1,6 @@
 use crate::db::Database;
 use crate::error::{Result, TorrentChatError};
-use crate::crypto::{SessionStore, SignalSession};
+use crate::crypto::SessionStore;
 use crate::protocol::message::*;
 use std::sync::Arc;
 use base64::Engine;
@@ -24,27 +24,14 @@ impl MessageReceiver {
         let mut session = match store.load_session(&message.from_onion)? {
             Some(s) => s,
             None => {
-                // TODO(Phase 2b): Implement PreKey message handling with real crypto
-                //
-                // To properly handle PreKey messages without a pre-established session,
-                // we need access to PreKeyPrivateMaterial, which requires:
-                // 1. Persisting PreKey bundles and their private keys in the database
-                // 2. Loading the correct PreKey bundle based on the message header
-                // 3. Calling SignalSession::from_prekey_message_real() with the private keys
-                //
-                // For MVP, sessions are pre-established via friend request exchange,
-                // so this code path should not be reached in normal operation.
-                // If reached, it falls back to stub behavior.
-                if matches!(message.signal_type, SignalMessageType::PrekeyMessage) {
-                    let ciphertext = base64::engine::general_purpose::STANDARD.decode(&message.signal_ciphertext)
-                        .map_err(|e| TorrentChatError::Crypto(format!("Failed to decode base64: {}", e)))?;
-                    SignalSession::from_prekey_message(
-                        message.from_onion.clone(),
-                        &ciphertext
-                    )?
-                } else {
-                    return Err(TorrentChatError::Crypto("No session and not PreKey message".into()));
-                }
+                // No session exists for this peer. To handle PreKey messages from
+                // unknown peers, we'd need to persist our PreKey private material
+                // and call SignalSession::from_prekey_message_real(). For now,
+                // sessions are pre-established via friend request exchange.
+                return Err(TorrentChatError::Crypto(format!(
+                    "No session for {} — friend request exchange required first",
+                    message.from_onion
+                )));
             }
         };
 

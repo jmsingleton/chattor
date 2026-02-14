@@ -157,30 +157,16 @@ pub struct SignalSession {
 }
 
 impl SignalSession {
-    /// Create new session from PreKey bundle (X3DH)
+    /// Create session stub with no shared_secret (test-only).
+    /// encrypt/decrypt will error — use from_prekey_bundle_real() for functional sessions.
+    #[cfg(test)]
     pub fn from_prekey_bundle(remote_onion: String, bundle: &PreKeyBundle) -> Result<Self> {
-        // For MVP, store bundle as session data
-        // TODO: Replace with real X3DH key agreement
         let session_data = serde_json::to_vec(bundle)
             .map_err(|e| TorrentChatError::Crypto(format!("Failed to serialize bundle: {}", e)))?;
 
         Ok(SignalSession {
             remote_onion,
             session_data,
-            shared_secret: None,
-            send_counter: 0,
-            recv_counter: 0,
-            ephemeral_public: None,
-        })
-    }
-
-    /// Create session from received PreKey message
-    pub fn from_prekey_message(remote_onion: String, message: &[u8]) -> Result<Self> {
-        // For MVP, use message as session data
-        // TODO: Replace with real session initialization
-        Ok(SignalSession {
-            remote_onion,
-            session_data: message.to_vec(),
             shared_secret: None,
             send_counter: 0,
             recv_counter: 0,
