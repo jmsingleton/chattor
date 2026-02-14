@@ -31,7 +31,6 @@ x25519-dalek = "2.0"
 chacha20poly1305 = "0.10"
 argon2 = "0.5"
 rand = "0.8"
-rayon = "1.10"
 sha2 = "0.10"
 base32 = "0.4"
 sha3 = "0.10"
@@ -65,3 +64,7 @@ arboard = "3"
 
 [dev-dependencies]
 tempfile = "3.8"
+
+[build-dependencies]
+clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4"
