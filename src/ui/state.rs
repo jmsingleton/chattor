@@ -53,10 +53,6 @@ pub enum AppState {
         prefix: String,
         cursor: usize,
     },
-    MiningActive {
-        prefix: String,
-        show_fullscreen: bool,
-    },
 }
 
 impl Default for AppState {
@@ -87,9 +83,7 @@ pub enum AppAction {
     SelectChannel(String, String, bool),    // (publisher_onion, channel_type, is_own)
     ViewOwnChannel,
     StartMining(String),           // prefix to mine
-    AcceptMiningResult,
     CancelMining,
-    ToggleMiningView,
     Quit,
 }
 
@@ -501,22 +495,6 @@ impl AppState {
                         // Skip mining
                         Ok(Some(AppAction::CancelMining))
                     }
-                    _ => Ok(None),
-                }
-            }
-
-            AppState::MiningActive { show_fullscreen, .. } => {
-                match key.code {
-                    KeyCode::Esc => {
-                        *show_fullscreen = false;
-                        Ok(None)
-                    }
-                    KeyCode::Char('m') if !*show_fullscreen => {
-                        *show_fullscreen = true;
-                        Ok(None)
-                    }
-                    KeyCode::Enter => Ok(Some(AppAction::AcceptMiningResult)),
-                    KeyCode::Char('q') => Ok(Some(AppAction::CancelMining)),
                     _ => Ok(None),
                 }
             }
@@ -1180,40 +1158,4 @@ mod tests {
         assert_eq!(action, Some(AppAction::CancelMining));
     }
 
-    #[test]
-    fn test_mining_active_esc_hides_fullscreen() {
-        let mut state = AppState::MiningActive {
-            prefix: "chat".to_string(),
-            show_fullscreen: true,
-        };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
-        assert!(action.is_none());
-        match &state {
-            AppState::MiningActive { show_fullscreen, .. } => assert!(!show_fullscreen),
-            _ => panic!("Expected MiningActive"),
-        }
-    }
-
-    #[test]
-    fn test_mining_active_m_shows_fullscreen() {
-        let mut state = AppState::MiningActive {
-            prefix: "chat".to_string(),
-            show_fullscreen: false,
-        };
-        state.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)).unwrap();
-        match &state {
-            AppState::MiningActive { show_fullscreen, .. } => assert!(show_fullscreen),
-            _ => panic!("Expected MiningActive"),
-        }
-    }
-
-    #[test]
-    fn test_mining_active_enter_accepts() {
-        let mut state = AppState::MiningActive {
-            prefix: "chat".to_string(),
-            show_fullscreen: true,
-        };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
-        assert_eq!(action, Some(AppAction::AcceptMiningResult));
-    }
 }

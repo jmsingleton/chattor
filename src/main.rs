@@ -651,17 +651,8 @@ async fn main() -> Result<()> {
                                 scroll_offset: 0,
                             };
                         }
-                        Some(AppAction::StartMining(_prefix)) => {
-                            // TODO: wire up vanity mining
-                        }
-                        Some(AppAction::AcceptMiningResult) => {
-                            // TODO: wire up vanity mining result acceptance
-                        }
-                        Some(AppAction::CancelMining) => {
-                            // TODO: wire up mining cancellation
-                        }
-                        Some(AppAction::ToggleMiningView) => {
-                            // TODO: wire up mining view toggle
+                        Some(AppAction::StartMining(_)) | Some(AppAction::CancelMining) => {
+                            // Handled only in first-run mining flow, not during normal operation
                         }
                         Some(AppAction::Quit) => break Ok(()),
                         None => {} // Just state change
