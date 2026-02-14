@@ -322,9 +322,9 @@ impl SignalSession {
 
             Ok((result, is_prekey))
         } else {
-            // For MVP compatibility, return plaintext with flag indicating if PreKey message
-            let is_prekey_message = self.session_data.len() < 100;
-            Ok((plaintext.to_vec(), is_prekey_message))
+            Err(TorrentChatError::Crypto(
+                format!("No encryption session established for {}", self.remote_onion)
+            ))
         }
     }
 
@@ -366,8 +366,9 @@ impl SignalSession {
 
             Ok(plaintext)
         } else {
-            // For MVP compatibility, return ciphertext as plaintext
-            Ok(ciphertext.to_vec())
+            Err(TorrentChatError::Crypto(
+                format!("No decryption session established for {}", self.remote_onion)
+            ))
         }
     }
 
@@ -482,6 +483,32 @@ mod tests {
         // Bob decrypts
         let decrypted = bob_session.decrypt(&ciphertext).unwrap();
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_encrypt_without_shared_secret_errors() {
+        let bundle = PreKeyBundle::generate().unwrap();
+        let mut session = SignalSession::from_prekey_bundle(
+            "test.onion".into(),
+            &bundle,
+        ).unwrap();
+
+        // Session has no real shared_secret — should error, not return plaintext
+        let result = session.encrypt(b"hello");
+        assert!(result.is_err(), "encrypt() should error without shared_secret");
+    }
+
+    #[test]
+    fn test_decrypt_without_shared_secret_errors() {
+        let bundle = PreKeyBundle::generate().unwrap();
+        let mut session = SignalSession::from_prekey_bundle(
+            "test.onion".into(),
+            &bundle,
+        ).unwrap();
+
+        // Session has no real shared_secret — should error, not return plaintext
+        let result = session.decrypt(b"some ciphertext");
+        assert!(result.is_err(), "decrypt() should error without shared_secret");
     }
 
     #[test]
