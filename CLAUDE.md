@@ -40,7 +40,7 @@ cargo run -- --theme cyberpunk  # Run with a specific theme
 
 ### Testing
 ```bash
-cargo test                            # Run all tests (~207 currently)
+cargo test                            # Run all tests (~213 currently)
 cargo test protocol::message          # Run specific module tests
 cargo test --test integration         # Integration tests only
 cargo test -- --nocapture             # Show test output
@@ -220,8 +220,17 @@ Database path: `{data_dir}/messages.db`
 - Signal Protocol: removed plaintext fallback from encrypt/decrypt (hard error without session)
 - PreKeyBundle exchange and real X3DH already wired (from Phase 2b)
 
-### Phase 6: Hardening
-- Security audit, backup/restore, packaging for distributions
+### Phase 6: Hardening (In Progress)
+**Chunk 1 — Polish & Fixes:**
+- Friend request Ed25519 signature verification (closed security gap)
+- Dead code removal (QueueProcessor, ConnectionPool, MiningActive)
+- Real PreKeyBundle generation in friend request accept flow
+- Zero TODOs remaining in src/
+
+**Remaining:**
+- Typing indicators, online status, desktop notifications
+- Hidden service hosting (waiting on arti onion service APIs)
+- Backup/restore, packaging for distributions
 
 ## Important Technical Details
 
@@ -254,7 +263,7 @@ Database path: `{data_dir}/messages.db`
 - **Unit tests:** Per-module in `#[cfg(test)]` blocks
 - **Integration tests:** `tests/integration/messaging_test.rs` (cross-module interaction)
 - **Database tests:** Use tempfile crate for isolated test databases
-- **Stub behavior:** Tor stubs return `Ok(())` to enable integration testing; Signal crypto is real (requires established session)
+- **Stub behavior:** Tor connection stubs return `Ok(())` to enable integration testing; Signal crypto and friend request signatures are real
 
 ## Key Files to Understand
 
