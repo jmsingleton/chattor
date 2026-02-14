@@ -2,7 +2,7 @@ use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 use tracing::{info, warn};
 use crate::error::{Result, TorrentChatError};
-use crate::db::schema::{CREATE_TABLES, SCHEMA_VERSION};
+use crate::db::schema::{CREATE_TABLES, CREATE_APP_SETTINGS, SCHEMA_VERSION};
 
 pub struct Database {
     conn: Connection,
@@ -44,6 +44,7 @@ impl Database {
                 self.migrate_to_v5()?;
                 self.migrate_to_v6()?;
                 self.migrate_to_v7()?;
+                self.migrate_to_v8()?;
             },
             Err(_) => {
                 // Fresh database - will set version after creating tables
@@ -53,6 +54,10 @@ impl Database {
         // Execute schema creation (IF NOT EXISTS handles already-migrated tables)
         self.conn.execute_batch(CREATE_TABLES)
             .map_err(|e| TorrentChatError::Database(format!("Failed to create tables: {}", e)))?;
+
+        // Create app_settings table (added in v8)
+        self.conn.execute_batch(CREATE_APP_SETTINGS)
+            .map_err(|e| TorrentChatError::Database(format!("Failed to create app_settings: {}", e)))?;
 
         // Set version if not yet set (fresh database)
         if version.is_err() {
@@ -233,6 +238,27 @@ impl Database {
                 .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
 
             info!("Migration to schema v7 complete");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate database from v7 to v8 (app_settings for .onion persistence)
+    fn migrate_to_v8(&self) -> Result<()> {
+        let version = self.get_schema_version()?;
+
+        if version < 8 {
+            info!("Migrating database to schema v8 (app_settings table)");
+
+            let conn = self.connection();
+
+            conn.execute_batch(crate::db::schema::CREATE_APP_SETTINGS)
+                .map_err(|e| TorrentChatError::Database(format!("Failed to create app_settings: {}", e)))?;
+
+            conn.execute("UPDATE schema_version SET version = 8", [])
+                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+
+            info!("Migration to schema v8 complete");
         }
 
         Ok(())
