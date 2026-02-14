@@ -2,7 +2,6 @@ pub mod app_ui;
 pub mod bootstrap;
 pub mod channel_feed;
 pub mod conversation;
-pub mod mining;
 pub mod modals;
 pub mod sidebar;
 pub mod state;
