@@ -2,9 +2,13 @@
 name = "chattor"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <you@example.com>"]
 description = "Privacy-first TUI chat application over Tor"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/jmsingleton/chattor"
+readme = "README.md"
+keywords = ["chat", "tor", "privacy", "encryption", "p2p"]
+categories = ["command-line-utilities", "cryptography", "network-programming"]
+rust-version = "1.75"
 
 [dependencies]
 # TUI

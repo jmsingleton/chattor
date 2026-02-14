@@ -1,12 +1,36 @@
+# Build
 /target/
 Cargo.lock
+
+# Database
 *.db
 *.db-*
+
+# Secrets & keys
 .env
+*.pem
+*.key
+
+# Editors
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Coverage & profiling
+*.profraw
+*.profdata
+lcov.info
+perf.data
+perf.data.*
+
+# Git worktrees & Claude
 /.worktrees/
 /.claude/
