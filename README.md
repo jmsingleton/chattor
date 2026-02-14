@@ -38,7 +38,6 @@ You → TUI (ratatui) → Signal Protocol (E2E) → Tor Hidden Service → Peer
 - **Pure P2P over Tor** — each user hosts a hidden service; no central relay, no NAT traversal headaches
 - **Offline message queue** — FIFO queue with configurable retry logic, persisted to database
 - **Friend codes** — 32-word mnemonic encoding of your public key (256-word list, 8 groups of 4 words)
-- **Connection pooling** — reuse connections to known peers
 
 ### Broadcast Channels
 
@@ -131,6 +130,7 @@ cargo run -- --config-dir /tmp/bob
 src/
 ├── app.rs                  # Application state and initialization
 ├── cli.rs                  # CLI argument parsing (clap)
+├── lib.rs                  # Public module declarations
 ├── config/
 │   └── settings.rs         # Application settings and preferences
 ├── error.rs                # Error types (thiserror)
@@ -147,9 +147,9 @@ src/
 ├── net/
 │   ├── framing.rs          # TCP length-prefixed message framing
 │   ├── listener.rs         # Incoming connection listener
-│   ├── pool.rs             # Connection pooling
+│   ├── pool.rs             # Connection pooling (placeholder)
 │   ├── queue.rs            # Offline message queue
-│   ├── queue_processor.rs  # Background queue processing
+│   ├── queue_processor.rs  # Queue processing (logic in main.rs)
 │   ├── receiver.rs         # Message receiving
 │   └── sender.rs           # Message sending
 ├── protocol/
