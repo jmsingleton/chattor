@@ -1,98 +1,69 @@
 use crate::error::{Result, TorrentChatError};
 use crate::tor::client::TorClient;
-use crate::crypto::IdentityKeypair;
-use std::net::SocketAddr;
+use safelog::DisplayRedacted as _;
+use std::sync::Arc;
+use tor_hsservice::config::OnionServiceConfigBuilder;
+use tor_hsservice::{HsNickname, RendRequest, RunningOnionService};
 
-/// Tor hidden service for receiving connections
+/// Tor hidden service for receiving connections via onion routing
 pub struct HiddenService {
     onion_address: String,
-    local_addr: SocketAddr,
+    _service: Arc<RunningOnionService>,
 }
 
 impl HiddenService {
-    /// Create hidden service with identity
-    pub async fn new(
-        _tor_client: &TorClient,
-        identity: &IdentityKeypair,
-        port: u16,
-    ) -> Result<Self> {
-        let onion_address = identity.to_onion_address();
-
-        // FUTURE: Full hidden service hosting requires arti's onion service APIs.
-        // Currently uses localhost forwarding for local testing.
-
-        let local_addr: SocketAddr = format!("127.0.0.1:{}", port)
+    /// Launch a real arti onion service.
+    ///
+    /// Returns the HiddenService handle and a stream of incoming rendezvous
+    /// requests. The caller should feed the stream into `listen_for_tor_connections()`.
+    pub async fn launch(
+        tor_client: &TorClient,
+    ) -> Result<(Self, impl futures::Stream<Item = RendRequest>)> {
+        let nickname: HsNickname = "chattor"
             .parse()
-            .map_err(|e| TorrentChatError::Network(format!("Invalid port: {}", e)))?;
+            .map_err(|e| TorrentChatError::Tor(format!("Invalid service nickname: {}", e)))?;
 
-        Ok(HiddenService {
-            onion_address,
-            local_addr,
-        })
+        let mut builder = OnionServiceConfigBuilder::default();
+        builder.nickname(nickname);
+        let config = builder
+            .build()
+            .map_err(|e| TorrentChatError::Tor(format!("Failed to build onion service config: {}", e)))?;
+
+        let (service, rend_requests) = tor_client
+            .inner()
+            .launch_onion_service(config)
+            .map_err(|e| TorrentChatError::Tor(format!("Failed to launch onion service: {}", e)))?
+            .ok_or_else(|| TorrentChatError::Tor("Onion service is disabled in config".into()))?;
+
+        let onion_address = service
+            .onion_address()
+            .map(|id| id.display_unredacted().to_string())
+            .unwrap_or_else(|| "pending.onion".to_string());
+
+        Ok((
+            HiddenService {
+                onion_address,
+                _service: service,
+            },
+            rend_requests,
+        ))
     }
 
     /// Get .onion address
     pub fn address(&self) -> &str {
         &self.onion_address
     }
-
-    /// Get local listening address
-    pub fn local_addr(&self) -> SocketAddr {
-        self.local_addr
-    }
-
-    /// Stop hidden service
-    pub fn stop(&mut self) -> Result<()> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tempfile::NamedTempFile;
-
-    #[tokio::test]
-    async fn test_hidden_service_persistent_address() {
-        let temp_db = NamedTempFile::new().unwrap();
-        let db = crate::db::Database::open(temp_db.path()).unwrap();
-
-        // First launch - generate identity
-        let identity1 = crate::crypto::IdentityKeypair::load_or_generate(&db).unwrap();
-        let onion1 = identity1.to_onion_address();
-
-        // Second launch - load same identity
-        let identity2 = crate::crypto::IdentityKeypair::load_or_generate(&db).unwrap();
-        let onion2 = identity2.to_onion_address();
-
-        assert_eq!(onion1, onion2);
-    }
-
     #[tokio::test]
     #[ignore] // Requires real Tor network connection
-    async fn test_service_creation() {
+    async fn test_hidden_service_launch() {
         let tor_client = crate::tor::client::TorClient::new().await.unwrap();
-        let identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let service = HiddenService::new(&tor_client, &identity, 8080).await;
-        assert!(service.is_ok());
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires real Tor network connection
-    async fn test_service_address() {
-        let tor_client = crate::tor::client::TorClient::new().await.unwrap();
-        let identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let service = HiddenService::new(&tor_client, &identity, 8080).await.unwrap();
-        assert!(service.address().ends_with(".onion"));
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires real Tor network connection
-    async fn test_service_stop() {
-        let tor_client = crate::tor::client::TorClient::new().await.unwrap();
-        let identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let mut service = HiddenService::new(&tor_client, &identity, 8080).await.unwrap();
-        let result = service.stop();
+        let result = super::HiddenService::launch(&tor_client).await;
         assert!(result.is_ok());
+        let (hs, _stream) = result.unwrap();
+        assert!(hs.address().contains(".onion") || hs.address() == "pending.onion");
     }
 }

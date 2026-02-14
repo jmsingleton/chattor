@@ -4,6 +4,7 @@
 
 use crate::error::{Result, TorrentChatError};
 use arti_client::{TorClient as ArtiTorClient, TorClientConfig};
+use std::path::Path;
 use std::sync::Arc;
 
 /// Tor client for managing connections
@@ -12,7 +13,35 @@ pub struct TorClient {
 }
 
 impl TorClient {
-    /// Create and bootstrap a new Tor client
+    /// Create and bootstrap with persistent state directory (for real usage)
+    pub async fn new_with_data_dir(data_dir: &Path) -> Result<Self> {
+        let state_dir = data_dir.join("arti");
+        let cache_dir = data_dir.join("arti-cache");
+
+        std::fs::create_dir_all(&state_dir).map_err(|e| {
+            TorrentChatError::Tor(format!("Failed to create arti state dir: {}", e))
+        })?;
+        std::fs::create_dir_all(&cache_dir).map_err(|e| {
+            TorrentChatError::Tor(format!("Failed to create arti cache dir: {}", e))
+        })?;
+
+        let config =
+            arti_client::config::TorClientConfigBuilder::from_directories(&state_dir, &cache_dir)
+                .build()
+                .map_err(|e| {
+                    TorrentChatError::Tor(format!("Failed to build Tor config: {}", e))
+                })?;
+
+        let client = ArtiTorClient::create_bootstrapped(config)
+            .await
+            .map_err(|e| TorrentChatError::Tor(format!("Failed to bootstrap Tor: {}", e)))?;
+
+        Ok(TorClient {
+            client: Arc::new(client),
+        })
+    }
+
+    /// Create and bootstrap with default config (for backward compat / tests)
     pub async fn new() -> Result<Self> {
         let config = TorClientConfig::default();
         let client = ArtiTorClient::create_bootstrapped(config)

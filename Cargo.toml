@@ -25,6 +25,7 @@ tor-rtcompat = "0.39"
 tor-hsservice = "0.39"
 tor-cell = "0.39"
 futures = "0.3"
+safelog = "0.7"
 
 # Database
 rusqlite = { version = "0.38", features = ["bundled-sqlcipher"] }

@@ -68,41 +68,17 @@ impl App {
             return Ok(()); // Already initialized
         }
 
-        // Bootstrap Tor client
-        let client = crate::tor::client::TorClient::new().await?;
+        // Bootstrap Tor client with persistent data directory
+        let client = crate::tor::client::TorClient::new_with_data_dir(&self.settings.data_dir).await?;
 
-        let identity = self.identity.as_ref()
-            .ok_or_else(|| crate::error::TorrentChatError::Crypto(
-                "No identity keypair — generate identity first".into()
-            ))?;
-
-        // Create hidden service
-        let hidden_service = crate::tor::hidden_service::HiddenService::new(
-            &client,
-            &identity,
-            9051,
-        ).await?;
+        // Launch onion service (arti manages the identity/keys internally)
+        let (hidden_service, _rend_requests) =
+            crate::tor::hidden_service::HiddenService::launch(&client).await?;
 
         let onion_address = hidden_service.address().to_string();
 
-        // Spawn TCP listener for incoming connections
-        let listener_addr = hidden_service.local_addr();
-        let (msg_tx, msg_rx) = tokio::sync::mpsc::channel(100);
-
-        // Bind listener
-        match tokio::net::TcpListener::bind(listener_addr).await {
-            Ok(listener) => {
-                tokio::spawn(async move {
-                    if let Err(e) = crate::net::listener::listen_for_connections(listener, msg_tx).await {
-                        eprintln!("Listener task error: {}", e);
-                    }
-                });
-                self.incoming_message_rx = Some(msg_rx);
-            }
-            Err(e) => {
-                eprintln!("Failed to bind listener on {}: {}", listener_addr, e);
-            }
-        }
+        // TODO (Task 5): Spawn rendezvous listener task using _rend_requests stream
+        // For now, incoming connections are not yet wired up via Tor rendezvous.
 
         // Spawn queue processor task (sends ProcessQueue command every 30 seconds)
         let (queue_cmd_tx, queue_cmd_rx) = tokio::sync::mpsc::channel(10);
@@ -179,25 +155,18 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires real Tor network connection
     async fn test_init_tor() {
         let temp_dir = TempDir::new().unwrap();
         std::env::set_var("HOME", temp_dir.path());
 
         let mut app = App::new().unwrap();
 
-        // Identity is None on fresh DB — init_tor should fail
-        assert!(app.identity.is_none());
-        let result = app.init_tor().await;
-        assert!(result.is_err());
-
-        // Give the app an identity so init_tor succeeds
-        let identity = IdentityKeypair::generate().unwrap();
-        app.identity = Some(identity);
-
-        // Initialize Tor
+        // Initialize Tor (requires real network)
         let result = app.init_tor().await;
         assert!(result.is_ok());
         assert!(app.tor_client.is_some());
+        assert!(app.onion_address.is_some());
 
         // Calling again should be no-op
         let result2 = app.init_tor().await;
