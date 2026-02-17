@@ -16,6 +16,7 @@ pub struct QueuedMessage {
     pub message: Message,
     pub retry_count: i64,
     pub priority: String,
+    pub created_at: i64,
 }
 
 /// Message queue for managing offline message delivery
@@ -71,7 +72,7 @@ impl MessageQueue {
         let conn = db.connection();
         let mut stmt = conn
             .prepare(
-                "SELECT id, peer_onion, message_json, retry_count, priority
+                "SELECT id, peer_onion, message_json, retry_count, priority, created_at
                  FROM message_queue
                  WHERE status = 'pending' AND next_retry_at <= ?1
                  ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at ASC",
@@ -82,7 +83,7 @@ impl MessageQueue {
 
         // Collect raw rows first, then deserialize outside of query_map
         // to avoid issues with serde_json errors inside rusqlite callbacks.
-        let raw_rows: Vec<(i64, String, String, i64, String)> = stmt
+        let raw_rows: Vec<(i64, String, String, i64, String, i64)> = stmt
             .query_map([now], |row| {
                 Ok((
                     row.get(0)?,
@@ -90,6 +91,7 @@ impl MessageQueue {
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             })
             .map_err(|e| {
@@ -101,7 +103,7 @@ impl MessageQueue {
             })?;
 
         let mut messages = Vec::with_capacity(raw_rows.len());
-        for (id, peer_onion, message_json, retry_count, priority) in raw_rows {
+        for (id, peer_onion, message_json, retry_count, priority, created_at) in raw_rows {
             let message: Message = serde_json::from_str(&message_json).map_err(|e| {
                 TorrentChatError::Database(format!(
                     "Failed to deserialize message_json for queue id {}: {}",
@@ -114,6 +116,7 @@ impl MessageQueue {
                 message,
                 retry_count,
                 priority,
+                created_at,
             });
         }
 
