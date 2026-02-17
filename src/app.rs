@@ -5,6 +5,7 @@ use crate::crypto::IdentityKeypair;
 use crate::tor::client::TorClient;
 use crate::tor::hidden_service::HiddenService;
 use crate::net::queue::MessageQueue;
+use crate::net::pool::ConnectionPool;
 use std::fs;
 use std::sync::Arc;
 
@@ -20,6 +21,7 @@ pub struct App {
     pub tor_client: Option<Arc<TorClient>>,
     pub hidden_service: Option<HiddenService>,
     pub message_queue: MessageQueue,
+    pub connection_pool: Option<Arc<ConnectionPool>>,
     pub onion_address: Option<String>,
     pub incoming_message_rx: Option<tokio::sync::mpsc::Receiver<crate::net::listener::IncomingMessage>>,
     pub queue_command_rx: Option<tokio::sync::mpsc::Receiver<QueueCommand>>,
@@ -59,6 +61,7 @@ impl App {
             tor_client,
             hidden_service,
             message_queue,
+            connection_pool: None,
             onion_address,
             incoming_message_rx: None,
             queue_command_rx: None,
@@ -105,9 +108,12 @@ impl App {
         self.queue_command_rx = Some(queue_cmd_rx);
 
         // Store in app state
-        self.tor_client = Some(Arc::new(client));
+        let client = Arc::new(client);
+        let pool = ConnectionPool::new(Arc::clone(&client));
+        self.tor_client = Some(client);
         self.hidden_service = Some(hidden_service);
         self.onion_address = Some(onion_address);
+        self.connection_pool = Some(pool);
 
         Ok(())
     }
@@ -133,6 +139,7 @@ impl App {
             tor_client: None,
             hidden_service: None,
             message_queue,
+            connection_pool: None,
             onion_address,
             incoming_message_rx: None,
             queue_command_rx: None,
@@ -167,6 +174,7 @@ mod tests {
         assert!(app.tor_client.is_none()); // Not initialized by default
         assert!(app.hidden_service.is_none());
         assert!(app.onion_address.is_none());
+        assert!(app.connection_pool.is_none());
         // message_queue exists (can't easily test without calling methods)
     }
 
