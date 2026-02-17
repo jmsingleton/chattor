@@ -16,9 +16,13 @@ pub struct Cli {
     #[arg(short, long)]
     pub debug: bool,
 
-    /// Config directory path
+    /// Config directory path (overrides default ~/.config/chattor/)
     #[arg(short, long)]
     pub config_dir: Option<String>,
+
+    /// Data directory path (overrides default ~/.local/share/chattor/)
+    #[arg(long)]
+    pub data_dir: Option<String>,
 
     /// Theme preset (dark, light, cyberpunk, minimal, rose-pine, rose-pine-moon, rose-pine-dawn)
     #[arg(short, long)]

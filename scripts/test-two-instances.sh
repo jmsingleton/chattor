@@ -14,7 +14,7 @@ cargo build --release
 
 # Start Alice in background
 echo "Starting Alice..."
-./target/release/chattor --config-dir /tmp/chattor-alice --debug &
+./target/release/chattor --config-dir /tmp/chattor-alice --data-dir /tmp/chattor-alice --debug &
 ALICE_PID=$!
 
 # Wait a moment
@@ -22,7 +22,7 @@ sleep 2
 
 # Start Bob in background
 echo "Starting Bob..."
-./target/release/chattor --config-dir /tmp/chattor-bob --debug &
+./target/release/chattor --config-dir /tmp/chattor-bob --data-dir /tmp/chattor-bob --debug &
 BOB_PID=$!
 
 echo ""

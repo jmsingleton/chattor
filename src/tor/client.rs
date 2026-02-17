@@ -25,6 +25,19 @@ impl TorClient {
             TorrentChatError::Tor(format!("Failed to create arti cache dir: {}", e))
         })?;
 
+        // Arti requires 700 permissions on state/cache dirs (contains onion service keys)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o700);
+            std::fs::set_permissions(&state_dir, perms.clone()).map_err(|e| {
+                TorrentChatError::Tor(format!("Failed to set arti state dir permissions: {}", e))
+            })?;
+            std::fs::set_permissions(&cache_dir, perms).map_err(|e| {
+                TorrentChatError::Tor(format!("Failed to set arti cache dir permissions: {}", e))
+            })?;
+        }
+
         let config =
             arti_client::config::TorClientConfigBuilder::from_directories(&state_dir, &cache_dir)
                 .build()

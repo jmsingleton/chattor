@@ -34,8 +34,18 @@ use base64::Engine;
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize application wrapped in Arc<Mutex> for sharing between threads
-    let app = Arc::new(Mutex::new(App::new()?));
+    // Initialize application with optional CLI directory overrides
+    let app = {
+        let mut settings = config::Settings::default()?;
+        if let Some(ref dir) = cli.config_dir {
+            settings.config_dir = std::path::PathBuf::from(dir);
+        }
+        if let Some(ref dir) = cli.data_dir {
+            settings.data_dir = std::path::PathBuf::from(dir);
+            settings.db_path = settings.data_dir.join("messages.db");
+        }
+        Arc::new(Mutex::new(App::new_with_settings(settings)?))
+    };
 
     // Load theme
     let theme = {
