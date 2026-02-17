@@ -18,7 +18,7 @@ The plan files contain the source of truth for what needs to be built and how. A
 
 **chattor** is a privacy-first TUI (Terminal User Interface) chat application built in Rust. The architecture is pure peer-to-peer over Tor hidden services with no central servers. Each user runs their own hidden service (.onion address) for receiving messages, with end-to-end encryption via Signal Protocol (Double Ratchet).
 
-**Current Status:** Phase 6 partial (Real Tor Hidden Service). All phases through 5 implemented, plus real arti onion service hosting.
+**Current Status:** Phase 6 complete. All phases implemented. Real arti Tor transport, Signal Protocol X3DH, connection pooling, and comprehensive e2e test coverage.
 
 **Core Design Principles:**
 - Privacy-first: No central servers, no telemetry, no metadata leakage
@@ -40,14 +40,12 @@ cargo run -- --theme cyberpunk  # Run with a specific theme
 
 ### Testing
 ```bash
-cargo test                            # Run all tests (~199 currently)
+cargo test                            # Run all tests (~208 currently)
 cargo test protocol::message          # Run specific module tests
 cargo test --test integration         # Integration tests only
+cargo test --test e2e_messaging       # E2E crypto/messaging tests (no Tor needed)
 cargo test -- --nocapture             # Show test output
 cargo test --release                  # Test optimized build
-
-# Two-instance integration tests (requires Tor, takes time)
-cargo test --test e2e_messaging -- --ignored --nocapture
 
 # Two-instance manual testing
 ./scripts/test-two-instances.sh
@@ -117,7 +115,7 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - Onion service key managed by arti (persistent across restarts)
 
 **5. Protocol Layer (`src/protocol/`)**
-- Friend codes: `word-NNNN-word-NNNN` format with checksum validation
+- Friend codes: 32-word mnemonic (256-word dictionary, 8 groups of 4 words)
 - Message types (12 total): `FriendRequest`, `FriendRequestAccept`, `FriendRequestReject`, `TextMessage`, `DeliveryReceipt`, `ReadReceipt`, `ChannelSubscribe`, `ChannelUnsubscribe`, `ChannelPost`, `ChannelSyncRequest`, `ChannelSyncResponse`, `ChannelPostReceipt`
 - `ChannelType` enum: `Public`, `FriendsOnly`
 - JSON serialization with serde for wire protocol
@@ -175,7 +173,7 @@ Database path: `{data_dir}/messages.db`
 - Message queue with retry logic
 - Protocol message types (5 types with JSON serialization)
 - Friend code ↔ .onion address mapping
-- Integration tests (202 total, all passing)
+- Integration tests (208 total, all passing)
 
 **What's Real (Phase 2b + Phase 5 + Phase 6):**
 - `TorClient::new_with_data_dir()` - real arti bootstrap with persistent state
@@ -213,7 +211,7 @@ Database path: `{data_dir}/messages.db`
 - Signal Protocol: removed plaintext fallback from encrypt/decrypt (hard error without session)
 - PreKeyBundle exchange and real X3DH already wired (from Phase 2b)
 
-### Phase 6: Hardening (In Progress)
+### Phase 6: Hardening ✅
 **Chunk 1 — Polish & Fixes: ✅**
 - Friend request Ed25519 signature verification (closed security gap)
 - Dead code removal (QueueProcessor, ConnectionPool, MiningActive)
@@ -232,9 +230,16 @@ Database path: `{data_dir}/messages.db`
 - Concurrent per-peer queue processing (10 parallel peers via semaphore)
 - CHATTOR_PORT constant, TorConnection dead code cleanup
 
-**Remaining:**
+**Chunk 4 — X3DH Session Fixes + E2E Tests: ✅**
+- Fixed session asymmetry: acceptor defers session creation until first PreKey message
+- Fixed acceptor-can't-send-first: initiator queues handshake PreKey message on accept
+- Fixed PreKey flag: encrypt() uses `.take()` on ephemeral, decrypt() takes explicit `is_prekey_message`
+- Friend request accept queued (avoids 30s UI block from direct Tor send)
+- 6 comprehensive e2e tests covering full friend-request → X3DH → messaging pipeline
+
+### Future Work
 - Typing indicators, online status, desktop notifications
-- Backup/restore, packaging for distributions
+- Backup/restore, packaging for distributions (deb/rpm/AUR/Homebrew)
 
 ## Important Technical Details
 
@@ -255,21 +260,29 @@ Database path: `{data_dir}/messages.db`
 - Friend codes map deterministically to .onion via SHA-256 hash
 - Reverse lookup requires in-memory mapping table (HashMap<friend_code, onion>)
 
+### X3DH Session Establishment Flow
+1. Alice sends friend request to Bob (Ed25519-signed)
+2. Bob accepts: generates PreKeyBundle, stores PreKeyPrivateMaterial in `app_settings`, queues accept message
+3. Alice receives accept: calls `from_prekey_bundle_real(bob_bundle)`, stores session, queues handshake PreKey message
+4. Bob receives handshake: loads stored private material, calls `from_prekey_message_real(ciphertext)`, stores session, cleans up private material
+5. Both sides now have established sessions; bidirectional messaging works
+
 ### Message Flow
 1. User composes message
 2. Encrypt with Signal Protocol (per-conversation session)
-3. Wrap in JSON envelope with metadata
+3. Wrap in JSON envelope with `signal_ciphertext` (base64) and `signal_type` (PreKeyMessage or Message)
 4. Send via ConnectionPool (reuses cached Tor circuit or creates new one)
 5. If offline: enqueue in `message_queue` table
 6. Background task retries with exponential backoff (30s→15min, 24h expiry)
-7. Peer receives via Tor rendezvous listener, decrypts, stores in `messages` table
-8. FTS triggers auto-update `messages_fts` for search
+7. Peer receives via Tor rendezvous listener, decrypts with `is_prekey_message` from wire format
+8. Stores in `messages` table; FTS triggers auto-update `messages_fts` for search
 
 ### Testing Strategy
-- **Unit tests:** Per-module in `#[cfg(test)]` blocks
-- **Integration tests:** `tests/integration/messaging_test.rs` (cross-module interaction)
+- **Unit tests:** Per-module in `#[cfg(test)]` blocks (~193 tests)
+- **Integration tests:** `tests/integration/messaging_test.rs` (cross-module interaction, 9 tests)
+- **E2E tests:** `tests/e2e_messaging.rs` (full Signal Protocol pipeline, offline, 6 tests)
 - **Database tests:** Use tempfile crate for isolated test databases
-- **Stub behavior:** Tor client, hidden service, Signal crypto, and friend request signatures are all real. TorConnection sends over real arti DataStreams via ConnectionPool.
+- **No stubs:** Tor client, hidden service, Signal crypto, and friend request signatures are all real. TorConnection sends over real arti DataStreams via ConnectionPool.
 
 ## Key Files to Understand
 
@@ -282,8 +295,8 @@ Database path: `{data_dir}/messages.db`
 - `src/ui/channel_feed.rs` - Channel post feed rendering
 - `src/ui/theme.rs` - Theme struct, 7 preset definitions, hex color parsing, TOML config loading
 - `src/tor/hidden_service.rs` - Real arti onion service hosting
-- `docs/plans/2026-02-06-chattor-design.md` - Complete design vision
-- `docs/plans/2026-02-12-broadcast-channels-design.md` - Phase 3 broadcast channels design
+- `tests/e2e_messaging.rs` - E2E tests for full X3DH + messaging pipeline
+- `docs/plans/2026-02-06-torrent-chat-design.md` - Complete design vision
 
 ## Common Patterns
 

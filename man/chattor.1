@@ -7,16 +7,16 @@ chattor \- peer\-to\-peer encrypted chat over Tor
 .SH DESCRIPTION
 .B chattor
 is a terminal chat application where each user runs their own Tor hidden
-service. Messages are end\-to\-end encrypted with Signal Protocol (X3DH key
-exchange + Double Ratchet). There are no central servers, no accounts, and no
-metadata leakage. Each peer is both a client and a server.
+service via the embedded arti library. Messages are end\-to\-end encrypted with
+Signal Protocol (X3DH key exchange + ChaCha20\-Poly1305). There are no central
+servers, no accounts, and no metadata leakage. Each peer is both a client and
+a server.
 .PP
-Your identity is an Ed25519 keypair. The public key directly derives your v3
-\&.onion address \(em no registration required. On first launch,
-.B chattor
-offers vanity .onion mining: choose a custom prefix and the app brute\-forces
-keypairs in parallel until a match is found. Press Esc to skip and get a random
-address.
+Your identity is an Ed25519 keypair generated on first launch. Your v3 .onion
+address is created and managed by arti, persisting across restarts. No system
+Tor installation is required \(em arti bootstraps and maintains Tor circuits
+internally. Connection pooling reuses Tor circuits per peer for faster
+messaging.
 .PP
 All data is stored locally in a SQLCipher\-encrypted database. Messages are
 searchable via FTS5 full\-text search. Nothing is stored on remote servers or
@@ -53,11 +53,11 @@ Build and run:
 .B cargo build \-\-release && cargo run
 .TP
 .B 2.
-On first launch, the mining screen appears. Type a prefix for your .onion
-address (e.g., "chat") and press Enter to start mining, or Esc to skip.
+On first launch, an Ed25519 identity is generated and arti begins bootstrapping
+to the Tor network. An animated screen shows progress (typically 10\-30 seconds).
 .TP
 .B 3.
-Once mining completes, the main TUI loads. Press
+Once connected, the main TUI loads. Press
 .B i
 to view your identity \(em your .onion address and friend code.
 .TP
@@ -158,13 +158,6 @@ Return to sidebar.
 .TP
 .B Esc
 Return to sidebar.
-.SS "Mining Screen"
-.TP
-.B Enter
-Start mining with the entered prefix.
-.TP
-.B Esc
-Skip mining, use a random address.
 .SH FRIEND CODES
 Friend codes are 32\-word mnemonics derived from your Ed25519 public key. Each
 byte of the 32\-byte key maps to one word from a fixed 256\-word dictionary,
