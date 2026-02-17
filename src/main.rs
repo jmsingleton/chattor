@@ -323,7 +323,7 @@ async fn main() -> Result<()> {
                             let return_to_list = matches!(app_state, AppState::ViewingFriendRequests { .. });
                             let app_lock = app.lock().await;
 
-                            match handle_accept_friend_request(&*app_lock, id).await {
+                            match handle_accept_friend_request(&*app_lock, id) {
                                 Ok(_) => {}
                                 Err(e) => eprintln!("Failed to accept friend request: {}", e),
                             }
@@ -730,9 +730,9 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
 }
 
 /// Handle accepting a friend request
-async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
+fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     use crate::protocol::friend_request::FriendRequestHandler;
-    use crate::crypto::{PreKeyBundle, SignalSession, SessionStore};
+    use crate::crypto::PreKeyBundle;
 
     // Get our .onion address
     let own_onion = app.onion_address.as_ref()
@@ -772,17 +772,18 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
         signature: format!("{}", base64::engine::general_purpose::STANDARD.encode(&signature.to_bytes())),
     };
 
-    // Initialize Signal session with real X3DH key exchange
-    let session = SignalSession::from_prekey_bundle_real(
-        from_onion.clone(),
-        &bundle,
-        &private_keys,
-        identity,
-    )?;
-
-    // Store the session
-    let store = SessionStore::new(&app.db);
-    store.store_session(&session)?;
+    // Store PreKey private material so we can create the Signal session later
+    // when the peer sends their first PreKey message. We do NOT create the
+    // session here — the shared secret requires the peer's ephemeral key,
+    // which is embedded in their first encrypted message.
+    let private_b64 = base64::engine::general_purpose::STANDARD.encode(private_keys.identity_secret);
+    let prekey_key = format!("prekey_private:{}", from_onion);
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+        (&prekey_key, &private_b64),
+    ).map_err(|e| error::TorrentChatError::Database(
+        format!("Failed to store PreKey material: {}", e)
+    ))?;
 
     // Add friend to database
     let timestamp = std::time::SystemTime::now()
@@ -790,39 +791,38 @@ async fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> 
         .unwrap()
         .as_secs() as i64;
 
-    conn.execute(
-        "INSERT INTO friends (onion_address, display_name, added_at, status)
-         VALUES (?1, ?2, ?3, 'active')",
-        (
-            &from_onion,
-            &from_onion[..std::cmp::min(10, from_onion.len())],
-            timestamp,
-        ),
-    ).map_err(|e| error::TorrentChatError::Database(format!("Failed to add friend: {}", e)))?;
-
-    // Mark request as accepted
+    // Mark request as accepted FIRST (so UI updates immediately)
     conn.execute(
         "UPDATE friend_requests SET status = 'accepted' WHERE id = ?1",
         [request_id],
     ).map_err(|e| error::TorrentChatError::Database(format!("Failed to update request: {}", e)))?;
 
+    // Use a truncated display name that's more readable
+    let display_name = if from_onion.len() > 16 {
+        format!("{}…", &from_onion[..16])
+    } else {
+        from_onion.clone()
+    };
+
+    conn.execute(
+        "INSERT OR IGNORE INTO friends (onion_address, display_name, added_at, status)
+         VALUES (?1, ?2, ?3, 'active')",
+        (
+            &from_onion,
+            &display_name,
+            timestamp,
+        ),
+    ).map_err(|e| error::TorrentChatError::Database(format!("Failed to add friend: {}", e)))?;
+
     // Auto-subscribe to their channels
     db::queries::add_channel_subscription(&app.db, &from_onion, "public")?;
     db::queries::add_channel_subscription(&app.db, &from_onion, "friends_only")?;
 
-    // Send the accept message over Tor (try direct, queue on failure)
+    // Queue the accept message for background delivery (don't try direct send —
+    // it can block the UI for up to 30s waiting for a Tor circuit)
     let message = protocol::message::Message::FriendRequestAccept(accept_msg);
-    match try_send_direct(app, &from_onion, &message).await {
-        Ok(_) => {
-            eprintln!("Friend request #{} accepted (sent directly)", request_id);
-        }
-        Err(_) => {
-            app.message_queue.enqueue(&app.db, &from_onion, &message, "high")?;
-            eprintln!("Friend request #{} accepted (queued for delivery)", request_id);
-        }
-    }
-
-    eprintln!("Session established with {}", from_onion);
+    app.message_queue.enqueue(&app.db, &from_onion, &message, "high")?;
+    eprintln!("Friend request #{} accepted (queued for delivery)", request_id);
 
     Ok(())
 }
@@ -894,33 +894,93 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
         protocol::message::Message::TextMessage(text_msg) => {
             let from_onion = &text_msg.from_onion;
             let msg_id = text_msg.message_id.to_string();
+            let is_prekey = text_msg.signal_type == protocol::message::SignalMessageType::PrekeyMessage;
 
             // Decrypt the message using Signal session
             let store = crypto::SessionStore::new(&app.db);
-            let (content, ephemeral_ttl) = match store.load_session(from_onion)? {
+            let ciphertext = base64::engine::general_purpose::STANDARD.decode(&text_msg.signal_ciphertext)
+                .map_err(|e| error::TorrentChatError::Crypto(
+                    format!("Failed to decode base64: {}", e)
+                ))?;
+
+            let payload = match store.load_session(from_onion)? {
                 Some(mut session) => {
-                    let ciphertext = base64::engine::general_purpose::STANDARD.decode(&text_msg.signal_ciphertext)
-                        .map_err(|e| error::TorrentChatError::Crypto(
-                            format!("Failed to decode base64: {}", e)
-                        ))?;
-                    let plaintext = session.decrypt(&ciphertext)?;
+                    let plaintext = session.decrypt(&ciphertext, is_prekey)?;
                     store.store_session(&session)?;
-                    let payload: protocol::message::PlaintextPayload = serde_json::from_slice(&plaintext)
+                    serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
                         .map_err(|e| error::TorrentChatError::Crypto(
                             format!("Failed to parse payload: {}", e)
+                        ))?
+                }
+                None if is_prekey => {
+                    // No session yet — create one from stored PreKey private material.
+                    // This happens when we accepted a friend request (stored our private
+                    // keys) and the peer sends their first message as a PreKey message.
+                    let prekey_key = format!("prekey_private:{}", from_onion);
+                    let private_b64: String = app.db.connection().query_row(
+                        "SELECT value FROM app_settings WHERE key = ?1",
+                        [&prekey_key],
+                        |row| row.get(0),
+                    ).map_err(|_| error::TorrentChatError::Crypto(
+                        format!("No session and no stored PreKey material for {}", from_onion)
+                    ))?;
+
+                    let identity_secret_bytes = base64::engine::general_purpose::STANDARD
+                        .decode(&private_b64)
+                        .map_err(|e| error::TorrentChatError::Crypto(
+                            format!("Failed to decode stored PreKey material: {}", e)
                         ))?;
-                    (payload.content, payload.ephemeral_ttl)
+                    let identity_secret: [u8; 32] = identity_secret_bytes.try_into()
+                        .map_err(|_| error::TorrentChatError::Crypto(
+                            "Stored PreKey material has wrong length".into()
+                        ))?;
+
+                    let private_material = crypto::PreKeyPrivateMaterial {
+                        identity_secret,
+                        signed_prekey_secret: [0u8; 32], // unused by from_prekey_message_real
+                        prekey_secret: None,
+                    };
+                    let dummy_bundle = crypto::PreKeyBundle::generate()?;
+                    let identity = app.identity.as_ref().expect("identity set during init");
+
+                    let mut session = crypto::SignalSession::from_prekey_message_real(
+                        from_onion.clone(),
+                        &ciphertext,
+                        &dummy_bundle,
+                        &private_material,
+                        identity,
+                    )?;
+
+                    let plaintext = session.decrypt(&ciphertext, true)?;
+                    store.store_session(&session)?;
+
+                    // Clean up stored PreKey material (session is now established)
+                    app.db.connection().execute(
+                        "DELETE FROM app_settings WHERE key = ?1",
+                        [&prekey_key],
+                    ).ok();
+
+                    serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
+                        .map_err(|e| error::TorrentChatError::Crypto(
+                            format!("Failed to parse payload: {}", e)
+                        ))?
                 }
                 None => {
-                    eprintln!("No session for {}, cannot decrypt", from_onion);
+                    eprintln!("No session for {} and not a PreKey message, cannot decrypt", from_onion);
                     return Ok(());
                 }
             };
 
+            // Handshake messages are session-establishment only — don't display
+            if payload.message_type == "handshake" {
+                eprintln!("Session established with {} via handshake", from_onion);
+                return Ok(());
+            }
+
             // Find friend and conversation
             if let Some(friend_id) = db::queries::find_friend_by_onion(&app.db, from_onion)? {
                 let conv_id = db::queries::get_or_create_conversation(&app.db, friend_id)?;
-                db::queries::store_incoming_message_with_ttl(&app.db, conv_id, from_onion, &content, &msg_id, ephemeral_ttl)?;
+                db::queries::store_incoming_message_with_ttl(&app.db, conv_id, from_onion, &payload.content, &msg_id, payload.ephemeral_ttl)?;
 
                 // Queue delivery receipt back to sender
                 let receipt = protocol::message::DeliveryReceiptMessage {
@@ -1140,29 +1200,76 @@ fn handle_incoming_accept(
     app: &App,
     accept: &protocol::message::FriendRequestAcceptMessage,
 ) -> Result<()> {
-    use crate::crypto::{PreKeyBundle, SignalSession, SessionStore};
+    use crate::crypto::{PreKeyBundle, PreKeyPrivateMaterial, SignalSession, SessionStore};
 
-    // Deserialize PreKey bundle
+    // Deserialize the remote peer's PreKey bundle from the accept message
     let bundle: PreKeyBundle = serde_json::from_str(&accept.signal_prekey_bundle)
         .map_err(|e| error::TorrentChatError::Crypto(
             format!("Failed to parse PreKey bundle: {}", e)
         ))?;
 
-    // Generate our own key material for X3DH
+    // Create Signal session: we (the initiator) generate a fresh ephemeral key
+    // and compute DH(our_ephemeral, peer_identity_pub). The private material
+    // and identity parameters are unused in the simplified X3DH.
     let identity = app.identity.as_ref().expect("identity set during init");
-    let (_, local_private) = PreKeyBundle::generate_real(identity)?;
-
-    // Initialize Signal session with real X3DH key exchange
+    let dummy_private = PreKeyPrivateMaterial {
+        identity_secret: [0u8; 32],
+        signed_prekey_secret: [0u8; 32],
+        prekey_secret: None,
+    };
     let session = SignalSession::from_prekey_bundle_real(
         accept.from_onion.clone(),
         &bundle,
-        &local_private,
+        &dummy_private,
         identity,
     )?;
 
     // Store session
     let store = SessionStore::new(&app.db);
     store.store_session(&session)?;
+
+    // Queue a handshake PreKey message to trigger the peer's session creation.
+    // Without this, the acceptor can't send messages because they deferred
+    // session creation until our first PreKey message arrives.
+    let own_onion = app.onion_address.as_ref()
+        .ok_or_else(|| error::TorrentChatError::Tor("Tor not initialized".into()))?;
+    {
+        let mut session = store.load_session(&accept.from_onion)?
+            .ok_or_else(|| error::TorrentChatError::Crypto("Session just stored but not found".into()))?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let handshake = protocol::message::PlaintextPayload {
+            content: String::new(),
+            sent_at: now,
+            message_type: "handshake".to_string(),
+            ephemeral_ttl: None,
+        };
+        let plaintext = serde_json::to_vec(&handshake)
+            .map_err(|e| error::TorrentChatError::Crypto(format!("Handshake serialize: {}", e)))?;
+
+        let (ciphertext, is_prekey) = session.encrypt(&plaintext)?;
+        store.store_session(&session)?; // persist updated send_counter
+
+        let handshake_msg = protocol::message::Message::TextMessage(protocol::message::TextMessage {
+            from_onion: own_onion.clone(),
+            to_onion: accept.from_onion.clone(),
+            signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
+            signal_type: if is_prekey {
+                protocol::message::SignalMessageType::PrekeyMessage
+            } else {
+                protocol::message::SignalMessageType::Message
+            },
+            timestamp: now,
+            message_id: uuid::Uuid::new_v4(),
+        });
+
+        app.message_queue.enqueue(&app.db, &accept.from_onion, &handshake_msg, "high")?;
+        eprintln!("Queued handshake PreKey message to {}", accept.from_onion);
+    }
 
     // Add as friend
     let conn = app.db.connection();
@@ -1171,7 +1278,7 @@ fn handle_incoming_accept(
          VALUES (?1, ?2, ?3, 'active')",
         (
             &accept.from_onion,
-            &accept.from_onion[..std::cmp::min(10, accept.from_onion.len())],
+            &if accept.from_onion.len() > 16 { format!("{}…", &accept.from_onion[..16]) } else { accept.from_onion.clone() },
             accept.timestamp,
         ),
     ).map_err(|e| error::TorrentChatError::Database(

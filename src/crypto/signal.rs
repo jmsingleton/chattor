@@ -290,14 +290,14 @@ impl SignalSession {
             let ciphertext = cipher.encrypt(nonce, plaintext)
                 .map_err(|e| TorrentChatError::Crypto(format!("Encryption failed: {}", e)))?;
 
-            // For first message, prepend ephemeral public key (PreKey message)
-            let is_prekey = self.send_counter == 0;
+            // PreKey message = first message from the initiator (who has an ephemeral key).
+            // Use .take() so that only the very first encrypt prepends the ephemeral.
+            let ephemeral_for_prekey = self.ephemeral_public.take();
+            let is_prekey = ephemeral_for_prekey.is_some();
             let mut result = Vec::new();
 
-            if is_prekey {
-                if let Some(ephemeral_pub) = self.ephemeral_public {
-                    result.extend_from_slice(&ephemeral_pub);
-                }
+            if let Some(ephemeral_pub) = ephemeral_for_prekey {
+                result.extend_from_slice(&ephemeral_pub);
             }
             result.extend_from_slice(&ciphertext);
 
@@ -313,11 +313,15 @@ impl SignalSession {
     }
 
     /// Decrypt ciphertext
-    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
+    ///
+    /// `is_prekey_message` indicates whether the ciphertext has a 32-byte
+    /// ephemeral public key prefix (from the initiator's first message).
+    /// The caller determines this from the wire-format `signal_type` field.
+    pub fn decrypt(&mut self, ciphertext: &[u8], is_prekey_message: bool) -> Result<Vec<u8>> {
         // If we have a real shared secret, use real decryption
         if let Some(ref shared_secret) = self.shared_secret {
-            // Skip ephemeral key if PreKey message (first 32 bytes)
-            let actual_ciphertext = if ciphertext.len() > 32 && self.recv_counter == 0 {
+            // Strip ephemeral key header if this is a PreKey message
+            let actual_ciphertext = if is_prekey_message && ciphertext.len() > 32 {
                 &ciphertext[32..]
             } else {
                 ciphertext
@@ -463,8 +467,8 @@ mod tests {
             &bob_identity,
         ).unwrap();
 
-        // Bob decrypts
-        let decrypted = bob_session.decrypt(&ciphertext).unwrap();
+        // Bob decrypts (this is a PreKey message — has ephemeral prefix)
+        let decrypted = bob_session.decrypt(&ciphertext, true).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -490,7 +494,7 @@ mod tests {
         ).unwrap();
 
         // Session has no real shared_secret — should error, not return plaintext
-        let result = session.decrypt(b"some ciphertext");
+        let result = session.decrypt(b"some ciphertext", false);
         assert!(result.is_err(), "decrypt() should error without shared_secret");
     }
 
@@ -540,8 +544,8 @@ mod tests {
             &bob_identity,
         ).unwrap();
 
-        assert_eq!(bob_session.decrypt(&msg1).unwrap(), b"Message 1");
-        assert_eq!(bob_session.decrypt(&msg2).unwrap(), b"Message 2");
-        assert_eq!(bob_session.decrypt(&msg3).unwrap(), b"Message 3");
+        assert_eq!(bob_session.decrypt(&msg1, true).unwrap(), b"Message 1");
+        assert_eq!(bob_session.decrypt(&msg2, false).unwrap(), b"Message 2");
+        assert_eq!(bob_session.decrypt(&msg3, false).unwrap(), b"Message 3");
     }
 }

@@ -71,12 +71,18 @@ pub fn render_friend_request_modal(
     friend_code: &str,
     theme: &Theme,
 ) {
-    let area = centered_rect(60, 40, f.size());
+    let area = centered_rect(60, 50, f.size());
 
     f.render_widget(Clear, area);
 
+    let onion_short = if from_onion.len() > 16 {
+        format!("{}…", &from_onion[..16])
+    } else {
+        from_onion.to_string()
+    };
+
     let block = Block::default()
-        .title(format!("Friend Request from {}", &from_onion[..10]))
+        .title(format!(" Friend Request from {} ", onion_short))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.warning));
@@ -86,20 +92,22 @@ pub fn render_friend_request_modal(
         .margin(2)
         .constraints([
             Constraint::Length(2),
-            Constraint::Length(2),
+            Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(1),
         ])
         .split(area);
 
     // Friend code
-    let code = Paragraph::new(format!("Friend code: {}", friend_code));
+    let code = Paragraph::new(format!("Friend code: {}", friend_code))
+        .wrap(Wrap { trim: false });
     f.render_widget(code, chunks[0]);
 
-    // Timestamp (simplified)
-    let time = Paragraph::new("Received: just now")
-        .style(Style::default().fg(theme.fg_dim));
-    f.render_widget(time, chunks[1]);
+    // Onion address (wrapped for long addresses)
+    let onion = Paragraph::new(format!("Onion: {}", from_onion))
+        .style(Style::default().fg(theme.fg_dim))
+        .wrap(Wrap { trim: false });
+    f.render_widget(onion, chunks[1]);
 
     // Message
     let msg = Paragraph::new("This person wants to connect with you.")

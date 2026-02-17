@@ -38,7 +38,8 @@ impl MessageReceiver {
         // Decrypt
         let ciphertext = base64::engine::general_purpose::STANDARD.decode(&message.signal_ciphertext)
             .map_err(|e| TorrentChatError::Crypto(format!("Failed to decode base64: {}", e)))?;
-        let plaintext = session.decrypt(&ciphertext)?;
+        let is_prekey = message.signal_type == SignalMessageType::PrekeyMessage;
+        let plaintext = session.decrypt(&ciphertext, is_prekey)?;
 
         // Update session
         store.store_session(&session)?;
@@ -270,7 +271,7 @@ mod tests {
             &bob_private,
             &bob_identity,
         ).unwrap();
-        bob_session.decrypt(&ciphertext1).unwrap(); // Process first message
+        bob_session.decrypt(&ciphertext1, true).unwrap(); // Process first PreKey message
 
         let store = crate::crypto::SessionStore::new(&db);
         store.store_session(&bob_session).unwrap();

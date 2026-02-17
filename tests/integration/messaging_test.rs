@@ -110,7 +110,7 @@ fn test_signal_session_creation() {
         &bob_private,
         &bob_identity,
     ).unwrap();
-    let decrypted = bob_session.decrypt(&ciphertext).unwrap();
+    let decrypted = bob_session.decrypt(&ciphertext, true).unwrap();
     assert_eq!(plaintext, &decrypted[..]);
 }
 
