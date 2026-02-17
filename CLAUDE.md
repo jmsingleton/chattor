@@ -126,8 +126,15 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 **6. Message Queue (`src/net/queue.rs`)**
 - FIFO queue for offline message delivery
 - Persisted in `message_queue` table
-- Retry logic: 50 attempts (configurable), 3-minute intervals
+- Exponential backoff retries: 30s base, doubles each attempt, capped at 15min, 24h expiry window
+- Concurrent per-peer queue processing (10 parallel peers via semaphore)
 - Filters by destination .onion address
+
+**9. Connection Pool (`src/net/pool.rs`)**
+- Caches Tor circuits per peer for reuse (avoids 10-30s circuit build per message)
+- Retry-on-stale: evicts dead connections and retries once with fresh circuit
+- Background cleanup: idle connections evicted after 5 minutes
+- Timeouts: 30s circuit build, 10s message send
 
 **7. UI Layer (`src/ui/`)**
 - Full TUI with ratatui: friends sidebar, conversation view, channel feed
@@ -168,10 +175,7 @@ Database path: `{data_dir}/messages.db`
 - Message queue with retry logic
 - Protocol message types (5 types with JSON serialization)
 - Friend code ↔ .onion address mapping
-- Integration tests (52 total, all passing)
-
-**What's Stubbed (returns success without real implementation):**
-- `TorConnection::send()` / `receive()` - no real network I/O (use Tor rendezvous instead)
+- Integration tests (202 total, all passing)
 
 **What's Real (Phase 2b + Phase 5 + Phase 6):**
 - `TorClient::new_with_data_dir()` - real arti bootstrap with persistent state
@@ -222,9 +226,14 @@ Database path: `{data_dir}/messages.db`
 - .onion address persistence across restarts (app_settings table, schema v8)
 - Vanity mining system removed (arti manages .onion keys)
 
+**Chunk 3 — P2P Messaging Hardening: ✅**
+- ConnectionPool with per-peer caching, idle eviction (5min), retry-on-stale
+- Exponential backoff retries (30s→15min cap, 24h expiry window)
+- Concurrent per-peer queue processing (10 parallel peers via semaphore)
+- CHATTOR_PORT constant, TorConnection dead code cleanup
+
 **Remaining:**
 - Typing indicators, online status, desktop notifications
-- Real peer-to-peer message sending over Tor circuits
 - Backup/restore, packaging for distributions
 
 ## Important Technical Details
@@ -246,21 +255,21 @@ Database path: `{data_dir}/messages.db`
 - Friend codes map deterministically to .onion via SHA-256 hash
 - Reverse lookup requires in-memory mapping table (HashMap<friend_code, onion>)
 
-### Message Flow (When Implemented)
+### Message Flow
 1. User composes message
 2. Encrypt with Signal Protocol (per-conversation session)
 3. Wrap in JSON envelope with metadata
-4. Send via Tor connection to peer's hidden service
+4. Send via ConnectionPool (reuses cached Tor circuit or creates new one)
 5. If offline: enqueue in `message_queue` table
-6. Background task retries every 3 minutes (50 max attempts)
-7. Peer receives, decrypts, stores in `messages` table
+6. Background task retries with exponential backoff (30s→15min, 24h expiry)
+7. Peer receives via Tor rendezvous listener, decrypts, stores in `messages` table
 8. FTS triggers auto-update `messages_fts` for search
 
 ### Testing Strategy
 - **Unit tests:** Per-module in `#[cfg(test)]` blocks
 - **Integration tests:** `tests/integration/messaging_test.rs` (cross-module interaction)
 - **Database tests:** Use tempfile crate for isolated test databases
-- **Stub behavior:** Tor connection send/receive stubs return `Ok(())` to enable integration testing; Tor client and hidden service are real (arti); Signal crypto and friend request signatures are real
+- **Stub behavior:** Tor client, hidden service, Signal crypto, and friend request signatures are all real. TorConnection sends over real arti DataStreams via ConnectionPool.
 
 ## Key Files to Understand
 
@@ -268,7 +277,8 @@ Database path: `{data_dir}/messages.db`
 - `src/db/schema.rs` - Complete database schema (version 8)
 - `src/db/queries.rs` - All database queries including channel operations
 - `src/protocol/message.rs` - All message types and wire format (12 types)
-- `src/net/queue.rs` - Offline message delivery queue
+- `src/net/queue.rs` - Offline message delivery queue with exponential backoff
+- `src/net/pool.rs` - Connection pool with per-peer Tor circuit caching
 - `src/ui/channel_feed.rs` - Channel post feed rendering
 - `src/ui/theme.rs` - Theme struct, 7 preset definitions, hex color parsing, TOML config loading
 - `src/tor/hidden_service.rs` - Real arti onion service hosting
