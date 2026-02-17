@@ -170,6 +170,33 @@ impl MessageQueue {
     }
 }
 
+/// 24 hours in seconds
+const MESSAGE_EXPIRY_SECS: i64 = 86400;
+
+/// Maximum retry delay in seconds (15 minutes)
+const MAX_RETRY_DELAY_SECS: i64 = 900;
+
+/// Base retry delay in seconds
+const BASE_RETRY_DELAY_SECS: i64 = 30;
+
+/// Compute the next retry timestamp using exponential backoff.
+///
+/// Returns `None` if the message has expired (older than 24 hours).
+/// Formula: min(30 * 2^retry_count, 900) seconds from now.
+pub fn compute_next_retry(retry_count: i64, created_at: i64, now: i64) -> Option<i64> {
+    // Check 24h expiry
+    if now - created_at >= MESSAGE_EXPIRY_SECS {
+        return None;
+    }
+
+    let delay = BASE_RETRY_DELAY_SECS
+        .checked_shl(retry_count as u32)
+        .unwrap_or(MAX_RETRY_DELAY_SECS)
+        .min(MAX_RETRY_DELAY_SECS);
+
+    Some(now + delay)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +391,42 @@ mod tests {
         let pending = queue.get_pending_messages(&db, far_future).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, id);
+    }
+
+    #[test]
+    fn test_compute_next_retry_backoff_schedule() {
+        let now = 1000000;
+        let created_at = now - 60; // created 60s ago
+
+        // retry 0 → 30s delay
+        assert_eq!(compute_next_retry(0, created_at, now), Some(now + 30));
+        // retry 1 → 60s delay
+        assert_eq!(compute_next_retry(1, created_at, now), Some(now + 60));
+        // retry 2 → 120s delay
+        assert_eq!(compute_next_retry(2, created_at, now), Some(now + 120));
+        // retry 3 → 240s delay
+        assert_eq!(compute_next_retry(3, created_at, now), Some(now + 240));
+        // retry 4 → 480s delay
+        assert_eq!(compute_next_retry(4, created_at, now), Some(now + 480));
+        // retry 5 → 900s (capped at 15 min)
+        assert_eq!(compute_next_retry(5, created_at, now), Some(now + 900));
+        // retry 10 → still 900s (cap holds)
+        assert_eq!(compute_next_retry(10, created_at, now), Some(now + 900));
+    }
+
+    #[test]
+    fn test_compute_next_retry_expires_after_24h() {
+        let now = 1000000;
+        let created_at = now - 86401; // created 24h + 1s ago
+
+        assert_eq!(compute_next_retry(0, created_at, now), None);
+    }
+
+    #[test]
+    fn test_compute_next_retry_just_within_window() {
+        let now = 1000000;
+        let created_at = now - 86399; // created 24h - 1s ago
+
+        assert!(compute_next_retry(0, created_at, now).is_some());
     }
 }
