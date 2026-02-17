@@ -842,32 +842,16 @@ pub enum SendResult {
     Queued,
 }
 
-/// Try to send a message directly to peer via Tor with timeout
+/// Try to send a message directly to peer via the connection pool
 async fn try_send_direct(
     app: &App,
     peer_onion: &str,
     message: &protocol::message::Message,
 ) -> Result<()> {
-    let tor_client = app.tor_client.as_ref()
-        .ok_or_else(|| error::TorrentChatError::Tor("Tor not initialized".into()))?;
+    let pool = app.connection_pool.as_ref()
+        .ok_or_else(|| error::TorrentChatError::Tor("Connection pool not initialized".into()))?;
 
-    // Connect with 5-second timeout
-    let mut conn = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        crate::tor::connection::TorConnection::connect(tor_client.as_ref(), peer_onion)
-    )
-    .await
-    .map_err(|_| error::TorrentChatError::Network("Connection timed out (5s)".into()))??;
-
-    // Send with 5-second timeout
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        conn.send(message)
-    )
-    .await
-    .map_err(|_| error::TorrentChatError::Network("Send timed out (5s)".into()))??;
-
-    Ok(())
+    pool.send(peer_onion, message).await
 }
 
 /// Handle an incoming message from the listener
@@ -1066,8 +1050,11 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
     Ok(())
 }
 
-/// Process pending messages in the queue
+/// Process pending messages in the queue with per-peer concurrency
 async fn process_message_queue(app: &App) -> Result<()> {
+    use std::collections::HashMap;
+    use tokio::task::JoinSet;
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1079,19 +1066,57 @@ async fn process_message_queue(app: &App) -> Result<()> {
         return Ok(());
     }
 
-    for queued in pending {
-        match try_send_direct(app, &queued.peer_onion, &queued.message).await {
-            Ok(_) => {
-                app.message_queue.mark_delivered(&app.db, queued.id)?;
-                eprintln!("Queued message #{} delivered to {}", queued.id, queued.peer_onion);
+    // Group messages by peer
+    let mut by_peer: HashMap<String, Vec<net::queue::QueuedMessage>> = HashMap::new();
+    for msg in pending {
+        by_peer.entry(msg.peer_onion.clone()).or_default().push(msg);
+    }
+
+    let pool = app.connection_pool.as_ref()
+        .ok_or_else(|| error::TorrentChatError::Tor("Connection pool not initialized".into()))?;
+    let pool = Arc::clone(pool);
+
+    // Semaphore limits concurrent peer tasks to 10
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+    let mut join_set = JoinSet::new();
+
+    for (peer_onion, messages) in by_peer {
+        let pool = Arc::clone(&pool);
+        let sem = Arc::clone(&semaphore);
+
+        join_set.spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed");
+            let mut results: Vec<(i64, i64, i64, bool)> = Vec::new(); // (id, created_at, retry_count, success)
+
+            for queued in messages {
+                let success = pool.send(&peer_onion, &queued.message).await.is_ok();
+                results.push((queued.id, queued.created_at, queued.retry_count, success));
+
+                if !success {
+                    break;
+                }
             }
-            Err(_) => {
-                if queued.retry_count >= 10 {
-                    app.message_queue.mark_failed(&app.db, queued.id)?;
-                    eprintln!("Message #{} failed after 10 retries", queued.id);
+
+            results
+        });
+    }
+
+    // Collect results and update DB
+    while let Some(result) = join_set.join_next().await {
+        if let Ok(outcomes) = result {
+            for (id, created_at, retry_count, success) in outcomes {
+                if success {
+                    app.message_queue.mark_delivered(&app.db, id)?;
                 } else {
-                    let next_retry = now + 30;
-                    app.message_queue.schedule_retry(&app.db, queued.id, next_retry)?;
+                    match net::queue::compute_next_retry(retry_count, created_at, now) {
+                        Some(next) => {
+                            app.message_queue.schedule_retry(&app.db, id, next)?;
+                        }
+                        None => {
+                            app.message_queue.mark_failed(&app.db, id)?;
+                            eprintln!("Message #{} expired after 24h", id);
+                        }
+                    }
                 }
             }
         }
