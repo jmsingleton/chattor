@@ -1115,6 +1115,9 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
                 &app.db, &receipt.post_id.to_string(), &receipt.reader_onion, receipt.timestamp
             )?;
         }
+        protocol::message::Message::Presence(_presence) => {
+            // TODO: Wire into PresenceTracker (Task 4)
+        }
     }
 
     Ok(())
