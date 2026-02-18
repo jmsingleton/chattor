@@ -7,6 +7,7 @@ mod db;
 mod tor;
 mod protocol;
 mod net;
+mod notifications;
 mod presence;
 mod ui;
 

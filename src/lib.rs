@@ -11,6 +11,7 @@ pub mod db;
 pub mod tor;
 pub mod protocol;
 pub mod net;
+pub mod notifications;
 pub mod presence;
 pub mod ui;
 
