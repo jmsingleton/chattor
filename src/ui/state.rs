@@ -78,6 +78,8 @@ pub enum AppAction {
     SubscribeToChannel(String),             // publisher .onion address
     SelectChannel(String, String, bool),    // (publisher_onion, channel_type, is_own)
     ViewOwnChannel,
+    ToggleNotifications,
+    SendPresence(crate::protocol::message::PresenceType),
     Quit,
 }
 

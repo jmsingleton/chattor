@@ -262,6 +262,9 @@ async fn main() -> Result<()> {
     // Initialize presence tracker (in-memory only)
     let presence_map = presence::new_presence_map();
 
+    let mut last_typing_sent: Option<std::time::Instant> = None;
+    let mut was_typing = false;
+
     // Main event loop
     let result = loop {
         // Lock app to build render context
@@ -564,6 +567,8 @@ async fn main() -> Result<()> {
                             }
 
                             drop(app_lock);
+                            was_typing = false;
+                            last_typing_sent = None;
                         }
                         Some(AppAction::SetEphemeralTtl(conv_id, ttl)) => {
                             let app_lock = app.lock().await;
@@ -663,8 +668,54 @@ async fn main() -> Result<()> {
                                 scroll_offset: 0,
                             };
                         }
+                        Some(AppAction::ToggleNotifications) => {} // Handled in Task 11
+                        Some(AppAction::SendPresence(_)) => {} // Reserved for future use
                         Some(AppAction::Quit) => break Ok(()),
                         None => {} // Just state change
+                    }
+
+                    // Typing indicator detection
+                    if let AppState::Normal { input_focused: true, ref input, selected_friend_idx: Some(idx), .. } = &app_state {
+                        let is_typing_now = !input.is_empty();
+                        let should_send_started = is_typing_now && (!was_typing || last_typing_sent.map_or(true, |t| t.elapsed() >= presence::TYPING_DEBOUNCE));
+                        let should_send_stopped = !is_typing_now && was_typing;
+
+                        if should_send_started || should_send_stopped {
+                            let app_lock = app.lock().await;
+                            let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+                            if let Some(friend) = friends.get(*idx) {
+                                let own_onion = app_lock.onion_address.clone().unwrap_or_default();
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs() as i64;
+
+                                let presence_type = if should_send_started {
+                                    protocol::message::PresenceType::TypingStarted
+                                } else {
+                                    protocol::message::PresenceType::TypingStopped
+                                };
+
+                                let msg = protocol::message::Message::Presence(
+                                    protocol::message::PresenceMessage {
+                                        from_onion: own_onion,
+                                        presence_type,
+                                        timestamp: now,
+                                    }
+                                );
+
+                                // Best-effort send (don't queue typing indicators)
+                                if let Some(ref pool) = app_lock.connection_pool {
+                                    let _ = pool.send(&friend.onion_address, &msg).await;
+                                }
+                            }
+                            drop(app_lock);
+
+                            if should_send_started {
+                                last_typing_sent = Some(std::time::Instant::now());
+                            }
+                        }
+                        was_typing = is_typing_now;
                     }
                 }
                 Event::Mouse(_) => {} // Reserved for future mouse interactions
