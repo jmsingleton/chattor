@@ -221,6 +221,9 @@ async fn main() -> Result<()> {
     // Initialize state machine
     let mut app_state = AppState::default();
 
+    // Initialize presence tracker (in-memory only)
+    let presence_map = presence::new_presence_map();
+
     // Main event loop
     let result = loop {
         // Lock app to build render context
@@ -645,7 +648,7 @@ async fn main() -> Result<()> {
 
             // Process collected messages
             for incoming in incoming_messages {
-                if let Err(e) = handle_incoming_message(&*app_lock, incoming) {
+                if let Err(e) = handle_incoming_message(&*app_lock, incoming, &presence_map).await {
                     eprintln!("Failed to handle incoming message: {}", e);
                 }
             }
@@ -866,7 +869,7 @@ async fn try_send_direct(
 }
 
 /// Handle an incoming message from the listener
-fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) -> Result<()> {
+async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage, presence: &presence::PresenceMap) -> Result<()> {
     match &incoming.message {
         protocol::message::Message::FriendRequest(req) => {
             // Store incoming friend request in database
@@ -1116,8 +1119,18 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
                 &app.db, &receipt.post_id.to_string(), &receipt.reader_onion, receipt.timestamp
             )?;
         }
-        protocol::message::Message::Presence(_presence) => {
-            // TODO: Wire into PresenceTracker (Task 4)
+        protocol::message::Message::Presence(pres) => {
+            match pres.presence_type {
+                protocol::message::PresenceType::Heartbeat => {
+                    presence::record_heartbeat(presence, &pres.from_onion).await;
+                }
+                protocol::message::PresenceType::TypingStarted => {
+                    presence::record_typing_started(presence, &pres.from_onion).await;
+                }
+                protocol::message::PresenceType::TypingStopped => {
+                    presence::record_typing_stopped(presence, &pres.from_onion).await;
+                }
+            }
         }
     }
 
