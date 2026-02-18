@@ -11,7 +11,7 @@ use base64::Engine;
 use chattor::crypto::{IdentityKeypair, PreKeyBundle, PreKeyPrivateMaterial, SessionStore, SignalSession};
 use chattor::db::queries::{get_app_setting, set_app_setting};
 use chattor::db::Database;
-use chattor::net::MessageQueue;
+use chattor::net::queue::MessageQueue;
 use chattor::protocol::friend_request::FriendRequestHandler;
 use chattor::protocol::message::*;
 use tempfile::NamedTempFile;

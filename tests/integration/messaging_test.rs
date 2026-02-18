@@ -11,7 +11,7 @@ use chattor::protocol::friend_code::friend_code_to_onion;
 
 fn setup_test_db() -> Database {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
-    conn.execute_batch(chattor::db::CREATE_TABLES).unwrap();
+    conn.execute_batch(chattor::db::schema::CREATE_TABLES).unwrap();
 
     // Create test data
     conn.execute(
