@@ -218,6 +218,44 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Spawn heartbeat task — sends presence updates to connected peers
+    let app_heartbeat = Arc::clone(&app);
+    tokio::spawn(async move {
+        // Wait for Tor to initialize before starting heartbeats
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        loop {
+            {
+                let app_lock = app_heartbeat.lock().await;
+                if let Some(ref pool) = app_lock.connection_pool {
+                    let own_onion = app_lock.onion_address.clone().unwrap_or_default();
+                    let peers = pool.connected_peers().await;
+                    drop(app_lock);
+
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+
+                    for peer in peers {
+                        let msg = protocol::message::Message::Presence(
+                            protocol::message::PresenceMessage {
+                                from_onion: own_onion.clone(),
+                                presence_type: protocol::message::PresenceType::Heartbeat,
+                                timestamp: now,
+                            }
+                        );
+                        // Best-effort: don't retry or queue heartbeats
+                        let app_lock = app_heartbeat.lock().await;
+                        if let Some(ref pool) = app_lock.connection_pool {
+                            let _ = pool.send(&peer, &msg).await;
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(presence::HEARTBEAT_INTERVAL).await;
+        }
+    });
+
     // Initialize state machine
     let mut app_state = AppState::default();
 
