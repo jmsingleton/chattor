@@ -317,6 +317,8 @@ async fn main() -> Result<()> {
         // Release lock before rendering
         drop(app_lock);
 
+        let presence_snapshot = presence::get_presence_snapshot(&presence_map).await;
+
         let ctx = RenderContext {
             friends,
             messages,
@@ -329,6 +331,7 @@ async fn main() -> Result<()> {
             channel_posts,
             channel_post_read_counts,
             theme: theme.clone(),
+            presence: presence_snapshot,
         };
 
         // Render current state

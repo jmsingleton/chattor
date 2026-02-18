@@ -21,6 +21,8 @@ pub struct RenderContext {
     pub channel_posts: Vec<ChannelPost>,
     pub channel_post_read_counts: std::collections::HashMap<String, i64>,
     pub theme: Theme,
+    /// Per-onion presence: (is_online, is_typing)
+    pub presence: std::collections::HashMap<String, (bool, bool)>,
 }
 
 /// Render the application UI based on current state
@@ -90,6 +92,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         crate::ui::sidebar::render_sidebar_with_channels(
             f, main_chunks[0], &ctx.friends, selected_idx, !input_focused,
             ctx.pending_request_count, &ctx.channel_subscriptions,
+            &ctx.presence,
             &ctx.theme,
         );
 
