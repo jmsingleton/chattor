@@ -17,6 +17,7 @@ pub fn render_conversation(
     own_onion: Option<&str>,
     scroll_offset: usize,
     ephemeral_ttl: Option<i64>,
+    friend_is_typing: bool,
     theme: &Theme,
 ) {
     let title = if let (Some(friend_entry), Some(ttl)) = (friend, ephemeral_ttl) {
@@ -82,8 +83,36 @@ pub fn render_conversation(
                     ])
                     .split(padded);
                 f.render_widget(text, v_layout[1]);
+
+                if friend_is_typing {
+                    let typing_text = format!("{} is typing\u{2026}", friend_entry.display());
+                    let typing_line = Paragraph::new(typing_text)
+                        .style(Style::default().fg(theme.fg_dim));
+                    let typing_area = Rect {
+                        x: padded.x,
+                        y: padded.y + padded.height.saturating_sub(1),
+                        width: padded.width,
+                        height: 1,
+                    };
+                    f.render_widget(typing_line, typing_area);
+                }
             } else {
                 render_messages(f, padded, messages, own_onion, &friend_entry.display(), scroll_offset, theme);
+
+                if friend_is_typing {
+                    let typing_text = format!("{} is typing\u{2026}", friend_entry.display());
+                    let typing_line = Paragraph::new(typing_text)
+                        .style(Style::default().fg(theme.fg_dim));
+                    if padded.height > 1 {
+                        let typing_area = Rect {
+                            x: padded.x,
+                            y: padded.y + padded.height - 1,
+                            width: padded.width,
+                            height: 1,
+                        };
+                        f.render_widget(typing_line, typing_area);
+                    }
+                }
             }
         }
     }

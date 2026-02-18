@@ -110,6 +110,10 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
             .and_then(|i| ctx.friends.get(i));
 
         // Conversation
+        let friend_is_typing = selected_friend
+            .map(|f| ctx.presence.get(&f.onion_address).map_or(false, |(_, typing)| *typing))
+            .unwrap_or(false);
+
         crate::ui::conversation::render_conversation(
             f,
             right_chunks[0],
@@ -118,6 +122,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
             ctx.own_onion.as_deref(),
             scroll_offset,
             ctx.conversation_ephemeral_ttl,
+            friend_is_typing,
             &ctx.theme,
         );
 
