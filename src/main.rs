@@ -265,6 +265,7 @@ async fn main() -> Result<()> {
 
     let mut last_typing_sent: Option<std::time::Instant> = None;
     let mut was_typing = false;
+    let mut notification_flash: Option<(std::time::Instant, &str)> = None;
 
     // Main event loop
     let result = loop {
@@ -333,7 +334,16 @@ async fn main() -> Result<()> {
             channel_post_read_counts,
             theme: theme.clone(),
             presence: presence_snapshot,
+            notification_flash: notification_flash
+                .as_ref()
+                .filter(|(t, _)| t.elapsed() < std::time::Duration::from_secs(2))
+                .map(|(_, msg)| msg.to_string()),
         };
+
+        // Expire notification flash
+        if notification_flash.as_ref().map_or(false, |(t, _)| t.elapsed() >= std::time::Duration::from_secs(2)) {
+            notification_flash = None;
+        }
 
         // Render current state
         if let Err(e) = terminal.draw(|f| {
@@ -672,7 +682,15 @@ async fn main() -> Result<()> {
                                 scroll_offset: 0,
                             };
                         }
-                        Some(AppAction::ToggleNotifications) => {} // Handled in Task 11
+                        Some(AppAction::ToggleNotifications) => {
+                            let app_lock = app.lock().await;
+                            let new_state = notifications::toggle(&app_lock.db);
+                            drop(app_lock);
+                            notification_flash = Some((
+                                std::time::Instant::now(),
+                                if new_state { "Notifications: ON" } else { "Notifications: OFF" },
+                            ));
+                        }
                         Some(AppAction::SendPresence(_)) => {} // Reserved for future use
                         Some(AppAction::Quit) => break Ok(()),
                         None => {} // Just state change

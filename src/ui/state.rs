@@ -174,6 +174,7 @@ impl AppState {
                             Ok(None)
                         }
                         KeyCode::Char('p') => Ok(Some(AppAction::ViewOwnChannel)),
+                        KeyCode::Char('n') => Ok(Some(AppAction::ToggleNotifications)),
                         KeyCode::Tab => {
                             if selected_friend_idx.is_none() {
                                 *selected_friend_idx = Some(0);
