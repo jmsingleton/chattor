@@ -623,6 +623,20 @@ pub fn get_app_setting(db: &Database, key: &str) -> Result<Option<String>> {
     }
 }
 
+/// Get display name for a friend by onion address
+pub fn get_friend_display_name(db: &Database, onion: &str) -> Result<String> {
+    let conn = db.connection();
+    let result = conn.query_row(
+        "SELECT COALESCE(display_name, onion_address) FROM friends WHERE onion_address = ?1",
+        [onion],
+        |row| row.get(0),
+    );
+    match result {
+        Ok(name) => Ok(name),
+        Err(_) => Ok(onion.to_string()),
+    }
+}
+
 /// Set an application setting (insert or update)
 pub fn set_app_setting(db: &Database, key: &str, value: &str) -> Result<()> {
     let conn = db.connection();

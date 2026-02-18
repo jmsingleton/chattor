@@ -1079,6 +1079,13 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 let conv_id = db::queries::get_or_create_conversation(&app.db, friend_id)?;
                 db::queries::store_incoming_message_with_ttl(&app.db, conv_id, from_onion, &payload.content, &msg_id, payload.ephemeral_ttl)?;
 
+                // Desktop notification (best-effort)
+                if notifications::is_enabled(&app.db) {
+                    let sender_name = db::queries::get_friend_display_name(&app.db, from_onion)
+                        .unwrap_or_else(|_| from_onion.to_string());
+                    notifications::notify_message(&sender_name);
+                }
+
                 // Queue delivery receipt back to sender
                 let receipt = protocol::message::DeliveryReceiptMessage {
                     message_id: text_msg.message_id,
