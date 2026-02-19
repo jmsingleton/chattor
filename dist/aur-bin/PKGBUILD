@@ -1,0 +1,23 @@
+# Maintainer: John Singleton <john@example.com>
+pkgname=chattor-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Privacy-first TUI chat application over Tor"
+arch=('x86_64')
+url="https://github.com/jmsingleton/chattor"
+license=('MIT' 'Apache-2.0')
+depends=('gcc-libs')
+provides=('chattor')
+conflicts=('chattor' 'chattor-git')
+source=("${url}/releases/download/v${pkgver}/chattor-${pkgver}-x86_64-linux.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+    install -Dm755 chattor -t "${pkgdir}/usr/bin/"
+    install -Dm644 chattor.1 "${pkgdir}/usr/share/man/man1/chattor.1"
+    install -Dm644 completions/chattor.bash "${pkgdir}/usr/share/bash-completion/completions/chattor"
+    install -Dm644 completions/_chattor "${pkgdir}/usr/share/zsh/site-functions/_chattor"
+    install -Dm644 completions/chattor.fish "${pkgdir}/usr/share/fish/vendor_completions.d/chattor.fish"
+    install -Dm644 LICENSE-MIT "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-MIT"
+    install -Dm644 LICENSE-APACHE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-APACHE"
+}
