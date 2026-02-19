@@ -15,11 +15,13 @@ pub struct QueuedMessage {
     pub peer_onion: String,
     pub message: Message,
     pub retry_count: i64,
+    #[allow(dead_code)]
     pub priority: String,
     pub created_at: i64,
 }
 
 /// Message queue for managing offline message delivery
+#[derive(Default)]
 pub struct MessageQueue;
 
 impl MessageQueue {

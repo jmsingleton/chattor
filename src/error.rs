@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum TorrentChatError {
     #[error("Database error: {0}")]
     Database(String),
@@ -46,6 +47,7 @@ pub enum TorrentChatError {
     Tor(String),
 }
 
+#[allow(dead_code)]
 pub type ChattorError = TorrentChatError;
 pub type Result<T> = std::result::Result<T, TorrentChatError>;
 

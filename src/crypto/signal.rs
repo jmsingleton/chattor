@@ -23,7 +23,9 @@ pub struct PreKeyBundle {
 #[derive(Debug)]
 pub struct PreKeyPrivateMaterial {
     pub identity_secret: [u8; 32],      // X25519 private key bytes
+    #[allow(dead_code)]
     pub signed_prekey_secret: [u8; 32], // X25519 private key bytes
+    #[allow(dead_code)]
     pub prekey_secret: Option<[u8; 32]>, // X25519 private key bytes
 }
 
@@ -148,6 +150,7 @@ impl PreKeyBundle {
 /// Signal session for encryption/decryption
 pub struct SignalSession {
     pub remote_onion: String,
+    #[allow(dead_code)]
     session_data: Vec<u8>,
     // Real Signal Protocol session data
     shared_secret: Option<SharedSecret>,

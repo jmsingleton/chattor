@@ -10,10 +10,12 @@ use futures::StreamExt;
 /// Message received from peer
 pub struct IncomingMessage {
     pub message: Message,
+    #[allow(dead_code)]
     pub remote_addr: String,
 }
 
 /// Listen for incoming TCP connections
+#[allow(dead_code)]
 pub async fn listen_for_connections(
     listener: TcpListener,
     tx: mpsc::Sender<IncomingMessage>,
@@ -37,6 +39,7 @@ pub async fn listen_for_connections(
 }
 
 /// Handle single incoming connection
+#[allow(dead_code)]
 async fn handle_connection(
     mut stream: TcpStream,
     remote_addr: String,

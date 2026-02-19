@@ -9,6 +9,7 @@ use crate::db::queries::{ChatMessage, FriendEntry};
 use crate::ui::theme::Theme;
 
 /// Render the conversation area
+#[allow(clippy::too_many_arguments)]
 pub fn render_conversation(
     f: &mut Frame,
     area: Rect,
@@ -131,7 +132,7 @@ fn render_messages(
     let mut lines: Vec<Line> = Vec::new();
 
     for msg in messages {
-        let is_own = own_onion.map_or(false, |o| msg.sender_onion == o);
+        let is_own = own_onion.is_some_and(|o| msg.sender_onion == o);
         let sender = if is_own { "You" } else { friend_name };
         let time = format_timestamp(msg.timestamp);
 

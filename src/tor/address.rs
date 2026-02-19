@@ -12,6 +12,7 @@ pub fn onion_to_friend_code(onion: &str) -> Result<String> {
 ///
 /// Reverses the word encoding to recover the public key,
 /// then reconstructs the v3 .onion address with proper checksum.
+#[allow(dead_code)]
 pub fn friend_code_to_onion(friend_code: &str) -> Result<String> {
     crate::protocol::friend_code::friend_code_to_onion(friend_code)
 }
@@ -23,7 +24,7 @@ mod tests {
     #[test]
     fn test_roundtrip() {
         // Build a valid v3 .onion from a known pubkey via the friend_code module
-        let pubkey = [0u8; 32];
+        let _pubkey = [0u8; 32];
         let onion = crate::protocol::friend_code::friend_code_to_onion(
             &std::iter::repeat("ace").take(32).collect::<Vec<_>>().join(" ")
         ).unwrap();

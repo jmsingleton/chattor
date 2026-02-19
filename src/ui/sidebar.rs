@@ -9,6 +9,8 @@ use crate::db::queries::{FriendEntry, ChannelSubscription};
 use crate::ui::theme::Theme;
 
 /// Render the friends sidebar with channels section
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 pub fn render_sidebar(
     f: &mut Frame,
     area: Rect,
@@ -23,6 +25,7 @@ pub fn render_sidebar(
 }
 
 /// Render the friends sidebar with channels section
+#[allow(clippy::too_many_arguments)]
 pub fn render_sidebar_with_channels(
     f: &mut Frame,
     area: Rect,
@@ -48,6 +51,7 @@ pub fn render_sidebar_with_channels(
     render_channels_section(f, sidebar_chunks[1], channel_subscriptions, theme);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_friends_list(
     f: &mut Frame,
     area: Rect,

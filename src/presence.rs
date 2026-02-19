@@ -22,12 +22,18 @@ pub struct PeerPresence {
     pub typing_started: Option<Instant>,
 }
 
-impl PeerPresence {
-    pub fn new() -> Self {
+impl Default for PeerPresence {
+    fn default() -> Self {
         PeerPresence {
             last_seen: Instant::now(),
             typing_started: None,
         }
+    }
+}
+
+impl PeerPresence {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Whether this peer should be considered online

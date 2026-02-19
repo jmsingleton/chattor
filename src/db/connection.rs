@@ -76,6 +76,7 @@ impl Database {
     }
 
     /// Create a Database instance from an existing connection (for testing)
+    #[allow(dead_code)]
     pub fn from_connection(conn: Connection) -> Self {
         Database { conn }
     }

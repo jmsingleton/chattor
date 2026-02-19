@@ -209,7 +209,7 @@ async fn main() -> Result<()> {
         loop {
             {
                 let app_lock = app_sync.lock().await;
-                if let Ok(requests) = collect_sync_requests(&*app_lock) {
+                if let Ok(requests) = collect_sync_requests(&app_lock) {
                     for (peer_onion, sync_msg) in requests {
                         app_lock.message_queue.enqueue(&app_lock.db, &peer_onion, &sync_msg, "low").ok();
                     }
@@ -341,7 +341,7 @@ async fn main() -> Result<()> {
         };
 
         // Expire notification flash
-        if notification_flash.as_ref().map_or(false, |(t, _)| t.elapsed() >= std::time::Duration::from_secs(2)) {
+        if notification_flash.as_ref().is_some_and(|(t, _)| t.elapsed() >= std::time::Duration::from_secs(2)) {
             notification_flash = None;
         }
 
@@ -360,7 +360,7 @@ async fn main() -> Result<()> {
                         Some(AppAction::SendFriendRequest(code)) => {
                             let app_lock = app.lock().await;
 
-                            match handle_send_friend_request(&*app_lock, &code).await {
+                            match handle_send_friend_request(&app_lock, &code).await {
                                 Ok(SendResult::SentImmediately) => {
                                     app_state = AppState::default();
                                 }
@@ -382,7 +382,7 @@ async fn main() -> Result<()> {
                             let return_to_list = matches!(app_state, AppState::ViewingFriendRequests { .. });
                             let app_lock = app.lock().await;
 
-                            match handle_accept_friend_request(&*app_lock, id) {
+                            match handle_accept_friend_request(&app_lock, id) {
                                 Ok(_) => {}
                                 Err(e) => eprintln!("Failed to accept friend request: {}", e),
                             }
@@ -403,7 +403,7 @@ async fn main() -> Result<()> {
                             let return_to_list = matches!(app_state, AppState::ViewingFriendRequests { .. });
                             let app_lock = app.lock().await;
 
-                            match handle_reject_friend_request(&*app_lock, id) {
+                            match handle_reject_friend_request(&app_lock, id) {
                                 Ok(_) => {}
                                 Err(e) => eprintln!("Failed to reject friend request: {}", e),
                             }
@@ -564,7 +564,7 @@ async fn main() -> Result<()> {
                                     if let Some(text_msg) = encrypted_msg {
                                         let msg = protocol::message::Message::TextMessage(text_msg.clone());
                                         // Try to send directly, queue on failure
-                                        match try_send_direct(&*app_lock, &peer_onion, &msg).await {
+                                        match try_send_direct(&app_lock, &peer_onion, &msg).await {
                                             Ok(_) => {
                                                 db::queries::update_message_status(&app_lock.db, &msg_id, "sent").ok();
                                             }
@@ -601,7 +601,7 @@ async fn main() -> Result<()> {
 
                             // Sign the post
                             let sign_data = format!("{}{}{}", post_id, content, now);
-                            let signature = base64::engine::general_purpose::STANDARD.encode(&app_lock.identity.as_ref().expect("identity set during init").sign(sign_data.as_bytes()).to_bytes());
+                            let signature = base64::engine::general_purpose::STANDARD.encode(app_lock.identity.as_ref().expect("identity set during init").sign(sign_data.as_bytes()).to_bytes());
 
                             // Store locally
                             db::queries::store_channel_post(
@@ -759,7 +759,7 @@ async fn main() -> Result<()> {
 
             // Process collected messages
             for incoming in incoming_messages {
-                if let Err(e) = handle_incoming_message(&*app_lock, incoming, &presence_map).await {
+                if let Err(e) = handle_incoming_message(&app_lock, incoming, &presence_map).await {
                     eprintln!("Failed to handle incoming message: {}", e);
                 }
             }
@@ -777,7 +777,7 @@ async fn main() -> Result<()> {
 
         if should_process {
             let app_lock = app.lock().await;
-            if let Err(e) = process_message_queue(&*app_lock).await {
+            if let Err(e) = process_message_queue(&app_lock).await {
                 eprintln!("Queue processing error: {}", e);
             }
         }
@@ -846,7 +846,6 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
 
 /// Handle accepting a friend request
 fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
-    use crate::protocol::friend_request::FriendRequestHandler;
     use crate::crypto::PreKeyBundle;
 
     // Get our .onion address
@@ -884,7 +883,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
         to_onion: from_onion.clone(),
         signal_prekey_bundle: bundle_json,
         timestamp,
-        signature: format!("{}", base64::engine::general_purpose::STANDARD.encode(&signature.to_bytes())),
+        signature: base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
     };
 
     // Store PreKey private material so we can create the Signal session later
@@ -1137,11 +1136,11 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 };
 
                 // For friends_only, verify they are a friend
-                if channel_type == "friends_only" {
-                    if db::queries::find_friend_by_onion(&app.db, &sub.subscriber_onion)?.is_none() {
-                        eprintln!("Rejected friends_only subscription from non-friend {}", sub.subscriber_onion);
-                        return Ok(());
-                    }
+                if channel_type == "friends_only"
+                    && db::queries::find_friend_by_onion(&app.db, &sub.subscriber_onion)?.is_none()
+                {
+                    eprintln!("Rejected friends_only subscription from non-friend {}", sub.subscriber_onion);
+                    return Ok(());
                 }
 
                 db::queries::add_channel_subscriber(&app.db, &sub.subscriber_onion, channel_type)?;
@@ -1182,10 +1181,10 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             };
 
             // For friends_only, verify they are a friend
-            if channel_type_str == "friends_only" {
-                if db::queries::find_friend_by_onion(&app.db, &req.subscriber_onion)?.is_none() {
-                    return Ok(());
-                }
+            if channel_type_str == "friends_only"
+                && db::queries::find_friend_by_onion(&app.db, &req.subscriber_onion)?.is_none()
+            {
+                return Ok(());
             }
 
             let channel_id = if channel_type_str == "public" { 1 } else { 2 };

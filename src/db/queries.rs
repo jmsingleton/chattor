@@ -8,6 +8,7 @@ pub struct FriendEntry {
     pub friend_id: i64,
     pub onion_address: String,
     pub display_name: Option<String>,
+    #[allow(dead_code)]
     pub conversation_id: Option<i64>,
     pub unread_count: i64,
 }
@@ -40,7 +41,9 @@ pub struct PendingFriendRequest {
 /// A message for the conversation view
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
+    #[allow(dead_code)]
     pub id: i64,
+    #[allow(dead_code)]
     pub message_id: String,
     pub sender_onion: String,
     pub content: String,
@@ -143,6 +146,7 @@ pub fn get_messages(db: &Database, conversation_id: i64, limit: usize, offset: u
 }
 
 /// Store an outgoing message
+#[allow(dead_code)]
 pub fn store_outgoing_message(
     db: &Database,
     conversation_id: i64,
@@ -177,6 +181,7 @@ pub fn store_outgoing_message_with_ttl(
 }
 
 /// Store an incoming message
+#[allow(dead_code)]
 pub fn store_incoming_message(
     db: &Database,
     conversation_id: i64,
@@ -357,7 +362,9 @@ pub fn activate_ephemeral_timers(db: &Database, conversation_id: i64) -> Result<
 /// A channel post for display
 #[derive(Debug, Clone)]
 pub struct ChannelPost {
+    #[allow(dead_code)]
     pub id: i64,
+    #[allow(dead_code)]
     pub channel_id: i64,
     pub content: String,
     pub post_id: String,
@@ -368,9 +375,11 @@ pub struct ChannelPost {
 /// A channel subscription entry (subscriber side)
 #[derive(Debug, Clone)]
 pub struct ChannelSubscription {
+    #[allow(dead_code)]
     pub id: i64,
     pub publisher_onion: String,
     pub channel_type: String,
+    #[allow(dead_code)]
     pub subscribed_at: i64,
     pub last_sync_at: Option<i64>,
 }
@@ -506,6 +515,7 @@ pub fn add_channel_subscription(db: &Database, publisher_onion: &str, channel_ty
 }
 
 /// Remove a channel subscription
+#[allow(dead_code)]
 pub fn remove_channel_subscription(db: &Database, publisher_onion: &str, channel_type: &str) -> Result<()> {
     db.connection().execute(
         "DELETE FROM channel_subscriptions WHERE publisher_onion = ?1 AND channel_type = ?2",

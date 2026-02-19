@@ -6,10 +6,12 @@ use std::sync::Arc;
 use base64::Engine;
 
 /// Handles receiving and decrypting messages
+#[allow(dead_code)]
 pub struct MessageReceiver {
     db: Arc<Database>,
 }
 
+#[allow(dead_code)]
 impl MessageReceiver {
     /// Create new message receiver
     pub fn new(db: Arc<Database>) -> Self {

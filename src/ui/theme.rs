@@ -2,6 +2,7 @@ use ratatui::style::Color;
 
 /// All colors used across the UI, grouped by component.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Theme {
     pub name: String,
 
@@ -82,6 +83,7 @@ impl Theme {
     }
 
     /// List all available preset names.
+    #[allow(dead_code)]
     pub fn preset_names() -> &'static [&'static str] {
         &["dark", "light", "cyberpunk", "minimal", "rose-pine", "rose-pine-moon", "rose-pine-dawn"]
     }

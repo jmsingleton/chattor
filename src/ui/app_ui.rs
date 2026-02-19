@@ -13,6 +13,7 @@ pub struct RenderContext {
     pub friends: Vec<FriendEntry>,
     pub messages: Vec<ChatMessage>,
     pub own_onion: Option<String>,
+    #[allow(dead_code)]
     pub friend_code: Option<String>,
     pub tor_connected: bool,
     pub pending_request_count: i64,
@@ -112,7 +113,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
 
         // Conversation
         let friend_is_typing = selected_friend
-            .map(|f| ctx.presence.get(&f.onion_address).map_or(false, |(_, typing)| *typing))
+            .map(|f| ctx.presence.get(&f.onion_address).is_some_and(|(_, typing)| *typing))
             .unwrap_or(false);
 
         crate::ui::conversation::render_conversation(

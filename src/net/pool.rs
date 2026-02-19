@@ -110,6 +110,7 @@ impl ConnectionPool {
     }
 
     /// Explicitly remove a cached connection for a peer.
+    #[allow(dead_code)]
     pub async fn evict(&self, peer_onion: &str) {
         let mut conns = self.connections.lock().await;
         conns.remove(peer_onion);
