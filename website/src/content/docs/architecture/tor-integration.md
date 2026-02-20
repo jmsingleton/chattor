@@ -34,12 +34,14 @@ This mapping is deterministic (same code always produces the same address) and o
 
 ## Connection Pool
 
-Building a Tor circuit takes 10-30 seconds. To avoid this per-message latency, chattor maintains a **connection pool** (`src/net/pool.rs`):
+Building a Tor circuit takes 10-30 seconds. To avoid this per-message latency, chattor maintains a **connection pool** (`src/net/pool.rs`) using DashMap for lock-free concurrent access:
 
-- **Per-peer caching**: One cached circuit per peer
+- **Per-peer caching**: One cached circuit per peer, max 50 connections
 - **Idle eviction**: Unused connections are dropped after 5 minutes
 - **Retry-on-stale**: If a cached circuit is dead, it's evicted and a fresh one is built
 - **Timeouts**: 30s for circuit building, 10s for message sending
+
+Inbound messages are also protected by a **per-peer rate limiter** (`src/net/rate_limit.rs`) — a token bucket allowing 5 messages/second sustained with a burst of 20, preventing any single peer from overwhelming the receiver.
 
 ## Message Delivery
 
