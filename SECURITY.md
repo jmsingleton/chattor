@@ -28,13 +28,15 @@ Include as much detail as possible:
 
 The following areas are in scope for security reports:
 
-- **Signal Protocol implementation** — key exchange, Double Ratchet, message
-  encryption/decryption
+- **Signal Protocol implementation** — X3DH key exchange and Double Ratchet via
+  `libsignal-dezire` (AGPL-3.0). Real cryptographic key agreement and ratcheting;
+  no plaintext fallback. Session state is serialized and persisted in SQLCipher.
 - **Database encryption** — SQLCipher key derivation, at-rest encryption
 - **Identity and key management** — Ed25519 keypair generation, storage, .onion
   derivation
 - **Tor integration** — hidden service configuration, connection handling
-- **Protocol handling** — message parsing, deserialization, input validation
+- **Protocol handling** — message parsing, deserialization, MessageEnvelope
+  versioning, input validation
 - **Local data leakage** — unencrypted data in logs, temp files, or memory
 
 ## Out of Scope

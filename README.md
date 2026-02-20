@@ -32,14 +32,16 @@ You → TUI (ratatui) → Signal Protocol (E2E) → Tor Hidden Service → Peer
 
 ### Encryption & Identity
 
-- **Signal Protocol** — X3DH key exchange + ChaCha20-Poly1305, implemented with `x25519-dalek` and `chacha20poly1305` (not a binding to libsignal-c)
+- **Signal Protocol** — real X3DH key exchange + Double Ratchet, implemented with [`libsignal-dezire`](https://crates.io/crates/libsignal-dezire) (AGPL-3.0)
+- **Protocol versioning** — MessageEnvelope wrapper for future wire format evolution
 - **Ed25519 identity** — one keypair per user, stored encrypted; `.onion` address managed by arti
 - **SQLCipher** — database encrypted at rest with bundled SQLCipher (via `rusqlite`)
 
 ### Networking
 
 - **Pure P2P over Tor** — each user hosts a real arti onion service; no central relay, no NAT traversal headaches
-- **Connection pooling** — per-peer Tor circuit caching with idle eviction (5min) and retry-on-stale
+- **Connection pooling** — per-peer Tor circuit caching with DashMap, idle eviction (5min), retry-on-stale, and pool size cap (50)
+- **Rate limiting** — per-peer token bucket rate limiter (5 req/s sustained, 20 burst)
 - **Offline message queue** — FIFO queue with exponential backoff retries, persisted to database
 - **Friend codes** — 32-word mnemonic encoding of your public key (256-word list, 8 groups of 4 words)
 
@@ -66,11 +68,11 @@ You → TUI (ratatui) → Signal Protocol (E2E) → Tor Hidden Service → Peer
 
 A few pieces that were particularly interesting to build:
 
-**Signal Protocol from scratch** — X3DH key exchange built with `x25519-dalek` and `chacha20poly1305`, not a binding to libsignal-c. PreKey bundles are exchanged during friend request accept; the initiator sends a handshake PreKey message so the acceptor can establish their session. Plaintext fallback was removed entirely — no session, no message.
+**Signal Protocol via libsignal-dezire** — Real X3DH key exchange and Double Ratchet implemented with `libsignal-dezire`, a pure-Rust Signal Protocol library. PreKey bundles are exchanged during friend request accept; the initiator sends a handshake PreKey message so the acceptor can establish their session. Messages are wrapped in versioned `MessageEnvelope`s for forward compatibility. Plaintext fallback was removed entirely — no session, no message.
 
 **Embedded Tor via arti** — Real Tor onion services hosted via the pure-Rust `arti` library. Each peer's `.onion` address persists across restarts (stored in arti's state directory and cached in the database). Connection pooling reuses Tor circuits per peer, with automatic retry-on-stale and idle eviction.
 
-**Encrypted database with full-text search** — SQLCipher provides at-rest encryption. FTS5 virtual tables with auto-sync triggers keep the search index up to date without manual bookkeeping. Schema migrations run automatically from v2 through v8.
+**Encrypted database with full-text search** — SQLCipher provides at-rest encryption. FTS5 virtual tables with auto-sync triggers keep the search index up to date without manual bookkeeping. Schema migrations run automatically from v2 through v9.
 
 **Theme engine** — A `Theme` struct with named color fields, 7 preset palettes, and TOML config file support. Every UI component references the theme, so swapping palettes is a single config change or CLI flag.
 
@@ -123,7 +125,7 @@ cargo run -- --config-dir /tmp/bob
 | 5 | Crypto & Identity Hardening | Done |
 | 6 | Hardening | Done |
 
-All layers are real and tested: crypto (Signal Protocol X3DH + ChaCha20-Poly1305), Tor transport (embedded arti with real onion services), database (SQLCipher), UI (ratatui), message queue (exponential backoff), and connection pooling (per-peer Tor circuit caching). 208 tests pass including 6 end-to-end tests covering the full friend-request → X3DH session → bidirectional messaging pipeline.
+All layers are real and tested: crypto (Signal Protocol X3DH + Double Ratchet via libsignal-dezire), Tor transport (embedded arti with real onion services), database (SQLCipher), UI (ratatui), message queue (exponential backoff), and connection pooling (DashMap with per-peer Tor circuit caching). 252 tests pass including 6 end-to-end tests covering the full friend-request → X3DH session → bidirectional messaging pipeline.
 
 ---
 
@@ -140,23 +142,24 @@ src/
 ├── main.rs                 # Entry point, event loop, key handling
 ├── crypto/
 │   ├── identity.rs         # Ed25519 keypair management
-│   ├── signal.rs           # Signal Protocol (X3DH + ChaCha20-Poly1305)
+│   ├── signal.rs           # Signal Protocol (X3DH + Double Ratchet via libsignal-dezire)
 │   └── session_store.rs    # Signal session persistence
 ├── db/
-│   ├── connection.rs       # SQLCipher database + migrations (v2→v8)
+│   ├── connection.rs       # SQLCipher database + migrations (v2→v9)
 │   ├── queries.rs          # All database queries
-│   └── schema.rs           # Schema definitions (v8)
+│   └── schema.rs           # Schema definitions (v9)
 ├── net/
 │   ├── framing.rs          # TCP length-prefixed message framing
 │   ├── listener.rs         # Incoming connection listener (Tor rendezvous)
-│   ├── pool.rs             # Per-peer Tor circuit caching + idle eviction
+│   ├── pool.rs             # Per-peer Tor circuit caching (DashMap) + idle eviction
 │   ├── queue.rs            # Offline message queue with exponential backoff
+│   ├── rate_limit.rs       # Per-peer token bucket rate limiter
 │   ├── receiver.rs         # Message receiving + decryption
 │   └── sender.rs           # Message sending
 ├── protocol/
 │   ├── friend_code.rs      # 32-word mnemonic friend codes
 │   ├── friend_request.rs   # Friend request protocol
-│   └── message.rs          # Wire protocol (12 message types)
+│   └── message.rs          # Wire protocol (13 message types + MessageEnvelope)
 ├── tor/
 │   ├── address.rs          # .onion address utilities
 │   ├── client.rs           # Tor client wrapper (arti)

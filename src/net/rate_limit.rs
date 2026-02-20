@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -25,7 +27,6 @@ impl RateLimiter {
         }
     }
 
-    #[allow(dead_code)]
     pub fn default_limiter() -> Self {
         Self::new(DEFAULT_RATE as u32, DEFAULT_BURST)
     }
