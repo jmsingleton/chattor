@@ -229,7 +229,7 @@ async fn main() -> Result<()> {
                 let app_lock = app_heartbeat.lock().await;
                 if let Some(ref pool) = app_lock.connection_pool {
                     let own_onion = app_lock.onion_address.clone().unwrap_or_default();
-                    let peers = pool.connected_peers().await;
+                    let peers = pool.connected_peers();
                     drop(app_lock);
 
                     let now = std::time::SystemTime::now()
