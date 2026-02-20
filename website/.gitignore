@@ -1,0 +1,2 @@
+# Most website ignores are handled by the parent .gitignore:
+#   node_modules/, website/dist/, website/.astro/

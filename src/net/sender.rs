@@ -1,5 +1,5 @@
 use crate::db::Database;
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::crypto::SessionStore;
 use crate::protocol::message::*;
 use crate::tor::connection::TorConnection;
@@ -32,7 +32,7 @@ impl MessageSender {
 
         // Load session
         let mut session = store.load_session(to_onion)?
-            .ok_or_else(|| TorrentChatError::Crypto("No session found".into()))?;
+            .ok_or_else(|| ChattorError::Crypto("No session found".into()))?;
 
         // Create plaintext payload
         let payload = PlaintextPayload {
@@ -46,10 +46,10 @@ impl MessageSender {
         };
 
         let plaintext = serde_json::to_vec(&payload)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to serialize: {}", e)))?;
+            .map_err(|e| ChattorError::Crypto(format!("Failed to serialize: {}", e)))?;
 
-        // Encrypt with Signal
-        let (ciphertext, is_prekey) = session.encrypt(&plaintext)?;
+        // Encrypt with Signal (Double Ratchet)
+        let (header, ciphertext, is_prekey) = session.encrypt(&plaintext)?;
 
         // Update session in database
         store.store_session(&session)?;
@@ -58,6 +58,7 @@ impl MessageSender {
         let message = TextMessage {
             from_onion: from_onion.to_string(),
             to_onion: to_onion.to_string(),
+            signal_header: base64::engine::general_purpose::STANDARD.encode(&header),
             signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
             signal_type: if is_prekey {
                 SignalMessageType::PrekeyMessage
@@ -66,6 +67,7 @@ impl MessageSender {
             },
             timestamp: payload.sent_at,
             message_id: Uuid::new_v4(),
+            x3dh_init: None,
         };
 
         Ok(message)
@@ -98,7 +100,7 @@ impl MessageSender {
         conn.execute(
             "UPDATE messages SET status = 'delivered' WHERE message_id = ?1",
             [receipt.message_id.to_string()],
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to update status: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to update status: {}", e)))?;
 
         Ok(())
     }
@@ -109,21 +111,29 @@ mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
+    /// Helper: generate an X25519 Signal identity keypair for tests.
+    fn gen_signal_identity() -> ([u8; 32], [u8; 32]) {
+        let kp = libsignal_protocol::vxeddsa::gen_keypair();
+        let raw_pub = libsignal_protocol::utils::decode_public_key(&kp.public).unwrap();
+        (kp.secret, raw_pub)
+    }
+
     #[tokio::test]
     async fn test_send_encrypted_message() {
         let temp_db = NamedTempFile::new().unwrap();
         let db = crate::db::Database::open(temp_db.path()).unwrap();
 
-        // Create real session
-        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let (bob_bundle, bob_private) = crate::crypto::PreKeyBundle::generate_real(&bob_identity).unwrap();
+        // Create real session using X3DH + Double Ratchet
+        let (alice_signal_secret, _) = gen_signal_identity();
+        let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
+        let (bob_bundle, bob_private) =
+            crate::crypto::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
 
-        let session = crate::crypto::SignalSession::from_prekey_bundle_real(
+        let (session, _ad, _eph) = crate::crypto::SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),
             &bob_bundle,
             &bob_private,
-            &alice_identity,
+            &alice_signal_secret,
         ).unwrap();
 
         let store = crate::crypto::SessionStore::new(&db);
@@ -147,16 +157,17 @@ mod tests {
         let temp_db = NamedTempFile::new().unwrap();
         let db = Arc::new(crate::db::Database::open(temp_db.path()).unwrap());
 
-        // Create real session
-        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let (bob_bundle, bob_private) = crate::crypto::PreKeyBundle::generate_real(&bob_identity).unwrap();
+        // Create real session using X3DH + Double Ratchet
+        let (alice_signal_secret, _) = gen_signal_identity();
+        let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
+        let (bob_bundle, bob_private) =
+            crate::crypto::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
 
-        let session = crate::crypto::SignalSession::from_prekey_bundle_real(
+        let (session, _ad, _eph) = crate::crypto::SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),
             &bob_bundle,
             &bob_private,
-            &alice_identity,
+            &alice_signal_secret,
         ).unwrap();
 
         let store = crate::crypto::SessionStore::new(&db);

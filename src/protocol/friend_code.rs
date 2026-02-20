@@ -1,4 +1,4 @@
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 
 /// 256-word list for encoding bytes as human-readable words.
 /// Each word maps to exactly one byte value (0-255), making encoding/decoding trivial.
@@ -86,7 +86,7 @@ pub fn friend_code_to_onion(code: &str) -> Result<String> {
         .collect();
 
     if words.len() != 32 {
-        return Err(TorrentChatError::Crypto(
+        return Err(ChattorError::Crypto(
             format!("Friend code must be 32 words, got {}", words.len())
         ));
     }
@@ -95,7 +95,7 @@ pub fn friend_code_to_onion(code: &str) -> Result<String> {
     let mut pubkey = [0u8; 32];
     for (i, word) in words.iter().enumerate() {
         let idx = WORDS.iter().position(|w| w == word)
-            .ok_or_else(|| TorrentChatError::Crypto(
+            .ok_or_else(|| ChattorError::Crypto(
                 format!("Unknown word in friend code: '{}'", word)
             ))?;
         pubkey[i] = idx as u8;
@@ -113,14 +113,14 @@ pub fn validate_friend_code(code: &str) -> Result<()> {
         .collect();
 
     if words.len() != 32 {
-        return Err(TorrentChatError::Crypto(
+        return Err(ChattorError::Crypto(
             format!("Friend code must be 32 words, got {}", words.len())
         ));
     }
 
     for word in &words {
         if !WORDS.contains(word) {
-            return Err(TorrentChatError::Crypto(
+            return Err(ChattorError::Crypto(
                 format!("Unknown word in friend code: '{}'", word)
             ));
         }
@@ -132,26 +132,26 @@ pub fn validate_friend_code(code: &str) -> Result<()> {
 /// Extract the 32-byte Ed25519 public key from a v3 .onion address.
 pub(crate) fn onion_to_pubkey(onion: &str) -> Result<[u8; 32]> {
     let addr = onion.strip_suffix(".onion")
-        .ok_or_else(|| TorrentChatError::Crypto("Missing .onion suffix".into()))?;
+        .ok_or_else(|| ChattorError::Crypto("Missing .onion suffix".into()))?;
 
     if addr.len() != 56 {
-        return Err(TorrentChatError::Crypto(
+        return Err(ChattorError::Crypto(
             format!("Invalid onion address length: expected 56 chars, got {}", addr.len())
         ));
     }
 
     let decoded = base32::decode(base32::Alphabet::RFC4648 { padding: false }, &addr.to_uppercase())
-        .ok_or_else(|| TorrentChatError::Crypto("Invalid base32 in onion address".into()))?;
+        .ok_or_else(|| ChattorError::Crypto("Invalid base32 in onion address".into()))?;
 
     if decoded.len() != 35 {
-        return Err(TorrentChatError::Crypto(
+        return Err(ChattorError::Crypto(
             format!("Invalid decoded length: expected 35 bytes, got {}", decoded.len())
         ));
     }
 
     // Verify version byte
     if decoded[34] != 0x03 {
-        return Err(TorrentChatError::Crypto("Not a v3 onion address".into()));
+        return Err(ChattorError::Crypto("Not a v3 onion address".into()));
     }
 
     let mut pubkey = [0u8; 32];

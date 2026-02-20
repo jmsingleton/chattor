@@ -1,0 +1,17 @@
+{
+  "name": "chattor-website",
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "astro": "^5",
+    "@astrojs/starlight": "^0.34"
+  }
+}

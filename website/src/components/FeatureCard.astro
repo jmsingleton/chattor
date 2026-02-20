@@ -1,0 +1,50 @@
+---
+// website/src/components/FeatureCard.astro
+interface Props {
+  icon: string;
+  title: string;
+  description: string;
+}
+
+const { icon, title, description } = Astro.props;
+---
+
+<div class="feature-card">
+  <span class="feature-icon">{icon}</span>
+  <h3>{title}</h3>
+  <p>{description}</p>
+</div>
+
+<style>
+  .feature-card {
+    background: #1f1d2e;
+    border: 1px solid #6e6a86;
+    border-radius: 8px;
+    padding: 1.5rem;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .feature-card:hover {
+    border-color: #c4a7e7;
+    box-shadow: 0 0 12px #c4a7e720;
+  }
+
+  .feature-icon {
+    font-size: 1.5rem;
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+
+  h3 {
+    color: #e0def4;
+    font-size: 1.1rem;
+    margin: 0 0 0.5rem 0;
+  }
+
+  p {
+    color: #908caa;
+    font-size: 0.9rem;
+    margin: 0;
+    line-height: 1.5;
+  }
+</style>

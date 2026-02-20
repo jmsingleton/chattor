@@ -3,10 +3,15 @@
 All notable changes to chattor are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [Unreleased] — Architectural Hardening
 
 ### Added
-- Real Tor hidden service integration via arti (in progress)
+- **Signal Protocol via libsignal-dezire** — replaced hand-rolled crypto with real X3DH + Double Ratchet from `libsignal-dezire` (AGPL-3.0)
+- **MessageEnvelope** — versioned wire format wrapper (`protocol_version: 1`) for forward compatibility
+- **Per-peer rate limiting** — token bucket rate limiter (5 req/s sustained, 20 burst) in `net/rate_limit.rs`
+- **DashMap connection pool** — lock-free concurrent access replaces `Mutex<HashMap>`, with MAX_POOL_SIZE (50) cap and oldest-idle eviction
+- **Schema v9 migration** — wipes stale Signal sessions from previous crypto implementation
+- Real Tor hidden service integration via arti
 - App settings table with schema v8 migration for .onion persistence
 - Shell completions for bash, zsh, and fish (`completions/`)
 - Hand-written man page (`man/chattor.1`)
@@ -16,10 +21,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `.gitignore` coverage for macOS, keys, logs, profiling data
 
 ### Changed
+- **CHATTOR_PORT** changed from 9051 to 9735 (avoids confusion with Tor control port)
+- **ChattorError** — renamed from `TorrentChatError` across all 21 source files
+- **Signal wire format** — TextMessage now carries `signal_header` (Double Ratchet header) alongside `signal_ciphertext`
 - Vanity mining system removed — arti now manages .onion keys directly
 - Cargo.toml metadata cleaned up (repository, keywords, categories, MSRV)
 
 ### Removed
+- `anyhow` dependency (unused; error handling is thiserror-only)
+- `chacha20poly1305`, `hkdf`, `sha2` dependencies (replaced by libsignal-dezire internals)
+- Hand-rolled Signal Protocol code (encrypt/decrypt/x3dh) — replaced by libsignal-dezire
 - Stale progress docs (Phase 1-2b) — superseded by CLAUDE.md
 - Dead code: QueueProcessor, ConnectionPool, MiningActive state
 - Stale TODOs and misleading MVP comments
@@ -71,4 +82,4 @@ Initial development release covering Phases 1-5.
 - Friend code generation and validation
 - Settings management with platform-specific paths
 - Basic TUI with ratatui (friends sidebar, conversation view)
-- Error handling with `TorrentChatError` domain types
+- Error handling with `ChattorError` domain types

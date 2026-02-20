@@ -18,7 +18,7 @@ The plan files contain the source of truth for what needs to be built and how. A
 
 **chattor** is a privacy-first TUI (Terminal User Interface) chat application built in Rust. The architecture is pure peer-to-peer over Tor hidden services with no central servers. Each user runs their own hidden service (.onion address) for receiving messages, with end-to-end encryption via Signal Protocol (Double Ratchet).
 
-**Current Status:** All phases complete plus UX polish. Real arti Tor transport, Signal Protocol X3DH, connection pooling, presence system (typing indicators + online status), desktop notifications, and comprehensive e2e test coverage. Distribution packaging available (deb, rpm, AUR, Homebrew).
+**Current Status:** All phases complete plus architectural hardening. Real arti Tor transport, Signal Protocol X3DH + Double Ratchet via libsignal-dezire, DashMap connection pooling with rate limiting, presence system (typing indicators + online status), desktop notifications, and comprehensive e2e test coverage. Distribution packaging available (deb, rpm, AUR, Homebrew).
 
 **Core Design Principles:**
 - Privacy-first: No central servers, no telemetry, no metadata leakage
@@ -40,7 +40,7 @@ cargo run -- --theme cyberpunk  # Run with a specific theme
 
 ### Testing
 ```bash
-cargo test                            # Run all tests (~226 currently)
+cargo test                            # Run all tests (~252 currently)
 cargo test protocol::message          # Run specific module tests
 cargo test --test integration         # Integration tests only
 cargo test --test e2e_messaging       # E2E crypto/messaging tests (no Tor needed)
@@ -63,7 +63,7 @@ rm -rf ~/.local/share/chattor/
 sqlite3 ~/Library/Application\ Support/chattor/messages.db
 # .schema messages       # View table structure
 # .tables                # List all tables
-# SELECT * FROM schema_version;  # Current schema version (should be 8)
+# SELECT * FROM schema_version;  # Current schema version (should be 9)
 ```
 
 ### Linting & Formatting
@@ -97,16 +97,17 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - `App::new()` initializes everything synchronously (Tor init is async via `init_tor()`)
 
 **2. Database Layer (`src/db/`)**
-- Schema version 8 - see `src/db/schema.rs`
+- Schema version 9 - see `src/db/schema.rs`
 - SQLCipher for at-rest encryption (bundled via rusqlite)
 - Key tables: `friends`, `conversations`, `messages`, `message_queue`, `signal_sessions`, `blocked_onions`
 - Channel tables: `channels`, `channel_posts`, `channel_subscribers`, `channel_subscriptions`, `channel_post_receipts`
 - FTS5 virtual table (`messages_fts`) for full-text search with auto-sync triggers
-- Automatic migrations from v2 through v8 in `src/db/connection.rs`
+- Automatic migrations from v2 through v9 in `src/db/connection.rs`
 
 **3. Identity & Crypto (`src/crypto/`)**
 - Ed25519 keypair for identity and signing (`identity.rs`)
-- Signal Protocol with real X3DH key exchange and ChaCha20-Poly1305 encryption (`signal.rs`)
+- Signal Protocol with real X3DH key exchange and Double Ratchet via `libsignal-dezire` (`signal.rs`)
+- RatchetState wraps libsignal-dezire's `SessionState` for encrypt/decrypt/serialize
 - Identity key used for signing; .onion address managed by arti (not derived from identity key)
 
 **4. Tor Integration (`src/tor/`)**
@@ -122,7 +123,8 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - `PresenceType` enum: `Heartbeat`, `TypingStarted`, `TypingStopped`
 - `ChannelType` enum: `Public`, `FriendsOnly`
 - JSON serialization with serde for wire protocol
-- Signal Protocol envelope: `signal_ciphertext`, `signal_type` (PreKeyMessage or Message)
+- `MessageEnvelope` wrapper with `protocol_version: 1` for forward compatibility
+- Signal Protocol envelope: `signal_header` (Double Ratchet), `signal_ciphertext`, `signal_type` (PreKeyMessage or Message)
 
 **6. Message Queue (`src/net/queue.rs`)**
 - FIFO queue for offline message delivery
@@ -132,10 +134,17 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - Filters by destination .onion address
 
 **7. Connection Pool (`src/net/pool.rs`)**
+- Uses `DashMap` for lock-free concurrent access (no async mutex)
 - Caches Tor circuits per peer for reuse (avoids 10-30s circuit build per message)
+- MAX_POOL_SIZE (50) with oldest-idle eviction when at capacity
 - Retry-on-stale: evicts dead connections and retries once with fresh circuit
 - Background cleanup: idle connections evicted after 5 minutes
 - Timeouts: 30s circuit build, 10s message send
+
+**7b. Rate Limiter (`src/net/rate_limit.rs`)**
+- Per-peer token bucket rate limiter for inbound messages
+- Default: 5 tokens/sec sustained, 20 burst
+- Independent buckets per peer (one peer's abuse doesn't affect others)
 
 **8. UI Layer (`src/ui/`)**
 - Full TUI with ratatui: friends sidebar, conversation view, channel feed
@@ -196,7 +205,7 @@ Database path: `{data_dir}/messages.db`
 **What's Real (Phase 2b + Phase 5 + Phase 6):**
 - `TorClient::new_with_data_dir()` - real arti bootstrap with persistent state
 - `HiddenService::launch()` - real arti onion service hosting
-- `SignalSession::encrypt()` / `decrypt()` - real ChaCha20-Poly1305 encryption (plaintext fallback removed)
+- `SignalSession::encrypt()` / `decrypt()` - real Double Ratchet via libsignal-dezire (plaintext fallback removed)
 - X3DH key exchange via `from_prekey_bundle_real()` / `from_prekey_message_real()`
 - TCP framing layer for message I/O
 
@@ -261,6 +270,16 @@ Database path: `{data_dir}/messages.db`
 - Distribution packaging: deb, rpm, AUR (chattor-bin + chattor-git), Homebrew formula
 - CI release workflow for automated package builds
 
+### Architectural Hardening ✅
+- Signal Protocol replaced with libsignal-dezire (real X3DH + Double Ratchet)
+- MessageEnvelope with protocol versioning for wire format evolution
+- Schema v9 migration wipes stale sessions
+- DashMap connection pool (lock-free, MAX_POOL_SIZE 50)
+- Per-peer rate limiting (token bucket, 5 req/s sustained, 20 burst)
+- CHATTOR_PORT changed to 9735
+- TorrentChatError renamed to ChattorError
+- Removed unused dependencies (anyhow, chacha20poly1305, hkdf, sha2)
+
 ### Future Work
 - Backup/restore functionality
 - File transfer support
@@ -268,7 +287,7 @@ Database path: `{data_dir}/messages.db`
 ## Important Technical Details
 
 ### Database Schema Migrations
-- Automatic migrations from v2 through v8 in `src/db/connection.rs::Database::initialize()`
+- Automatic migrations from v2 through v9 in `src/db/connection.rs::Database::initialize()`
 - Each version has a `migrate_to_vN()` method that checks current version and applies changes
 - Migrations run before `CREATE_TABLES` (which uses `IF NOT EXISTS` for idempotency)
 - v3: Clear old Signal sessions (production crypto migration)
@@ -277,6 +296,7 @@ Database path: `{data_dir}/messages.db`
 - v6: Add ephemeral message columns (`expires_at`, `ephemeral_ttl`)
 - v7: Add 5 broadcast channel tables
 - v8: Add `app_settings` key-value table for .onion address persistence
+- v9: Wipe signal_sessions (libsignal-dezire format incompatible with old hand-rolled crypto)
 
 ### Tor Hidden Service Identity
 - .onion address generated and managed by arti (v3 onion format, persistent via arti state dir)
@@ -294,7 +314,7 @@ Database path: `{data_dir}/messages.db`
 ### Message Flow
 1. User composes message
 2. Encrypt with Signal Protocol (per-conversation session)
-3. Wrap in JSON envelope with `signal_ciphertext` (base64) and `signal_type` (PreKeyMessage or Message)
+3. Wrap in MessageEnvelope with `signal_header`, `signal_ciphertext` (base64) and `signal_type` (PreKeyMessage or Message)
 4. Send via ConnectionPool (reuses cached Tor circuit or creates new one)
 5. If offline: enqueue in `message_queue` table
 6. Background task retries with exponential backoff (30s→15min, 24h expiry)
@@ -302,16 +322,16 @@ Database path: `{data_dir}/messages.db`
 8. Stores in `messages` table; FTS triggers auto-update `messages_fts` for search
 
 ### Testing Strategy
-- **Unit tests:** Per-module in `#[cfg(test)]` blocks (~204 tests)
+- **Unit tests:** Per-module in `#[cfg(test)]` blocks (~230 tests)
 - **Integration tests:** `tests/integration/` (cross-module interaction, 16 tests including presence)
-- **E2E tests:** `tests/e2e_messaging.rs` (full Signal Protocol pipeline, offline, 6 tests)
+- **E2E tests:** `tests/e2e_messaging.rs` (full Signal Protocol pipeline via libsignal-dezire, 6 tests)
 - **Database tests:** Use tempfile crate for isolated test databases
 - **No stubs:** Tor client, hidden service, Signal crypto, and friend request signatures are all real. TorConnection sends over real arti DataStreams via ConnectionPool.
 
 ## Key Files to Understand
 
 - `src/app.rs` - Central application state and initialization
-- `src/db/schema.rs` - Complete database schema (version 8)
+- `src/db/schema.rs` - Complete database schema (version 9)
 - `src/db/queries.rs` - All database queries including channel operations
 - `src/protocol/message.rs` - All message types and wire format (13 types)
 - `src/net/queue.rs` - Offline message delivery queue with exponential backoff
@@ -328,8 +348,8 @@ Database path: `{data_dir}/messages.db`
 ## Common Patterns
 
 ### Error Handling
-- Use `crate::error::Result<T>` (alias for `Result<T, TorrentChatError>`)
-- Domain errors: `TorrentChatError::{Database, Crypto, Tor, Network, Io}`
+- Use `crate::error::Result<T>` (alias for `Result<T, ChattorError>`)
+- Domain errors: `ChattorError::{Database, Crypto, Tor, Network, Io}`
 - Propagate with `?` operator, wrap external errors with `.map_err()`
 
 ### Database Operations

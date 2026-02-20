@@ -4,7 +4,7 @@
 //! as JSON and persists them in the database for reliable delivery.
 
 use crate::db::Database;
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::protocol::message::Message;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -48,7 +48,7 @@ impl MessageQueue {
             .as_secs() as i64;
 
         let message_json = serde_json::to_string(message).map_err(|e| {
-            TorrentChatError::Database(format!("Failed to serialize message: {}", e))
+            ChattorError::Database(format!("Failed to serialize message: {}", e))
         })?;
 
         conn.execute(
@@ -56,7 +56,7 @@ impl MessageQueue {
              VALUES (?1, ?2, ?3, 0, ?4, ?5, 'pending')",
             rusqlite::params![peer_onion, message_json, priority, now, now],
         )
-        .map_err(|e| TorrentChatError::Database(format!("Failed to enqueue message: {}", e)))?;
+        .map_err(|e| ChattorError::Database(format!("Failed to enqueue message: {}", e)))?;
 
         let id = conn.last_insert_rowid();
         Ok(id)
@@ -80,7 +80,7 @@ impl MessageQueue {
                  ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at ASC",
             )
             .map_err(|e| {
-                TorrentChatError::Database(format!("Failed to prepare statement: {}", e))
+                ChattorError::Database(format!("Failed to prepare statement: {}", e))
             })?;
 
         // Collect raw rows first, then deserialize outside of query_map
@@ -97,17 +97,17 @@ impl MessageQueue {
                 ))
             })
             .map_err(|e| {
-                TorrentChatError::Database(format!("Failed to query messages: {}", e))
+                ChattorError::Database(format!("Failed to query messages: {}", e))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| {
-                TorrentChatError::Database(format!("Failed to collect messages: {}", e))
+                ChattorError::Database(format!("Failed to collect messages: {}", e))
             })?;
 
         let mut messages = Vec::with_capacity(raw_rows.len());
         for (id, peer_onion, message_json, retry_count, priority, created_at) in raw_rows {
             let message: Message = serde_json::from_str(&message_json).map_err(|e| {
-                TorrentChatError::Database(format!(
+                ChattorError::Database(format!(
                     "Failed to deserialize message_json for queue id {}: {}",
                     id, e
                 ))
@@ -133,7 +133,7 @@ impl MessageQueue {
             [id],
         )
         .map_err(|e| {
-            TorrentChatError::Database(format!("Failed to mark message delivered: {}", e))
+            ChattorError::Database(format!("Failed to mark message delivered: {}", e))
         })?;
         Ok(())
     }
@@ -146,7 +146,7 @@ impl MessageQueue {
             [id],
         )
         .map_err(|e| {
-            TorrentChatError::Database(format!("Failed to mark message failed: {}", e))
+            ChattorError::Database(format!("Failed to mark message failed: {}", e))
         })?;
         Ok(())
     }
@@ -166,7 +166,7 @@ impl MessageQueue {
             rusqlite::params![next_retry_at, id],
         )
         .map_err(|e| {
-            TorrentChatError::Database(format!("Failed to schedule retry: {}", e))
+            ChattorError::Database(format!("Failed to schedule retry: {}", e))
         })?;
         Ok(())
     }

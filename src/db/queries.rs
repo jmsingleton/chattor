@@ -1,5 +1,5 @@
 use crate::db::Database;
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use rusqlite::params;
 
 /// A friend entry for the sidebar
@@ -66,7 +66,7 @@ pub fn get_friends_with_unread(db: &Database) -> Result<Vec<FriendEntry>> {
          LEFT JOIN conversations c ON c.friend_id = f.id
          WHERE f.status = 'active'
          ORDER BY f.display_name, f.onion_address"
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to prepare friends query: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to prepare friends query: {}", e)))?;
 
     let entries = stmt.query_map([], |row| {
         Ok(FriendEntry {
@@ -76,9 +76,9 @@ pub fn get_friends_with_unread(db: &Database) -> Result<Vec<FriendEntry>> {
             conversation_id: row.get(3)?,
             unread_count: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
         })
-    }).map_err(|e| TorrentChatError::Database(format!("Failed to query friends: {}", e)))?
+    }).map_err(|e| ChattorError::Database(format!("Failed to query friends: {}", e)))?
     .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| TorrentChatError::Database(format!("Failed to collect friends: {}", e)))?;
+    .map_err(|e| ChattorError::Database(format!("Failed to collect friends: {}", e)))?;
 
     Ok(entries)
 }
@@ -105,7 +105,7 @@ pub fn get_or_create_conversation(db: &Database, friend_id: i64) -> Result<i64> 
             conn.execute(
                 "INSERT INTO conversations (friend_id, is_ephemeral, created_at) VALUES (?1, 0, ?2)",
                 params![friend_id, now],
-            ).map_err(|e| TorrentChatError::Database(format!("Failed to create conversation: {}", e)))?;
+            ).map_err(|e| ChattorError::Database(format!("Failed to create conversation: {}", e)))?;
 
             Ok(conn.last_insert_rowid())
         }
@@ -121,7 +121,7 @@ pub fn get_messages(db: &Database, conversation_id: i64, limit: usize, offset: u
          WHERE conversation_id = ?1
          ORDER BY timestamp DESC, id DESC
          LIMIT ?2 OFFSET ?3"
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to prepare messages query: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to prepare messages query: {}", e)))?;
 
     let mut messages: Vec<ChatMessage> = stmt.query_map(
         params![conversation_id, limit as i64, offset as i64],
@@ -136,9 +136,9 @@ pub fn get_messages(db: &Database, conversation_id: i64, limit: usize, offset: u
                 ephemeral_ttl: row.get(6)?,
             })
         },
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to query messages: {}", e)))?
+    ).map_err(|e| ChattorError::Database(format!("Failed to query messages: {}", e)))?
     .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| TorrentChatError::Database(format!("Failed to collect messages: {}", e)))?;
+    .map_err(|e| ChattorError::Database(format!("Failed to collect messages: {}", e)))?;
 
     // Reverse so oldest is first (for display top-to-bottom)
     messages.reverse();
@@ -175,7 +175,7 @@ pub fn store_outgoing_message_with_ttl(
         "INSERT INTO messages (message_id, conversation_id, sender_onion, content, timestamp, status, ephemeral_ttl)
          VALUES (?1, ?2, ?3, ?4, ?5, 'sent', ?6)",
         params![message_id, conversation_id, sender_onion, content, now, ephemeral_ttl],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to store outgoing message: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to store outgoing message: {}", e)))?;
 
     Ok(())
 }
@@ -210,7 +210,7 @@ pub fn store_incoming_message_with_ttl(
         "INSERT OR IGNORE INTO messages (message_id, conversation_id, sender_onion, content, timestamp, status, ephemeral_ttl)
          VALUES (?1, ?2, ?3, ?4, ?5, 'received', ?6)",
         params![message_id, conversation_id, sender_onion, content, now, ephemeral_ttl],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to store incoming message: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to store incoming message: {}", e)))?;
 
     Ok(())
 }
@@ -225,7 +225,7 @@ pub fn mark_conversation_read(db: &Database, conversation_id: i64) -> Result<()>
     db.connection().execute(
         "UPDATE conversations SET last_read_at = ?1 WHERE id = ?2",
         params![now, conversation_id],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to mark conversation read: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to mark conversation read: {}", e)))?;
 
     Ok(())
 }
@@ -235,7 +235,7 @@ pub fn update_message_status(db: &Database, message_id: &str, status: &str) -> R
     db.connection().execute(
         "UPDATE messages SET status = ?1 WHERE message_id = ?2",
         params![status, message_id],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to update message status: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to update message status: {}", e)))?;
 
     Ok(())
 }
@@ -251,7 +251,7 @@ pub fn find_friend_by_onion(db: &Database, onion_address: &str) -> Result<Option
     match result {
         Ok(id) => Ok(Some(id)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(TorrentChatError::Database(format!("Failed to find friend: {}", e))),
+        Err(e) => Err(ChattorError::Database(format!("Failed to find friend: {}", e))),
     }
 }
 
@@ -261,7 +261,7 @@ pub fn get_pending_request_count(db: &Database) -> Result<i64> {
         "SELECT COUNT(*) FROM friend_requests WHERE status = 'pending'",
         [],
         |row| row.get(0),
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to count pending requests: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to count pending requests: {}", e)))?;
 
     Ok(count)
 }
@@ -274,7 +274,7 @@ pub fn get_pending_friend_requests(db: &Database) -> Result<Vec<PendingFriendReq
          FROM friend_requests
          WHERE status = 'pending'
          ORDER BY received_at ASC"
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to prepare friend requests query: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to prepare friend requests query: {}", e)))?;
 
     let entries = stmt.query_map([], |row| {
         Ok(PendingFriendRequest {
@@ -283,9 +283,9 @@ pub fn get_pending_friend_requests(db: &Database) -> Result<Vec<PendingFriendReq
             friend_code: row.get(2)?,
             received_at: row.get(3)?,
         })
-    }).map_err(|e| TorrentChatError::Database(format!("Failed to query friend requests: {}", e)))?
+    }).map_err(|e| ChattorError::Database(format!("Failed to query friend requests: {}", e)))?
     .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| TorrentChatError::Database(format!("Failed to collect friend requests: {}", e)))?;
+    .map_err(|e| ChattorError::Database(format!("Failed to collect friend requests: {}", e)))?;
 
     Ok(entries)
 }
@@ -302,14 +302,14 @@ pub fn get_unreceipted_message_ids(
          WHERE conversation_id = ?1
          AND status = 'received'
          AND sender_onion != ?2"
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to prepare unreceipted query: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to prepare unreceipted query: {}", e)))?;
 
     let entries = stmt.query_map(
         params![conversation_id, own_onion],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to query unreceipted: {}", e)))?
+    ).map_err(|e| ChattorError::Database(format!("Failed to query unreceipted: {}", e)))?
     .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| TorrentChatError::Database(format!("Failed to collect unreceipted: {}", e)))?;
+    .map_err(|e| ChattorError::Database(format!("Failed to collect unreceipted: {}", e)))?;
 
     Ok(entries)
 }
@@ -325,7 +325,7 @@ pub fn get_conversation_ephemeral_ttl(db: &Database, conversation_id: i64) -> Re
     match result {
         Ok(ttl) => Ok(ttl),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(TorrentChatError::Database(format!("Failed to get ephemeral TTL: {}", e))),
+        Err(e) => Err(ChattorError::Database(format!("Failed to get ephemeral TTL: {}", e))),
     }
 }
 
@@ -334,7 +334,7 @@ pub fn set_conversation_ephemeral_ttl(db: &Database, conversation_id: i64, ttl: 
     db.connection().execute(
         "UPDATE conversations SET ephemeral_ttl = ?1, is_ephemeral = ?2 WHERE id = ?3",
         params![ttl, ttl.is_some() as i32, conversation_id],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to set ephemeral TTL: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to set ephemeral TTL: {}", e)))?;
 
     Ok(())
 }
@@ -352,7 +352,7 @@ pub fn activate_ephemeral_timers(db: &Database, conversation_id: i64) -> Result<
          AND ephemeral_ttl IS NOT NULL
          AND expires_at IS NULL",
         params![now, conversation_id],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to activate timers: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to activate timers: {}", e)))?;
 
     Ok(())
 }
@@ -395,12 +395,12 @@ pub fn initialize_channels(db: &Database) -> Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO channels (id, channel_type, created_at) VALUES (1, 'public', ?1)",
         rusqlite::params![now],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to create public channel: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to create public channel: {}", e)))?;
 
     conn.execute(
         "INSERT OR IGNORE INTO channels (id, channel_type, created_at) VALUES (2, 'friends_only', ?1)",
         rusqlite::params![now],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to create friends_only channel: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to create friends_only channel: {}", e)))?;
 
     Ok(())
 }
@@ -418,7 +418,7 @@ pub fn store_channel_post(
         "INSERT OR IGNORE INTO channel_posts (channel_id, content, post_id, created_at, signature)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![channel_id, content, post_id, created_at, signature],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to store channel post: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to store channel post: {}", e)))?;
     Ok(())
 }
 
@@ -431,7 +431,7 @@ pub fn get_channel_posts(db: &Database, channel_id: i64, limit: usize) -> Result
          WHERE channel_id = ?1
          ORDER BY created_at DESC, id DESC
          LIMIT ?2"
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to prepare channel posts query: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to prepare channel posts query: {}", e)))?;
 
     let posts = stmt.query_map(params![channel_id, limit as i64], |row| {
         Ok(ChannelPost {
@@ -442,9 +442,9 @@ pub fn get_channel_posts(db: &Database, channel_id: i64, limit: usize) -> Result
             created_at: row.get(4)?,
             signature: row.get(5)?,
         })
-    }).map_err(|e| TorrentChatError::Database(format!("Failed to query channel posts: {}", e)))?
+    }).map_err(|e| ChattorError::Database(format!("Failed to query channel posts: {}", e)))?
     .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| TorrentChatError::Database(format!("Failed to collect channel posts: {}", e)))?;
+    .map_err(|e| ChattorError::Database(format!("Failed to collect channel posts: {}", e)))?;
 
     Ok(posts)
 }
@@ -457,7 +457,7 @@ pub fn enforce_channel_retention(db: &Database, channel_id: i64) -> Result<i64> 
             ORDER BY created_at DESC, id DESC LIMIT 100
         )",
         params![channel_id],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to enforce retention: {}", e)))? as i64;
+    ).map_err(|e| ChattorError::Database(format!("Failed to enforce retention: {}", e)))? as i64;
     Ok(deleted)
 }
 
@@ -472,7 +472,7 @@ pub fn add_channel_subscriber(db: &Database, subscriber_onion: &str, channel_typ
         "INSERT OR IGNORE INTO channel_subscribers (subscriber_onion, channel_type, subscribed_at)
          VALUES (?1, ?2, ?3)",
         params![subscriber_onion, channel_type, now],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to add subscriber: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to add subscriber: {}", e)))?;
     Ok(())
 }
 
@@ -481,7 +481,7 @@ pub fn remove_channel_subscriber(db: &Database, subscriber_onion: &str, channel_
     db.connection().execute(
         "DELETE FROM channel_subscribers WHERE subscriber_onion = ?1 AND channel_type = ?2",
         params![subscriber_onion, channel_type],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to remove subscriber: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to remove subscriber: {}", e)))?;
     Ok(())
 }
 
@@ -490,12 +490,12 @@ pub fn get_channel_subscribers(db: &Database, channel_type: &str) -> Result<Vec<
     let conn = db.connection();
     let mut stmt = conn.prepare(
         "SELECT subscriber_onion FROM channel_subscribers WHERE channel_type = ?1"
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to prepare subscribers query: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to prepare subscribers query: {}", e)))?;
 
     let subs = stmt.query_map(params![channel_type], |row| row.get::<_, String>(0))
-        .map_err(|e| TorrentChatError::Database(format!("Failed to query subscribers: {}", e)))?
+        .map_err(|e| ChattorError::Database(format!("Failed to query subscribers: {}", e)))?
         .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|e| TorrentChatError::Database(format!("Failed to collect subscribers: {}", e)))?;
+        .map_err(|e| ChattorError::Database(format!("Failed to collect subscribers: {}", e)))?;
     Ok(subs)
 }
 
@@ -510,7 +510,7 @@ pub fn add_channel_subscription(db: &Database, publisher_onion: &str, channel_ty
         "INSERT OR IGNORE INTO channel_subscriptions (publisher_onion, channel_type, subscribed_at)
          VALUES (?1, ?2, ?3)",
         params![publisher_onion, channel_type, now],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to add subscription: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to add subscription: {}", e)))?;
     Ok(())
 }
 
@@ -520,7 +520,7 @@ pub fn remove_channel_subscription(db: &Database, publisher_onion: &str, channel
     db.connection().execute(
         "DELETE FROM channel_subscriptions WHERE publisher_onion = ?1 AND channel_type = ?2",
         params![publisher_onion, channel_type],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to remove subscription: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to remove subscription: {}", e)))?;
     Ok(())
 }
 
@@ -530,7 +530,7 @@ pub fn get_channel_subscriptions(db: &Database) -> Result<Vec<ChannelSubscriptio
     let mut stmt = conn.prepare(
         "SELECT id, publisher_onion, channel_type, subscribed_at, last_sync_at
          FROM channel_subscriptions ORDER BY subscribed_at ASC"
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to prepare subscriptions query: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to prepare subscriptions query: {}", e)))?;
 
     let subs = stmt.query_map([], |row| {
         Ok(ChannelSubscription {
@@ -540,9 +540,9 @@ pub fn get_channel_subscriptions(db: &Database) -> Result<Vec<ChannelSubscriptio
             subscribed_at: row.get(3)?,
             last_sync_at: row.get(4)?,
         })
-    }).map_err(|e| TorrentChatError::Database(format!("Failed to query subscriptions: {}", e)))?
+    }).map_err(|e| ChattorError::Database(format!("Failed to query subscriptions: {}", e)))?
     .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| TorrentChatError::Database(format!("Failed to collect subscriptions: {}", e)))?;
+    .map_err(|e| ChattorError::Database(format!("Failed to collect subscriptions: {}", e)))?;
     Ok(subs)
 }
 
@@ -551,7 +551,7 @@ pub fn update_subscription_sync_time(db: &Database, publisher_onion: &str, chann
     db.connection().execute(
         "UPDATE channel_subscriptions SET last_sync_at = ?1 WHERE publisher_onion = ?2 AND channel_type = ?3",
         params![sync_at, publisher_onion, channel_type],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to update sync time: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to update sync time: {}", e)))?;
     Ok(())
 }
 
@@ -561,7 +561,7 @@ pub fn store_channel_post_receipt(db: &Database, post_id: &str, reader_onion: &s
         "INSERT OR IGNORE INTO channel_post_receipts (post_id, reader_onion, read_at)
          VALUES (?1, ?2, ?3)",
         params![post_id, reader_onion, read_at],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to store post receipt: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to store post receipt: {}", e)))?;
     Ok(())
 }
 
@@ -571,7 +571,7 @@ pub fn get_channel_post_read_count(db: &Database, post_id: &str) -> Result<i64> 
         "SELECT COUNT(*) FROM channel_post_receipts WHERE post_id = ?1",
         params![post_id],
         |row| row.get(0),
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to count post receipts: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to count post receipts: {}", e)))?;
     Ok(count)
 }
 
@@ -584,7 +584,7 @@ pub fn get_channel_posts_since(db: &Database, channel_id: i64, since: i64) -> Re
          WHERE channel_id = ?1 AND created_at > ?2
          ORDER BY created_at ASC
          LIMIT 100"
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to prepare posts since query: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to prepare posts since query: {}", e)))?;
 
     let posts = stmt.query_map(params![channel_id, since], |row| {
         Ok(ChannelPost {
@@ -595,9 +595,9 @@ pub fn get_channel_posts_since(db: &Database, channel_id: i64, since: i64) -> Re
             created_at: row.get(4)?,
             signature: row.get(5)?,
         })
-    }).map_err(|e| TorrentChatError::Database(format!("Failed to query posts since: {}", e)))?
+    }).map_err(|e| ChattorError::Database(format!("Failed to query posts since: {}", e)))?
     .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| TorrentChatError::Database(format!("Failed to collect posts since: {}", e)))?;
+    .map_err(|e| ChattorError::Database(format!("Failed to collect posts since: {}", e)))?;
     Ok(posts)
 }
 
@@ -611,7 +611,7 @@ pub fn cleanup_expired_messages(db: &Database) -> Result<i64> {
     let deleted = db.connection().execute(
         "DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at < ?1",
         params![now],
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to cleanup expired: {}", e)))? as i64;
+    ).map_err(|e| ChattorError::Database(format!("Failed to cleanup expired: {}", e)))? as i64;
 
     Ok(deleted)
 }
@@ -629,7 +629,7 @@ pub fn get_app_setting(db: &Database, key: &str) -> Result<Option<String>> {
     match result {
         Ok(value) => Ok(Some(value)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(TorrentChatError::Database(format!("Failed to get setting: {}", e))),
+        Err(e) => Err(ChattorError::Database(format!("Failed to get setting: {}", e))),
     }
 }
 
@@ -653,7 +653,7 @@ pub fn set_app_setting(db: &Database, key: &str, value: &str) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
         (key, value),
-    ).map_err(|e| TorrentChatError::Database(format!("Failed to set setting: {}", e)))?;
+    ).map_err(|e| ChattorError::Database(format!("Failed to set setting: {}", e)))?;
     Ok(())
 }
 

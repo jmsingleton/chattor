@@ -1,5 +1,5 @@
 /// SQL schema for chattor database
-pub const SCHEMA_VERSION: i32 = 8;
+pub const SCHEMA_VERSION: i32 = 9;
 
 pub const CREATE_TABLES: &str = r#"
 -- Schema version tracking
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn test_schema_version_defined() {
-        assert_eq!(SCHEMA_VERSION, 8);
+        assert_eq!(SCHEMA_VERSION, 9);
     }
 
     #[test]

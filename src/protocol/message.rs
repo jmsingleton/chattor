@@ -1,6 +1,32 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Current protocol version.  Bumped whenever the wire format changes in a
+/// backward-incompatible way so that peers running different versions can
+/// detect the mismatch early instead of silently mis-parsing messages.
+pub const PROTOCOL_VERSION: u8 = 2;
+
+/// Versioned envelope that wraps every `Message` on the wire.
+///
+/// All framing I/O serializes and deserializes `MessageEnvelope` rather than
+/// bare `Message` values, giving us a clean place to negotiate or reject
+/// incompatible protocol versions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MessageEnvelope {
+    pub version: u8,
+    pub payload: Message,
+}
+
+impl MessageEnvelope {
+    /// Create a new envelope stamped with the current protocol version.
+    pub fn new(payload: Message) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            payload,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum Message {
@@ -72,10 +98,26 @@ pub struct FriendRequestRejectMessage {
 pub struct TextMessage {
     pub from_onion: String,
     pub to_onion: String,
+    pub signal_header: String,      // base64-encoded encrypted Double Ratchet header
     pub signal_ciphertext: String,  // base64 encrypted payload
     pub signal_type: SignalMessageType,
     pub timestamp: i64,
     pub message_id: Uuid,
+    /// X3DH initiator data, only present on PreKey messages
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x3dh_init: Option<X3DHInitData>,
+}
+
+/// X3DH key exchange initiator data, sent with the first (PreKey) message.
+///
+/// Contains the sender's identity and ephemeral public keys so the
+/// receiver can run x3dh_responder() and establish a session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct X3DHInitData {
+    /// base64-encoded 33-byte (0x05-prefixed) X25519 identity public key
+    pub sender_identity_key: String,
+    /// base64-encoded 33-byte (0x05-prefixed) X25519 ephemeral public key
+    pub sender_ephemeral_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -195,10 +237,12 @@ mod tests {
         let msg = Message::TextMessage(TextMessage {
             from_onion: "alice.onion".to_string(),
             to_onion: "bob.onion".to_string(),
+            signal_header: "header_data".to_string(),
             signal_ciphertext: "encrypted".to_string(),
             signal_type: SignalMessageType::Message,
             timestamp: 1234567890,
             message_id: Uuid::new_v4(),
+            x3dh_init: None,
         });
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -354,6 +398,50 @@ mod tests {
             let bytes = serde_json::to_vec(&msg).unwrap();
             let decoded: Message = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(msg, decoded);
+        }
+    }
+
+    #[test]
+    fn test_message_envelope_serialization_roundtrip() {
+        let inner = Message::FriendRequest(FriendRequestMessage {
+            from_onion: "alice.onion".to_string(),
+            from_friendcode: "happy-1234-tiger-5678".to_string(),
+            timestamp: 1234567890,
+            signature: "sig123".to_string(),
+        });
+
+        let envelope = MessageEnvelope::new(inner.clone());
+        assert_eq!(envelope.version, PROTOCOL_VERSION);
+        assert_eq!(envelope.payload, inner);
+
+        let json = serde_json::to_string(&envelope).unwrap();
+        assert!(json.contains("\"version\":2"));
+
+        let deserialized: MessageEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(envelope, deserialized);
+    }
+
+    #[test]
+    fn test_message_envelope_preserves_all_message_types() {
+        // Verify enveloping works with every variant
+        let messages = vec![
+            Message::DeliveryReceipt(DeliveryReceiptMessage {
+                message_id: Uuid::new_v4(),
+                timestamp: 100,
+            }),
+            Message::Presence(PresenceMessage {
+                from_onion: "peer.onion".to_string(),
+                presence_type: PresenceType::Heartbeat,
+                timestamp: 200,
+            }),
+        ];
+
+        for msg in messages {
+            let env = MessageEnvelope::new(msg.clone());
+            let bytes = serde_json::to_vec(&env).unwrap();
+            let decoded: MessageEnvelope = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(decoded.version, PROTOCOL_VERSION);
+            assert_eq!(decoded.payload, msg);
         }
     }
 }

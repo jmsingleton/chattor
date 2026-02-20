@@ -1,0 +1,102 @@
+---
+// website/src/components/ArchDiagram.astro
+---
+
+<div class="arch-section">
+  <h2>How It Works</h2>
+  <div class="arch-diagram">
+    <div class="arch-step">
+      <span class="arch-label">You</span>
+    </div>
+    <span class="arch-arrow">&rarr;</span>
+    <div class="arch-step">
+      <span class="arch-label">TUI</span>
+      <span class="arch-sub">ratatui</span>
+    </div>
+    <span class="arch-arrow">&rarr;</span>
+    <div class="arch-step highlight">
+      <span class="arch-label">Signal Protocol</span>
+      <span class="arch-sub">E2E encryption</span>
+    </div>
+    <span class="arch-arrow">&rarr;</span>
+    <div class="arch-step highlight">
+      <span class="arch-label">Tor</span>
+      <span class="arch-sub">onion service</span>
+    </div>
+    <span class="arch-arrow">&rarr;</span>
+    <div class="arch-step">
+      <span class="arch-label">Peer</span>
+    </div>
+  </div>
+  <p class="arch-caption">No central servers. No accounts. No metadata leakage.</p>
+</div>
+
+<style>
+  .arch-section {
+    text-align: center;
+    margin: 3rem auto;
+    max-width: 72rem;
+    padding: 0 1rem;
+  }
+
+  .arch-section h2 {
+    color: #e0def4;
+    margin-bottom: 1.5rem;
+  }
+
+  .arch-diagram {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .arch-step {
+    background: #1f1d2e;
+    border: 1px solid #6e6a86;
+    border-radius: 8px;
+    padding: 0.75rem 1.25rem;
+    text-align: center;
+  }
+
+  .arch-step.highlight {
+    border-color: #c4a7e7;
+    box-shadow: 0 0 8px #c4a7e720;
+  }
+
+  .arch-label {
+    display: block;
+    color: #e0def4;
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+
+  .arch-sub {
+    display: block;
+    color: #908caa;
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+  }
+
+  .arch-arrow {
+    color: #c4a7e7;
+    font-size: 1.25rem;
+    font-weight: bold;
+  }
+
+  .arch-caption {
+    color: #6e6a86;
+    font-style: italic;
+    margin-top: 1rem;
+  }
+
+  @media (max-width: 600px) {
+    .arch-diagram {
+      flex-direction: column;
+    }
+    .arch-arrow {
+      transform: rotate(90deg);
+    }
+  }
+</style>

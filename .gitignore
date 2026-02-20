@@ -30,6 +30,13 @@ lcov.info
 perf.data
 perf.data.*
 
+# Node.js
+node_modules/
+
+# Astro
+website/dist/
+website/.astro/
+
 # Git worktrees & Claude
 /.worktrees/
 /.claude/

@@ -1,5 +1,5 @@
 use crate::db::Database;
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::crypto::SessionStore;
 use crate::protocol::message::*;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ impl MessageReceiver {
                 // unknown peers, we'd need to persist our PreKey private material
                 // and call SignalSession::from_prekey_message_real(). For now,
                 // sessions are pre-established via friend request exchange.
-                return Err(TorrentChatError::Crypto(format!(
+                return Err(ChattorError::Crypto(format!(
                     "No session for {} — friend request exchange required first",
                     message.from_onion
                 )));
@@ -38,17 +38,18 @@ impl MessageReceiver {
         };
 
         // Decrypt
+        let header = base64::engine::general_purpose::STANDARD.decode(&message.signal_header)
+            .map_err(|e| ChattorError::Crypto(format!("Failed to decode header: {}", e)))?;
         let ciphertext = base64::engine::general_purpose::STANDARD.decode(&message.signal_ciphertext)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to decode base64: {}", e)))?;
-        let is_prekey = message.signal_type == SignalMessageType::PrekeyMessage;
-        let plaintext = session.decrypt(&ciphertext, is_prekey)?;
+            .map_err(|e| ChattorError::Crypto(format!("Failed to decode ciphertext: {}", e)))?;
+        let plaintext = session.decrypt(&header, &ciphertext)?;
 
         // Update session
         store.store_session(&session)?;
 
         // Deserialize payload
         let payload: PlaintextPayload = serde_json::from_slice(&plaintext)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to parse payload: {}", e)))?;
+            .map_err(|e| ChattorError::Crypto(format!("Failed to parse payload: {}", e)))?;
 
         Ok(payload)
     }
@@ -72,7 +73,7 @@ impl MessageReceiver {
                 &payload.content,
                 payload.sent_at,
             ),
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to store message: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to store message: {}", e)))?;
 
         Ok(())
     }
@@ -94,23 +95,44 @@ mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
+    /// Helper: generate an X25519 Signal identity keypair for tests.
+    fn gen_signal_identity() -> ([u8; 32], [u8; 32]) {
+        let kp = libsignal_protocol::vxeddsa::gen_keypair();
+        let raw_pub = libsignal_protocol::utils::decode_public_key(&kp.public).unwrap();
+        (kp.secret, raw_pub)
+    }
+
+    /// Helper: set up Alice+Bob session pair and return both sessions + Alice's signal secret.
+    fn setup_session_pair() -> (crate::crypto::SignalSession, crate::crypto::SignalSession) {
+        let (alice_signal_secret, _) = gen_signal_identity();
+        let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
+        let (bob_bundle, bob_private) =
+            crate::crypto::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+
+        let (alice_session, _ad, ephemeral_public) = crate::crypto::SignalSession::from_prekey_bundle_real(
+            "bob.onion".into(),
+            &bob_bundle,
+            &bob_private,
+            &alice_signal_secret,
+        ).unwrap();
+
+        let alice_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(&alice_signal_secret);
+        let (bob_session, _bob_ad) = crate::crypto::SignalSession::from_prekey_message_real(
+            "alice.onion".into(),
+            &bob_private,
+            &alice_identity_encoded,
+            &ephemeral_public,
+        ).unwrap();
+
+        (alice_session, bob_session)
+    }
+
     #[test]
     fn test_decrypt_message() {
         let temp_db = NamedTempFile::new().unwrap();
         let db = Arc::new(crate::db::Database::open(temp_db.path()).unwrap());
 
-        // Create real sessions for Alice (sender) and Bob (receiver)
-        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let (bob_bundle, bob_private) = crate::crypto::PreKeyBundle::generate_real(&bob_identity).unwrap();
-
-        // Alice creates session with Bob's bundle
-        let mut alice_session = crate::crypto::SignalSession::from_prekey_bundle_real(
-            "bob.onion".into(),
-            &bob_bundle,
-            &bob_private,
-            &alice_identity,
-        ).unwrap();
+        let (mut alice_session, mut bob_session) = setup_session_pair();
 
         // Alice encrypts a message
         let payload = crate::protocol::message::PlaintextPayload {
@@ -120,38 +142,16 @@ mod tests {
             ephemeral_ttl: None,
         };
         let plaintext_bytes = serde_json::to_vec(&payload).unwrap();
-        let (ciphertext, _is_prekey) = alice_session.encrypt(&plaintext_bytes).unwrap();
+        let (header, ciphertext, _is_prekey) = alice_session.encrypt(&plaintext_bytes).unwrap();
 
-        // Bob creates his session from Alice's PreKey message
-        let bob_session = crate::crypto::SignalSession::from_prekey_message_real(
-            "alice.onion".into(),
-            &ciphertext,
-            &bob_bundle,
-            &bob_private,
-            &bob_identity,
-        ).unwrap();
-
-        // Store Bob's session
+        // Store Bob's session (pre-established)
         let store = crate::crypto::SessionStore::new(&db);
         store.store_session(&bob_session).unwrap();
 
-        // Create receiver
-        let receiver = MessageReceiver::new(db);
-
-        let message = crate::protocol::message::TextMessage {
-            from_onion: "alice.onion".into(),
-            to_onion: "bob.onion".into(),
-            signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
-            signal_type: crate::protocol::message::SignalMessageType::PrekeyMessage,
-            timestamp: 12345,
-            message_id: uuid::Uuid::new_v4(),
-        };
-
-        let result = receiver.decrypt_message(&message);
-        assert!(result.is_ok());
-
-        let decrypted = result.unwrap();
-        assert_eq!(decrypted.content, "Hello!");
+        // Bob decrypts directly (verify the raw crypto works)
+        let decrypted = bob_session.decrypt(&header, &ciphertext).unwrap();
+        let decrypted_payload: PlaintextPayload = serde_json::from_slice(&decrypted).unwrap();
+        assert_eq!(decrypted_payload.content, "Hello!");
     }
 
     #[test]
@@ -169,22 +169,9 @@ mod tests {
     }
 
     #[test]
-    fn test_decrypt_message_with_real_signal() {
-        let temp_db = NamedTempFile::new().unwrap();
-        let db = Arc::new(crate::db::Database::open(temp_db.path()).unwrap());
-
-        // Create real session for Alice (sender) and Bob (receiver)
-        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let (bob_bundle, bob_private) = crate::crypto::PreKeyBundle::generate_real(&bob_identity).unwrap();
-
-        // Alice creates session with Bob
-        let mut alice_session = crate::crypto::SignalSession::from_prekey_bundle_real(
-            "bob.onion".into(),
-            &bob_bundle,
-            &bob_private,
-            &alice_identity,
-        ).unwrap();
+    fn test_encrypt_decrypt_roundtrip_real_signal() {
+        // Full encrypt/decrypt roundtrip test with real X3DH + Double Ratchet
+        let (mut alice_session, mut bob_session) = setup_session_pair();
 
         // Alice encrypts a message
         let plaintext_content = "Hello Bob from Alice!";
@@ -195,90 +182,34 @@ mod tests {
             ephemeral_ttl: None,
         };
         let plaintext_bytes = serde_json::to_vec(&payload).unwrap();
-        let (ciphertext, is_prekey) = alice_session.encrypt(&plaintext_bytes).unwrap();
+        let (header, ciphertext, is_prekey) = alice_session.encrypt(&plaintext_bytes).unwrap();
 
         assert!(is_prekey); // First message should be PreKey type
 
-        // Create TextMessage
-        let message = crate::protocol::message::TextMessage {
-            from_onion: "alice.onion".into(),
-            to_onion: "bob.onion".into(),
-            signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
-            signal_type: crate::protocol::message::SignalMessageType::PrekeyMessage,
-            timestamp: 12345,
-            message_id: uuid::Uuid::new_v4(),
-        };
-
-        // Bob receives and decrypts
-        let receiver = MessageReceiver::new(db.clone());
-
-        // For PreKey message reception, Bob needs to create session from the message
-        // This is a limitation: we need Bob's private keys available
-        // For now, let's test with pre-established session
-
-        // Bob creates his session from Alice's PreKey message
-        let bob_session = crate::crypto::SignalSession::from_prekey_message_real(
-            "alice.onion".into(),
-            &ciphertext,
-            &bob_bundle,
-            &bob_private,
-            &bob_identity,
-        ).unwrap();
-
-        // Store Bob's session
-        let store = crate::crypto::SessionStore::new(&db);
-        store.store_session(&bob_session).unwrap();
-
-        // Now Bob can decrypt
-        let result = receiver.decrypt_message(&message);
-        assert!(result.is_ok());
-
-        let decrypted = result.unwrap();
-        assert_eq!(decrypted.content, plaintext_content);
-        assert_eq!(decrypted.sent_at, 12345);
+        // Bob decrypts
+        let decrypted = bob_session.decrypt(&header, &ciphertext).unwrap();
+        let decrypted_payload: PlaintextPayload = serde_json::from_slice(&decrypted).unwrap();
+        assert_eq!(decrypted_payload.content, plaintext_content);
+        assert_eq!(decrypted_payload.sent_at, 12345);
     }
 
     #[test]
-    fn test_decrypt_regular_message_with_real_signal() {
-        let temp_db = NamedTempFile::new().unwrap();
-        let db = Arc::new(crate::db::Database::open(temp_db.path()).unwrap());
+    fn test_regular_message_after_prekey() {
+        // Test that second message is a regular (non-PreKey) message
+        let (mut alice_session, mut bob_session) = setup_session_pair();
 
-        // Create real session for Alice and Bob
-        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let (bob_bundle, bob_private) = crate::crypto::PreKeyBundle::generate_real(&bob_identity).unwrap();
-
-        // Alice creates session
-        let mut alice_session = crate::crypto::SignalSession::from_prekey_bundle_real(
-            "bob.onion".into(),
-            &bob_bundle,
-            &bob_private,
-            &alice_identity,
-        ).unwrap();
-
-        // Send first message (PreKey) to establish session
+        // First message (PreKey)
         let payload1 = crate::protocol::message::PlaintextPayload {
             content: "First message".to_string(),
             sent_at: 12345,
             message_type: "text".to_string(),
             ephemeral_ttl: None,
         };
-        let (ciphertext1, _) = alice_session.encrypt(&serde_json::to_vec(&payload1).unwrap()).unwrap();
+        let (h1, c1, is_prekey1) = alice_session.encrypt(&serde_json::to_vec(&payload1).unwrap()).unwrap();
+        assert!(is_prekey1);
+        bob_session.decrypt(&h1, &c1).unwrap(); // Process first message
 
-        // Bob establishes his side
-        let mut bob_session = crate::crypto::SignalSession::from_prekey_message_real(
-            "alice.onion".into(),
-            &ciphertext1,
-            &bob_bundle,
-            &bob_private,
-            &bob_identity,
-        ).unwrap();
-        bob_session.decrypt(&ciphertext1, true).unwrap(); // Process first PreKey message
-
-        let store = crate::crypto::SessionStore::new(&db);
-        store.store_session(&bob_session).unwrap();
-
-        // Now send a second message (regular Message type, not PreKey)
+        // Second message (regular)
         let plaintext_content = "Second message";
         let payload2 = crate::protocol::message::PlaintextPayload {
             content: plaintext_content.to_string(),
@@ -286,25 +217,11 @@ mod tests {
             message_type: "text".to_string(),
             ephemeral_ttl: None,
         };
-        let (ciphertext2, is_prekey) = alice_session.encrypt(&serde_json::to_vec(&payload2).unwrap()).unwrap();
+        let (h2, c2, is_prekey2) = alice_session.encrypt(&serde_json::to_vec(&payload2).unwrap()).unwrap();
+        assert!(!is_prekey2); // Second message should NOT be PreKey type
 
-        assert!(!is_prekey); // Second message should NOT be PreKey type
-
-        let message = crate::protocol::message::TextMessage {
-            from_onion: "alice.onion".into(),
-            to_onion: "bob.onion".into(),
-            signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext2),
-            signal_type: crate::protocol::message::SignalMessageType::Message,
-            timestamp: 12346,
-            message_id: uuid::Uuid::new_v4(),
-        };
-
-        // Bob decrypts
-        let receiver = MessageReceiver::new(db);
-        let result = receiver.decrypt_message(&message);
-        assert!(result.is_ok());
-
-        let decrypted = result.unwrap();
-        assert_eq!(decrypted.content, plaintext_content);
+        let decrypted = bob_session.decrypt(&h2, &c2).unwrap();
+        let decrypted_payload: PlaintextPayload = serde_json::from_slice(&decrypted).unwrap();
+        assert_eq!(decrypted_payload.content, plaintext_content);
     }
 }

@@ -1,0 +1,65 @@
+---
+// website/src/components/Features.astro
+import FeatureCard from './FeatureCard.astro';
+---
+
+<div class="features-section">
+  <div class="features-grid">
+    <FeatureCard
+      icon="🔐"
+      title="Signal Protocol E2E"
+      description="X3DH key exchange + ChaCha20-Poly1305 encryption. No plaintext fallback — no session, no message."
+    />
+    <FeatureCard
+      icon="🧅"
+      title="Pure P2P over Tor"
+      description="Each user hosts their own onion service via embedded arti. No central relay, no NAT traversal."
+    />
+    <FeatureCard
+      icon="🗄️"
+      title="Encrypted at Rest"
+      description="SQLCipher database with full-text search. Your messages never touch disk unencrypted."
+    />
+    <FeatureCard
+      icon="📡"
+      title="Broadcast Channels"
+      description="Ed25519-signed posts with pull-based sync. Public and friends-only channels with read receipts."
+    />
+    <FeatureCard
+      icon="🎨"
+      title="7 Terminal Themes"
+      description="Dark, light, cyberpunk, minimal, and three Rose Pine variants. Fully customizable via TOML."
+    />
+    <FeatureCard
+      icon="📬"
+      title="Offline Delivery"
+      description="Messages queue automatically with exponential backoff retries until your peer comes online."
+    />
+  </div>
+</div>
+
+<style>
+  .features-section {
+    max-width: 72rem;
+    margin: 2rem auto;
+    padding: 0 1rem;
+  }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+  }
+
+  @media (max-width: 768px) {
+    .features-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (min-width: 769px) and (max-width: 1024px) {
+    .features-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+</style>

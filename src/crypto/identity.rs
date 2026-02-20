@@ -1,6 +1,6 @@
 use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier, Signature};
 use rand::rngs::OsRng;
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::db::Database;
 
 /// User identity keypair (Ed25519)
@@ -42,7 +42,7 @@ impl IdentityKeypair {
             Ok(bytes) => {
                 // Deserialize keypair
                 Self::from_bytes(&bytes)
-                    .map_err(|e| TorrentChatError::Crypto(format!("Failed to load identity: {}", e)))
+                    .map_err(|e| ChattorError::Crypto(format!("Failed to load identity: {}", e)))
             }
             Err(_) => {
                 // Generate new keypair
@@ -53,7 +53,7 @@ impl IdentityKeypair {
                 conn.execute(
                     "INSERT INTO settings (key, value) VALUES ('identity_keypair', ?1)",
                     [&bytes],
-                ).map_err(|e| TorrentChatError::Database(format!("Failed to store identity: {}", e)))?;
+                ).map_err(|e| ChattorError::Database(format!("Failed to store identity: {}", e)))?;
 
                 Ok(keypair)
             }
@@ -70,7 +70,7 @@ impl IdentityKeypair {
     /// Deserialize keypair from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() != 32 {
-            return Err(TorrentChatError::Crypto("Invalid identity key length".into()));
+            return Err(ChattorError::Crypto("Invalid identity key length".into()));
         }
 
         let signing_key = SigningKey::from_bytes(
@@ -93,7 +93,7 @@ impl IdentityKeypair {
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES ('identity_keypair', ?1)",
             [&bytes],
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to store identity: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to store identity: {}", e)))?;
 
         Ok(())
     }
@@ -160,7 +160,7 @@ impl IdentityKeypair {
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
         self._verifying_key
             .verify(message, signature)
-            .map_err(|e| TorrentChatError::Crypto(format!("Signature verification failed: {}", e)))
+            .map_err(|e| ChattorError::Crypto(format!("Signature verification failed: {}", e)))
     }
 }
 

@@ -1,12 +1,12 @@
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::tor::client::TorClient;
-use crate::protocol::message::Message;
+use crate::protocol::message::{Message, MessageEnvelope};
 use crate::net::framing::send_message;
 use arti_client::DataStream;
 use tracing::info;
 
 /// Port used for chattor peer-to-peer communication over Tor
-pub const CHATTOR_PORT: u16 = 9051;
+pub const CHATTOR_PORT: u16 = 9735;
 
 /// Connection to peer over Tor
 pub struct TorConnection {
@@ -24,16 +24,17 @@ impl TorConnection {
         let stream = tor_client.inner()
             .connect_with_prefs((remote_onion, CHATTOR_PORT), &StreamPrefs::default())
             .await
-            .map_err(|e| TorrentChatError::Tor(format!("Failed to connect to {}: {}", remote_onion, e)))?;
+            .map_err(|e| ChattorError::Tor(format!("Failed to connect to {}: {}", remote_onion, e)))?;
 
         info!("Connected to {} via Tor", remote_onion);
 
         Ok(TorConnection { stream })
     }
 
-    /// Send message over connection
+    /// Send message over connection, wrapped in a versioned envelope.
     pub async fn send(&mut self, message: &Message) -> Result<()> {
-        send_message(&mut self.stream, message).await
+        let envelope = MessageEnvelope::new(message.clone());
+        send_message(&mut self.stream, &envelope).await
     }
 }
 
@@ -43,7 +44,7 @@ mod tests {
 
     #[test]
     fn test_chattor_port_constant() {
-        assert_eq!(CHATTOR_PORT, 9051);
+        assert_eq!(CHATTOR_PORT, 9735);
     }
 
     #[tokio::test]

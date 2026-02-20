@@ -2,7 +2,7 @@
 //!
 //! Wraps the Arti Tor client for network connections.
 
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use arti_client::{TorClient as ArtiTorClient, TorClientConfig};
 use std::path::Path;
 use std::sync::Arc;
@@ -19,10 +19,10 @@ impl TorClient {
         let cache_dir = data_dir.join("arti-cache");
 
         std::fs::create_dir_all(&state_dir).map_err(|e| {
-            TorrentChatError::Tor(format!("Failed to create arti state dir: {}", e))
+            ChattorError::Tor(format!("Failed to create arti state dir: {}", e))
         })?;
         std::fs::create_dir_all(&cache_dir).map_err(|e| {
-            TorrentChatError::Tor(format!("Failed to create arti cache dir: {}", e))
+            ChattorError::Tor(format!("Failed to create arti cache dir: {}", e))
         })?;
 
         // Arti requires 700 permissions on state/cache dirs (contains onion service keys)
@@ -31,10 +31,10 @@ impl TorClient {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o700);
             std::fs::set_permissions(&state_dir, perms.clone()).map_err(|e| {
-                TorrentChatError::Tor(format!("Failed to set arti state dir permissions: {}", e))
+                ChattorError::Tor(format!("Failed to set arti state dir permissions: {}", e))
             })?;
             std::fs::set_permissions(&cache_dir, perms).map_err(|e| {
-                TorrentChatError::Tor(format!("Failed to set arti cache dir permissions: {}", e))
+                ChattorError::Tor(format!("Failed to set arti cache dir permissions: {}", e))
             })?;
         }
 
@@ -42,12 +42,12 @@ impl TorClient {
             arti_client::config::TorClientConfigBuilder::from_directories(&state_dir, &cache_dir)
                 .build()
                 .map_err(|e| {
-                    TorrentChatError::Tor(format!("Failed to build Tor config: {}", e))
+                    ChattorError::Tor(format!("Failed to build Tor config: {}", e))
                 })?;
 
         let client = ArtiTorClient::create_bootstrapped(config)
             .await
-            .map_err(|e| TorrentChatError::Tor(format!("Failed to bootstrap Tor: {}", e)))?;
+            .map_err(|e| ChattorError::Tor(format!("Failed to bootstrap Tor: {}", e)))?;
 
         Ok(TorClient {
             client: Arc::new(client),
@@ -60,7 +60,7 @@ impl TorClient {
         let config = TorClientConfig::default();
         let client = ArtiTorClient::create_bootstrapped(config)
             .await
-            .map_err(|e| TorrentChatError::Tor(format!("Failed to bootstrap Tor: {}", e)))?;
+            .map_err(|e| ChattorError::Tor(format!("Failed to bootstrap Tor: {}", e)))?;
 
         Ok(TorClient {
             client: Arc::new(client),
