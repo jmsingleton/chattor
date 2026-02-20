@@ -45,6 +45,7 @@ impl Database {
                 self.migrate_to_v6()?;
                 self.migrate_to_v7()?;
                 self.migrate_to_v8()?;
+                self.migrate_to_v9()?;
             },
             Err(_) => {
                 // Fresh database - will set version after creating tables
@@ -265,6 +266,44 @@ impl Database {
         Ok(())
     }
 
+    /// Migrate database from v8 to v9 (wipe Signal sessions for crypto upgrade)
+    ///
+    /// The Signal Protocol implementation was rewritten to use libsignal-dezire's
+    /// Double Ratchet. Old session state is incompatible, so we wipe all sessions
+    /// and stored PreKey private material to force re-establishment.
+    fn migrate_to_v9(&self) -> Result<()> {
+        let version = self.get_schema_version()?;
+
+        if version < 9 {
+            info!("Migrating database to schema v9 (wipe Signal sessions for crypto upgrade)");
+
+            let conn = self.connection();
+
+            // Delete all Signal sessions (incompatible with new Double Ratchet format)
+            let deleted_sessions = conn.execute("DELETE FROM signal_sessions", [])
+                .map_err(|e| TorrentChatError::Database(format!("Failed to clear signal sessions: {}", e)))?;
+            info!("  Cleared {} old Signal sessions", deleted_sessions);
+
+            // Delete stored PreKey private material from app_settings
+            let deleted_prekeys = conn.execute(
+                "DELETE FROM app_settings WHERE key LIKE 'prekey_%'",
+                []
+            ).map_err(|e| TorrentChatError::Database(format!("Failed to clear prekey material: {}", e)))?;
+            info!("  Cleared {} stored PreKey entries", deleted_prekeys);
+
+            // Update version
+            conn.execute("UPDATE schema_version SET version = 9", [])
+                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+
+            warn!("Schema upgraded to v9. All Signal sessions and PreKey material cleared.");
+            warn!("  Sessions will be re-established automatically on next message exchange.");
+
+            info!("Migration to schema v9 complete");
+        }
+
+        Ok(())
+    }
+
     /// Migrate database from v2 to v3 (production Signal Protocol)
     fn migrate_to_v3(&self) -> Result<()> {
         let version = self.get_schema_version()?;
@@ -336,6 +375,89 @@ mod tests {
             .unwrap();
 
         assert_eq!(table_count, 3);
+    }
+
+    #[test]
+    fn test_migration_v8_to_v9() {
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+
+        // Create a v8 database with sessions and prekey material
+        {
+            let db = Database::open(temp_db.path()).unwrap();
+            let conn = db.connection();
+
+            // Set version back to 8 (simulating pre-migration state)
+            conn.execute("UPDATE schema_version SET version = 8", []).unwrap();
+
+            // Insert some old Signal sessions
+            conn.execute(
+                "INSERT INTO signal_sessions (remote_onion, session_state, updated_at) VALUES ('alice.onion', X'DEADBEEF', 12345)",
+                []
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO signal_sessions (remote_onion, session_state, updated_at) VALUES ('bob.onion', X'CAFEBABE', 67890)",
+                []
+            ).unwrap();
+
+            // Insert some prekey_ entries in app_settings
+            conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES ('prekey_identity_secret', 'secret1')",
+                []
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES ('prekey_signed_prekey_secret', 'secret2')",
+                []
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES ('prekey_one_time_secret', 'secret3')",
+                []
+            ).unwrap();
+
+            // Also insert a non-prekey setting that should survive
+            conn.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('onion_address', 'keep_me.onion')",
+                []
+            ).unwrap();
+
+            // Verify data is there
+            let session_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM signal_sessions", [], |row| row.get(0)
+            ).unwrap();
+            assert_eq!(session_count, 2);
+
+            let prekey_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM app_settings WHERE key LIKE 'prekey_%'", [], |row| row.get(0)
+            ).unwrap();
+            assert_eq!(prekey_count, 3);
+        }
+
+        // Reopen — this triggers migrations including v9
+        let db = Database::open(temp_db.path()).unwrap();
+        let conn = db.connection();
+
+        // Should be at version 9
+        let version: i64 = conn.query_row(
+            "SELECT version FROM schema_version", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(version, SCHEMA_VERSION as i64);
+
+        // All signal sessions should be deleted
+        let session_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM signal_sessions", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(session_count, 0);
+
+        // All prekey_ entries should be deleted
+        let prekey_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM app_settings WHERE key LIKE 'prekey_%'", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(prekey_count, 0);
+
+        // Non-prekey settings should survive
+        let onion: String = conn.query_row(
+            "SELECT value FROM app_settings WHERE key = 'onion_address'", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(onion, "keep_me.onion");
     }
 
     #[test]
