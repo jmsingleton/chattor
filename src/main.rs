@@ -536,12 +536,12 @@ async fn main() -> Result<()> {
                                                 match plaintext {
                                                     Some(pt) => {
                                                         match session.encrypt(&pt) {
-                                                            // TODO(task3): send header separately in wire format
-                                                            Ok((_header, ciphertext, is_prekey)) => {
+                                                            Ok((header, ciphertext, is_prekey)) => {
                                                                 store.store_session(&session).ok();
                                                                 Some(protocol::message::TextMessage {
                                                                     from_onion: own_onion.clone(),
                                                                     to_onion: peer_onion.clone(),
+                                                                    signal_header: base64::engine::general_purpose::STANDARD.encode(&header),
                                                                     signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
                                                                     signal_type: if is_prekey {
                                                                         protocol::message::SignalMessageType::PrekeyMessage
@@ -550,6 +550,7 @@ async fn main() -> Result<()> {
                                                                     },
                                                                     timestamp: payload.sent_at,
                                                                     message_id: uuid::Uuid::parse_str(&msg_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                                                                    x3dh_init: None,
                                                                 })
                                                             }
                                                             Err(_) => None
@@ -896,13 +897,37 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     // when the peer sends their first PreKey message. We do NOT create the
     // session here — the shared secret requires the peer's ephemeral key,
     // which is embedded in their first encrypted message.
-    let private_b64 = base64::engine::general_purpose::STANDARD.encode(private_keys.identity_secret);
-    let prekey_key = format!("prekey_private:{}", from_onion);
+    let identity_b64 = base64::engine::general_purpose::STANDARD.encode(private_keys.identity_secret);
+    let spk_b64 = base64::engine::general_purpose::STANDARD.encode(private_keys.signed_prekey_secret);
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
-        (&prekey_key, &private_b64),
+        (&format!("prekey_identity:{}", from_onion), &identity_b64),
     ).map_err(|e| error::TorrentChatError::Database(
-        format!("Failed to store PreKey material: {}", e)
+        format!("Failed to store PreKey identity material: {}", e)
+    ))?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+        (&format!("prekey_spk:{}", from_onion), &spk_b64),
+    ).map_err(|e| error::TorrentChatError::Database(
+        format!("Failed to store PreKey SPK material: {}", e)
+    ))?;
+    if let Some(opk_secret) = private_keys.prekey_secret {
+        let opk_b64 = base64::engine::general_purpose::STANDARD.encode(opk_secret);
+        conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+            (&format!("prekey_opk:{}", from_onion), &opk_b64),
+        ).map_err(|e| error::TorrentChatError::Database(
+            format!("Failed to store PreKey OPK material: {}", e)
+        ))?;
+    }
+    // Also store the Signal identity secret for the initiator side
+    // (needed when handle_incoming_accept creates the session)
+    let signal_secret_b64 = base64::engine::general_purpose::STANDARD.encode(signal_identity.secret);
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+        (&format!("signal_identity_secret:{}", from_onion), &signal_secret_b64),
+    ).map_err(|e| error::TorrentChatError::Database(
+        format!("Failed to store Signal identity secret: {}", e)
     ))?;
 
     // Add friend to database
@@ -1016,17 +1041,20 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             let msg_id = text_msg.message_id.to_string();
             let is_prekey = text_msg.signal_type == protocol::message::SignalMessageType::PrekeyMessage;
 
-            // Decrypt the message using Signal session
+            // Decode header and ciphertext from wire format
             let store = crypto::SessionStore::new(&app.db);
+            let header = base64::engine::general_purpose::STANDARD.decode(&text_msg.signal_header)
+                .map_err(|e| error::TorrentChatError::Crypto(
+                    format!("Failed to decode header: {}", e)
+                ))?;
             let ciphertext = base64::engine::general_purpose::STANDARD.decode(&text_msg.signal_ciphertext)
                 .map_err(|e| error::TorrentChatError::Crypto(
-                    format!("Failed to decode base64: {}", e)
+                    format!("Failed to decode ciphertext: {}", e)
                 ))?;
 
             let payload = match store.load_session(from_onion)? {
                 Some(mut session) => {
-                    // TODO(task3): wire format should carry header+ciphertext separately
-                    let plaintext = session.decrypt(&[], &ciphertext)?;
+                    let plaintext = session.decrypt(&header, &ciphertext)?;
                     store.store_session(&session)?;
                     serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
                         .map_err(|e| error::TorrentChatError::Crypto(
@@ -1037,52 +1065,103 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                     // No session yet — create one from stored PreKey private material.
                     // This happens when we accepted a friend request (stored our private
                     // keys) and the peer sends their first message as a PreKey message.
-                    let prekey_key = format!("prekey_private:{}", from_onion);
-                    let private_b64: String = app.db.connection().query_row(
+
+                    // Extract X3DH init data from the message
+                    let x3dh_init = text_msg.x3dh_init.as_ref()
+                        .ok_or_else(|| error::TorrentChatError::Crypto(
+                            format!("PreKey message from {} missing X3DH init data", from_onion)
+                        ))?;
+
+                    let alice_identity_bytes = base64::engine::general_purpose::STANDARD
+                        .decode(&x3dh_init.sender_identity_key)
+                        .map_err(|e| error::TorrentChatError::Crypto(
+                            format!("Failed to decode sender identity key: {}", e)
+                        ))?;
+                    let alice_identity_public: [u8; 33] = alice_identity_bytes.try_into()
+                        .map_err(|_| error::TorrentChatError::Crypto(
+                            "Sender identity key has wrong length (expected 33)".into()
+                        ))?;
+
+                    let alice_ephemeral_bytes = base64::engine::general_purpose::STANDARD
+                        .decode(&x3dh_init.sender_ephemeral_key)
+                        .map_err(|e| error::TorrentChatError::Crypto(
+                            format!("Failed to decode sender ephemeral key: {}", e)
+                        ))?;
+                    let alice_ephemeral_public: [u8; 33] = alice_ephemeral_bytes.try_into()
+                        .map_err(|_| error::TorrentChatError::Crypto(
+                            "Sender ephemeral key has wrong length (expected 33)".into()
+                        ))?;
+
+                    // Load all stored PreKey private material
+                    let conn = app.db.connection();
+                    let identity_b64: String = conn.query_row(
                         "SELECT value FROM app_settings WHERE key = ?1",
-                        [&prekey_key],
+                        [&format!("prekey_identity:{}", from_onion)],
                         |row| row.get(0),
                     ).map_err(|_| error::TorrentChatError::Crypto(
-                        format!("No session and no stored PreKey material for {}", from_onion)
+                        format!("No stored PreKey identity material for {}", from_onion)
                     ))?;
+                    let spk_b64: String = conn.query_row(
+                        "SELECT value FROM app_settings WHERE key = ?1",
+                        [&format!("prekey_spk:{}", from_onion)],
+                        |row| row.get(0),
+                    ).map_err(|_| error::TorrentChatError::Crypto(
+                        format!("No stored PreKey SPK material for {}", from_onion)
+                    ))?;
+                    let opk_b64: Option<String> = conn.query_row(
+                        "SELECT value FROM app_settings WHERE key = ?1",
+                        [&format!("prekey_opk:{}", from_onion)],
+                        |row| row.get(0),
+                    ).ok();
 
-                    let identity_secret_bytes = base64::engine::general_purpose::STANDARD
-                        .decode(&private_b64)
+                    let identity_secret: [u8; 32] = base64::engine::general_purpose::STANDARD
+                        .decode(&identity_b64)
                         .map_err(|e| error::TorrentChatError::Crypto(
-                            format!("Failed to decode stored PreKey material: {}", e)
-                        ))?;
-                    let identity_secret: [u8; 32] = identity_secret_bytes.try_into()
+                            format!("Failed to decode PreKey identity: {}", e)
+                        ))?
+                        .try_into()
                         .map_err(|_| error::TorrentChatError::Crypto(
-                            "Stored PreKey material has wrong length".into()
+                            "PreKey identity secret has wrong length".into()
                         ))?;
+                    let signed_prekey_secret: [u8; 32] = base64::engine::general_purpose::STANDARD
+                        .decode(&spk_b64)
+                        .map_err(|e| error::TorrentChatError::Crypto(
+                            format!("Failed to decode PreKey SPK: {}", e)
+                        ))?
+                        .try_into()
+                        .map_err(|_| error::TorrentChatError::Crypto(
+                            "PreKey SPK secret has wrong length".into()
+                        ))?;
+                    let prekey_secret: Option<[u8; 32]> = opk_b64.map(|b64| {
+                        let bytes = base64::engine::general_purpose::STANDARD.decode(&b64)
+                            .expect("Failed to decode PreKey OPK");
+                        bytes.try_into().expect("PreKey OPK has wrong length")
+                    });
 
                     let private_material = crypto::PreKeyPrivateMaterial {
                         identity_secret,
-                        signed_prekey_secret: [0u8; 32], // TODO(task4): load real SPK secret
-                        prekey_secret: None,             // TODO(task4): load real OPK secret
+                        signed_prekey_secret,
+                        prekey_secret,
                     };
-
-                    // TODO(task4): Parse alice_identity_public and alice_ephemeral_public
-                    // from the wire format (PreKey message header). For now, use placeholder
-                    // 33-byte encoded keys. This code path won't work until Task 3/4.
-                    let alice_identity_placeholder: [u8; 33] = [0x05; 33];
-                    let alice_ephemeral_placeholder: [u8; 33] = [0x05; 33];
 
                     let (mut session, _ad) = crypto::SignalSession::from_prekey_message_real(
                         from_onion.clone(),
                         &private_material,
-                        &alice_identity_placeholder,
-                        &alice_ephemeral_placeholder,
+                        &alice_identity_public,
+                        &alice_ephemeral_public,
                     )?;
 
-                    // TODO(task3): wire format should carry header+ciphertext separately
-                    let plaintext = session.decrypt(&[], &ciphertext)?;
+                    let plaintext = session.decrypt(&header, &ciphertext)?;
                     store.store_session(&session)?;
 
                     // Clean up stored PreKey material (session is now established)
-                    app.db.connection().execute(
+                    conn.execute(
+                        "DELETE FROM app_settings WHERE key LIKE ?1",
+                        [&format!("prekey_%:{}", from_onion)],
+                    ).ok();
+                    conn.execute(
                         "DELETE FROM app_settings WHERE key = ?1",
-                        [&prekey_key],
+                        [&format!("signal_identity_secret:{}", from_onion)],
                     ).ok();
 
                     serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
@@ -1353,22 +1432,55 @@ fn handle_incoming_accept(
             format!("Failed to parse PreKey bundle: {}", e)
         ))?;
 
-    // Create Signal session: we (the initiator) perform full X3DH with the peer's bundle.
-    // TODO(task4): Load our real Signal identity secret from app_settings.
-    // For now, use a placeholder. This code path won't work correctly until Task 4.
+    // Load our Signal identity secret that was stored when we sent the friend request.
+    // We are the original requester; the acceptor sent us their PreKey bundle.
+    // We need our Signal identity to perform X3DH as initiator.
+    //
+    // When we sent the friend request, we didn't have the peer's .onion yet.
+    // But when we ACCEPTED a friend request from them (handle_accept_friend_request),
+    // we stored signal_identity_secret:<peer_onion>. However, in the case where
+    // we are the REQUESTER receiving an accept, we need to generate a new Signal
+    // identity now (the requester didn't pre-store one because the accept contains the bundle).
+    let signal_identity_secret: [u8; 32] = {
+        // Check if we stored a signal identity secret for this peer
+        let key = format!("signal_identity_secret:{}", accept.from_onion);
+        match app.db.connection().query_row(
+            "SELECT value FROM app_settings WHERE key = ?1",
+            [&key],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(b64) => {
+                let bytes = base64::engine::general_purpose::STANDARD.decode(&b64)
+                    .map_err(|e| error::TorrentChatError::Crypto(
+                        format!("Failed to decode stored Signal identity secret: {}", e)
+                    ))?;
+                bytes.try_into().map_err(|_| error::TorrentChatError::Crypto(
+                    "Stored Signal identity secret has wrong length".into()
+                ))?
+            }
+            Err(_) => {
+                // Generate a fresh Signal identity for this X3DH exchange
+                let kp = libsignal_protocol::vxeddsa::gen_keypair();
+                kp.secret
+            }
+        }
+    };
+
     let _identity = app.identity.as_ref().expect("identity set during init");
     let dummy_private = PreKeyPrivateMaterial {
         identity_secret: [0u8; 32],
         signed_prekey_secret: [0u8; 32],
         prekey_secret: None,
     };
-    let placeholder_signal_secret: [u8; 32] = [0u8; 32]; // TODO(task4): use real signal identity
-    let (session, _ad, _ephemeral_public) = SignalSession::from_prekey_bundle_real(
+    let (session, _ad, ephemeral_public) = SignalSession::from_prekey_bundle_real(
         accept.from_onion.clone(),
         &bundle,
         &dummy_private,
-        &placeholder_signal_secret,
+        &signal_identity_secret,
     )?;
+
+    // Compute our identity public key for the X3DH init data
+    let our_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(&signal_identity_secret);
 
     // Store session
     let store = SessionStore::new(&app.db);
@@ -1397,13 +1509,23 @@ fn handle_incoming_accept(
         let plaintext = serde_json::to_vec(&handshake)
             .map_err(|e| error::TorrentChatError::Crypto(format!("Handshake serialize: {}", e)))?;
 
-        // TODO(task3): send header separately in wire format
-        let (_header, ciphertext, is_prekey) = session.encrypt(&plaintext)?;
+        let (header, ciphertext, is_prekey) = session.encrypt(&plaintext)?;
         store.store_session(&session)?; // persist updated ratchet state
+
+        // Build X3DH init data for the PreKey message so Bob can run x3dh_responder
+        let x3dh_init = if is_prekey {
+            Some(protocol::message::X3DHInitData {
+                sender_identity_key: base64::engine::general_purpose::STANDARD.encode(our_identity_encoded),
+                sender_ephemeral_key: base64::engine::general_purpose::STANDARD.encode(ephemeral_public),
+            })
+        } else {
+            None
+        };
 
         let handshake_msg = protocol::message::Message::TextMessage(protocol::message::TextMessage {
             from_onion: own_onion.clone(),
             to_onion: accept.from_onion.clone(),
+            signal_header: base64::engine::general_purpose::STANDARD.encode(&header),
             signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
             signal_type: if is_prekey {
                 protocol::message::SignalMessageType::PrekeyMessage
@@ -1412,6 +1534,7 @@ fn handle_incoming_accept(
             },
             timestamp: now,
             message_id: uuid::Uuid::new_v4(),
+            x3dh_init,
         });
 
         app.message_queue.enqueue(&app.db, &accept.from_onion, &handshake_msg, "high")?;
