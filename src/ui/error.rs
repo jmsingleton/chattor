@@ -1,5 +1,6 @@
 use crate::error::TorrentChatError;
 
+#[allow(dead_code)]
 pub fn format_error_for_user(err: &TorrentChatError) -> String {
     match err {
         TorrentChatError::SignalProtocol(_) =>

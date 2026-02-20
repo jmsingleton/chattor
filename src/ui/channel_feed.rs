@@ -9,6 +9,7 @@ use crate::db::queries::ChannelPost;
 use crate::ui::theme::Theme;
 
 /// Render the channel feed view
+#[allow(clippy::too_many_arguments)]
 pub fn render_channel_feed(
     f: &mut Frame,
     area: Rect,

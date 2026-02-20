@@ -13,6 +13,7 @@ pub struct RenderContext {
     pub friends: Vec<FriendEntry>,
     pub messages: Vec<ChatMessage>,
     pub own_onion: Option<String>,
+    #[allow(dead_code)]
     pub friend_code: Option<String>,
     pub tor_connected: bool,
     pub pending_request_count: i64,
@@ -21,6 +22,9 @@ pub struct RenderContext {
     pub channel_posts: Vec<ChannelPost>,
     pub channel_post_read_counts: std::collections::HashMap<String, i64>,
     pub theme: Theme,
+    /// Per-onion presence: (is_online, is_typing)
+    pub presence: std::collections::HashMap<String, (bool, bool)>,
+    pub notification_flash: Option<String>,
 }
 
 /// Render the application UI based on current state
@@ -90,6 +94,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         crate::ui::sidebar::render_sidebar_with_channels(
             f, main_chunks[0], &ctx.friends, selected_idx, !input_focused,
             ctx.pending_request_count, &ctx.channel_subscriptions,
+            &ctx.presence,
             &ctx.theme,
         );
 
@@ -107,6 +112,10 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
             .and_then(|i| ctx.friends.get(i));
 
         // Conversation
+        let friend_is_typing = selected_friend
+            .map(|f| ctx.presence.get(&f.onion_address).is_some_and(|(_, typing)| *typing))
+            .unwrap_or(false);
+
         crate::ui::conversation::render_conversation(
             f,
             right_chunks[0],
@@ -115,6 +124,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
             ctx.own_onion.as_deref(),
             scroll_offset,
             ctx.conversation_ephemeral_ttl,
+            friend_is_typing,
             &ctx.theme,
         );
 
@@ -126,7 +136,14 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
     }
 
     // Footer
-    let footer_spans = format_footer_spans(app_state, &ctx.theme);
+    let footer_spans = if let Some(ref flash) = ctx.notification_flash {
+        vec![
+            Span::raw("  "),
+            Span::styled(flash.as_str(), Style::default().fg(ctx.theme.accent).add_modifier(Modifier::BOLD)),
+        ]
+    } else {
+        format_footer_spans(app_state, &ctx.theme)
+    };
     let footer = Paragraph::new(Line::from(footer_spans));
     f.render_widget(footer, chunks[2]);
 
@@ -157,7 +174,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
 fn format_footer_spans<'a>(state: &AppState, theme: &'a Theme) -> Vec<Span<'a>> {
     let pairs: Vec<(&str, &str)> = match state {
         AppState::Normal { input_focused: true, .. } => vec![("Enter", "Send"), ("Esc", "Nav")],
-        AppState::Normal { .. } => vec![("Tab/\u{2191}\u{2193}", "Select"), ("Enter", "Open"), ("a", "Add"), ("s", "Subscribe"), ("p", "Channel"), ("i", "Identity"), ("f", "Requests"), ("q", "Quit")],
+        AppState::Normal { .. } => vec![("Tab/\u{2191}\u{2193}", "Select"), ("Enter", "Open"), ("a", "Add"), ("n", "Notif"), ("s", "Subscribe"), ("p", "Channel"), ("i", "Identity"), ("f", "Requests"), ("q", "Quit")],
         AppState::AddingFriend { .. } => vec![("Enter", "Send"), ("Esc", "Cancel")],
         AppState::ViewingFriendRequests { .. } => vec![("\u{2191}\u{2193}", "Navigate"), ("Enter", "View"), ("Esc", "Back")],
         AppState::ViewingFriendRequest { .. } => vec![("A", "Accept"), ("R", "Reject"), ("Esc", "Back")],

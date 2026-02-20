@@ -110,8 +110,19 @@ impl ConnectionPool {
     }
 
     /// Explicitly remove a cached connection for a peer.
+    #[allow(dead_code)]
     pub async fn evict(&self, peer_onion: &str) {
         let mut conns = self.connections.lock().await;
         conns.remove(peer_onion);
+    }
+
+    /// Get a list of peer onion addresses with active (non-idle) connections.
+    /// Used by the heartbeat task to know who to send presence updates to.
+    pub async fn connected_peers(&self) -> Vec<String> {
+        let conns = self.connections.lock().await;
+        conns.iter()
+            .filter(|(_, pc)| pc.last_used.elapsed() < IDLE_TIMEOUT)
+            .map(|(k, _)| k.clone())
+            .collect()
     }
 }

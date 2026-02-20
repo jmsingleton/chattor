@@ -7,6 +7,8 @@ mod db;
 mod tor;
 mod protocol;
 mod net;
+mod notifications;
+mod presence;
 mod ui;
 
 use clap::Parser;
@@ -207,7 +209,7 @@ async fn main() -> Result<()> {
         loop {
             {
                 let app_lock = app_sync.lock().await;
-                if let Ok(requests) = collect_sync_requests(&*app_lock) {
+                if let Ok(requests) = collect_sync_requests(&app_lock) {
                     for (peer_onion, sync_msg) in requests {
                         app_lock.message_queue.enqueue(&app_lock.db, &peer_onion, &sync_msg, "low").ok();
                     }
@@ -217,8 +219,53 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Spawn heartbeat task — sends presence updates to connected peers
+    let app_heartbeat = Arc::clone(&app);
+    tokio::spawn(async move {
+        // Wait for Tor to initialize before starting heartbeats
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        loop {
+            {
+                let app_lock = app_heartbeat.lock().await;
+                if let Some(ref pool) = app_lock.connection_pool {
+                    let own_onion = app_lock.onion_address.clone().unwrap_or_default();
+                    let peers = pool.connected_peers().await;
+                    drop(app_lock);
+
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+
+                    for peer in peers {
+                        let msg = protocol::message::Message::Presence(
+                            protocol::message::PresenceMessage {
+                                from_onion: own_onion.clone(),
+                                presence_type: protocol::message::PresenceType::Heartbeat,
+                                timestamp: now,
+                            }
+                        );
+                        // Best-effort: don't retry or queue heartbeats
+                        let app_lock = app_heartbeat.lock().await;
+                        if let Some(ref pool) = app_lock.connection_pool {
+                            let _ = pool.send(&peer, &msg).await;
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(presence::HEARTBEAT_INTERVAL).await;
+        }
+    });
+
     // Initialize state machine
     let mut app_state = AppState::default();
+
+    // Initialize presence tracker (in-memory only)
+    let presence_map = presence::new_presence_map();
+
+    let mut last_typing_sent: Option<std::time::Instant> = None;
+    let mut was_typing = false;
+    let mut notification_flash: Option<(std::time::Instant, &str)> = None;
 
     // Main event loop
     let result = loop {
@@ -272,6 +319,8 @@ async fn main() -> Result<()> {
         // Release lock before rendering
         drop(app_lock);
 
+        let presence_snapshot = presence::get_presence_snapshot(&presence_map).await;
+
         let ctx = RenderContext {
             friends,
             messages,
@@ -284,7 +333,17 @@ async fn main() -> Result<()> {
             channel_posts,
             channel_post_read_counts,
             theme: theme.clone(),
+            presence: presence_snapshot,
+            notification_flash: notification_flash
+                .as_ref()
+                .filter(|(t, _)| t.elapsed() < std::time::Duration::from_secs(2))
+                .map(|(_, msg)| msg.to_string()),
         };
+
+        // Expire notification flash
+        if notification_flash.as_ref().is_some_and(|(t, _)| t.elapsed() >= std::time::Duration::from_secs(2)) {
+            notification_flash = None;
+        }
 
         // Render current state
         if let Err(e) = terminal.draw(|f| {
@@ -301,7 +360,7 @@ async fn main() -> Result<()> {
                         Some(AppAction::SendFriendRequest(code)) => {
                             let app_lock = app.lock().await;
 
-                            match handle_send_friend_request(&*app_lock, &code).await {
+                            match handle_send_friend_request(&app_lock, &code).await {
                                 Ok(SendResult::SentImmediately) => {
                                     app_state = AppState::default();
                                 }
@@ -323,7 +382,7 @@ async fn main() -> Result<()> {
                             let return_to_list = matches!(app_state, AppState::ViewingFriendRequests { .. });
                             let app_lock = app.lock().await;
 
-                            match handle_accept_friend_request(&*app_lock, id) {
+                            match handle_accept_friend_request(&app_lock, id) {
                                 Ok(_) => {}
                                 Err(e) => eprintln!("Failed to accept friend request: {}", e),
                             }
@@ -344,7 +403,7 @@ async fn main() -> Result<()> {
                             let return_to_list = matches!(app_state, AppState::ViewingFriendRequests { .. });
                             let app_lock = app.lock().await;
 
-                            match handle_reject_friend_request(&*app_lock, id) {
+                            match handle_reject_friend_request(&app_lock, id) {
                                 Ok(_) => {}
                                 Err(e) => eprintln!("Failed to reject friend request: {}", e),
                             }
@@ -505,7 +564,7 @@ async fn main() -> Result<()> {
                                     if let Some(text_msg) = encrypted_msg {
                                         let msg = protocol::message::Message::TextMessage(text_msg.clone());
                                         // Try to send directly, queue on failure
-                                        match try_send_direct(&*app_lock, &peer_onion, &msg).await {
+                                        match try_send_direct(&app_lock, &peer_onion, &msg).await {
                                             Ok(_) => {
                                                 db::queries::update_message_status(&app_lock.db, &msg_id, "sent").ok();
                                             }
@@ -522,6 +581,8 @@ async fn main() -> Result<()> {
                             }
 
                             drop(app_lock);
+                            was_typing = false;
+                            last_typing_sent = None;
                         }
                         Some(AppAction::SetEphemeralTtl(conv_id, ttl)) => {
                             let app_lock = app.lock().await;
@@ -540,7 +601,7 @@ async fn main() -> Result<()> {
 
                             // Sign the post
                             let sign_data = format!("{}{}{}", post_id, content, now);
-                            let signature = base64::engine::general_purpose::STANDARD.encode(&app_lock.identity.as_ref().expect("identity set during init").sign(sign_data.as_bytes()).to_bytes());
+                            let signature = base64::engine::general_purpose::STANDARD.encode(app_lock.identity.as_ref().expect("identity set during init").sign(sign_data.as_bytes()).to_bytes());
 
                             // Store locally
                             db::queries::store_channel_post(
@@ -621,8 +682,62 @@ async fn main() -> Result<()> {
                                 scroll_offset: 0,
                             };
                         }
+                        Some(AppAction::ToggleNotifications) => {
+                            let app_lock = app.lock().await;
+                            let new_state = notifications::toggle(&app_lock.db);
+                            drop(app_lock);
+                            notification_flash = Some((
+                                std::time::Instant::now(),
+                                if new_state { "Notifications: ON" } else { "Notifications: OFF" },
+                            ));
+                        }
+                        Some(AppAction::SendPresence(_)) => {} // Reserved for future use
                         Some(AppAction::Quit) => break Ok(()),
                         None => {} // Just state change
+                    }
+
+                    // Typing indicator detection
+                    if let AppState::Normal { input_focused: true, ref input, selected_friend_idx: Some(idx), .. } = &app_state {
+                        let is_typing_now = !input.is_empty();
+                        let should_send_started = is_typing_now && (!was_typing || last_typing_sent.map_or(true, |t| t.elapsed() >= presence::TYPING_DEBOUNCE));
+                        let should_send_stopped = !is_typing_now && was_typing;
+
+                        if should_send_started || should_send_stopped {
+                            let app_lock = app.lock().await;
+                            let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+                            if let Some(friend) = friends.get(*idx) {
+                                let own_onion = app_lock.onion_address.clone().unwrap_or_default();
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs() as i64;
+
+                                let presence_type = if should_send_started {
+                                    protocol::message::PresenceType::TypingStarted
+                                } else {
+                                    protocol::message::PresenceType::TypingStopped
+                                };
+
+                                let msg = protocol::message::Message::Presence(
+                                    protocol::message::PresenceMessage {
+                                        from_onion: own_onion,
+                                        presence_type,
+                                        timestamp: now,
+                                    }
+                                );
+
+                                // Best-effort send (don't queue typing indicators)
+                                if let Some(ref pool) = app_lock.connection_pool {
+                                    let _ = pool.send(&friend.onion_address, &msg).await;
+                                }
+                            }
+                            drop(app_lock);
+
+                            if should_send_started {
+                                last_typing_sent = Some(std::time::Instant::now());
+                            }
+                        }
+                        was_typing = is_typing_now;
                     }
                 }
                 Event::Mouse(_) => {} // Reserved for future mouse interactions
@@ -644,7 +759,7 @@ async fn main() -> Result<()> {
 
             // Process collected messages
             for incoming in incoming_messages {
-                if let Err(e) = handle_incoming_message(&*app_lock, incoming) {
+                if let Err(e) = handle_incoming_message(&app_lock, incoming, &presence_map).await {
                     eprintln!("Failed to handle incoming message: {}", e);
                 }
             }
@@ -662,7 +777,7 @@ async fn main() -> Result<()> {
 
         if should_process {
             let app_lock = app.lock().await;
-            if let Err(e) = process_message_queue(&*app_lock).await {
+            if let Err(e) = process_message_queue(&app_lock).await {
                 eprintln!("Queue processing error: {}", e);
             }
         }
@@ -731,7 +846,6 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
 
 /// Handle accepting a friend request
 fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
-    use crate::protocol::friend_request::FriendRequestHandler;
     use crate::crypto::PreKeyBundle;
 
     // Get our .onion address
@@ -769,7 +883,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
         to_onion: from_onion.clone(),
         signal_prekey_bundle: bundle_json,
         timestamp,
-        signature: format!("{}", base64::engine::general_purpose::STANDARD.encode(&signature.to_bytes())),
+        signature: base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
     };
 
     // Store PreKey private material so we can create the Signal session later
@@ -865,7 +979,7 @@ async fn try_send_direct(
 }
 
 /// Handle an incoming message from the listener
-fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) -> Result<()> {
+async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage, presence: &presence::PresenceMap) -> Result<()> {
     match &incoming.message {
         protocol::message::Message::FriendRequest(req) => {
             // Store incoming friend request in database
@@ -982,6 +1096,13 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
                 let conv_id = db::queries::get_or_create_conversation(&app.db, friend_id)?;
                 db::queries::store_incoming_message_with_ttl(&app.db, conv_id, from_onion, &payload.content, &msg_id, payload.ephemeral_ttl)?;
 
+                // Desktop notification (best-effort)
+                if notifications::is_enabled(&app.db) {
+                    let sender_name = db::queries::get_friend_display_name(&app.db, from_onion)
+                        .unwrap_or_else(|_| from_onion.to_string());
+                    notifications::notify_message(&sender_name);
+                }
+
                 // Queue delivery receipt back to sender
                 let receipt = protocol::message::DeliveryReceiptMessage {
                     message_id: text_msg.message_id,
@@ -1015,11 +1136,11 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
                 };
 
                 // For friends_only, verify they are a friend
-                if channel_type == "friends_only" {
-                    if db::queries::find_friend_by_onion(&app.db, &sub.subscriber_onion)?.is_none() {
-                        eprintln!("Rejected friends_only subscription from non-friend {}", sub.subscriber_onion);
-                        return Ok(());
-                    }
+                if channel_type == "friends_only"
+                    && db::queries::find_friend_by_onion(&app.db, &sub.subscriber_onion)?.is_none()
+                {
+                    eprintln!("Rejected friends_only subscription from non-friend {}", sub.subscriber_onion);
+                    return Ok(());
                 }
 
                 db::queries::add_channel_subscriber(&app.db, &sub.subscriber_onion, channel_type)?;
@@ -1060,10 +1181,10 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
             };
 
             // For friends_only, verify they are a friend
-            if channel_type_str == "friends_only" {
-                if db::queries::find_friend_by_onion(&app.db, &req.subscriber_onion)?.is_none() {
-                    return Ok(());
-                }
+            if channel_type_str == "friends_only"
+                && db::queries::find_friend_by_onion(&app.db, &req.subscriber_onion)?.is_none()
+            {
+                return Ok(());
             }
 
             let channel_id = if channel_type_str == "public" { 1 } else { 2 };
@@ -1114,6 +1235,19 @@ fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage) 
             db::queries::store_channel_post_receipt(
                 &app.db, &receipt.post_id.to_string(), &receipt.reader_onion, receipt.timestamp
             )?;
+        }
+        protocol::message::Message::Presence(pres) => {
+            match pres.presence_type {
+                protocol::message::PresenceType::Heartbeat => {
+                    presence::record_heartbeat(presence, &pres.from_onion).await;
+                }
+                protocol::message::PresenceType::TypingStarted => {
+                    presence::record_typing_started(presence, &pres.from_onion).await;
+                }
+                protocol::message::PresenceType::TypingStopped => {
+                    presence::record_typing_stopped(presence, &pres.from_onion).await;
+                }
+            }
         }
     }
 

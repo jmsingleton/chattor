@@ -9,6 +9,7 @@ use crate::db::queries::{ChatMessage, FriendEntry};
 use crate::ui::theme::Theme;
 
 /// Render the conversation area
+#[allow(clippy::too_many_arguments)]
 pub fn render_conversation(
     f: &mut Frame,
     area: Rect,
@@ -17,6 +18,7 @@ pub fn render_conversation(
     own_onion: Option<&str>,
     scroll_offset: usize,
     ephemeral_ttl: Option<i64>,
+    friend_is_typing: bool,
     theme: &Theme,
 ) {
     let title = if let (Some(friend_entry), Some(ttl)) = (friend, ephemeral_ttl) {
@@ -82,8 +84,36 @@ pub fn render_conversation(
                     ])
                     .split(padded);
                 f.render_widget(text, v_layout[1]);
+
+                if friend_is_typing {
+                    let typing_text = format!("{} is typing\u{2026}", friend_entry.display());
+                    let typing_line = Paragraph::new(typing_text)
+                        .style(Style::default().fg(theme.fg_dim));
+                    let typing_area = Rect {
+                        x: padded.x,
+                        y: padded.y + padded.height.saturating_sub(1),
+                        width: padded.width,
+                        height: 1,
+                    };
+                    f.render_widget(typing_line, typing_area);
+                }
             } else {
                 render_messages(f, padded, messages, own_onion, &friend_entry.display(), scroll_offset, theme);
+
+                if friend_is_typing {
+                    let typing_text = format!("{} is typing\u{2026}", friend_entry.display());
+                    let typing_line = Paragraph::new(typing_text)
+                        .style(Style::default().fg(theme.fg_dim));
+                    if padded.height > 1 {
+                        let typing_area = Rect {
+                            x: padded.x,
+                            y: padded.y + padded.height - 1,
+                            width: padded.width,
+                            height: 1,
+                        };
+                        f.render_widget(typing_line, typing_area);
+                    }
+                }
             }
         }
     }
@@ -102,7 +132,7 @@ fn render_messages(
     let mut lines: Vec<Line> = Vec::new();
 
     for msg in messages {
-        let is_own = own_onion.map_or(false, |o| msg.sender_onion == o);
+        let is_own = own_onion.is_some_and(|o| msg.sender_onion == o);
         let sender = if is_own { "You" } else { friend_name };
         let time = format_timestamp(msg.timestamp);
 

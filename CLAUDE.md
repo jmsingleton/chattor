@@ -18,7 +18,7 @@ The plan files contain the source of truth for what needs to be built and how. A
 
 **chattor** is a privacy-first TUI (Terminal User Interface) chat application built in Rust. The architecture is pure peer-to-peer over Tor hidden services with no central servers. Each user runs their own hidden service (.onion address) for receiving messages, with end-to-end encryption via Signal Protocol (Double Ratchet).
 
-**Current Status:** Phase 6 complete. All phases implemented. Real arti Tor transport, Signal Protocol X3DH, connection pooling, and comprehensive e2e test coverage.
+**Current Status:** All phases complete plus UX polish. Real arti Tor transport, Signal Protocol X3DH, connection pooling, presence system (typing indicators + online status), desktop notifications, and comprehensive e2e test coverage. Distribution packaging available (deb, rpm, AUR, Homebrew).
 
 **Core Design Principles:**
 - Privacy-first: No central servers, no telemetry, no metadata leakage
@@ -40,7 +40,7 @@ cargo run -- --theme cyberpunk  # Run with a specific theme
 
 ### Testing
 ```bash
-cargo test                            # Run all tests (~208 currently)
+cargo test                            # Run all tests (~226 currently)
 cargo test protocol::message          # Run specific module tests
 cargo test --test integration         # Integration tests only
 cargo test --test e2e_messaging       # E2E crypto/messaging tests (no Tor needed)
@@ -85,6 +85,8 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
             Signal Protocol (E2E Encryption)
                     ↓
             Message Queue (offline delivery)
+                    ↓
+            Presence System (typing/online) ← → Desktop Notifications
 ```
 
 ### Key Components
@@ -116,7 +118,8 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 
 **5. Protocol Layer (`src/protocol/`)**
 - Friend codes: 32-word mnemonic (256-word dictionary, 8 groups of 4 words)
-- Message types (12 total): `FriendRequest`, `FriendRequestAccept`, `FriendRequestReject`, `TextMessage`, `DeliveryReceipt`, `ReadReceipt`, `ChannelSubscribe`, `ChannelUnsubscribe`, `ChannelPost`, `ChannelSyncRequest`, `ChannelSyncResponse`, `ChannelPostReceipt`
+- Message types (13 total): `FriendRequest`, `FriendRequestAccept`, `FriendRequestReject`, `TextMessage`, `DeliveryReceipt`, `ReadReceipt`, `ChannelSubscribe`, `ChannelUnsubscribe`, `ChannelPost`, `ChannelSyncRequest`, `ChannelSyncResponse`, `ChannelPostReceipt`, `Presence`
+- `PresenceType` enum: `Heartbeat`, `TypingStarted`, `TypingStopped`
 - `ChannelType` enum: `Public`, `FriendsOnly`
 - JSON serialization with serde for wire protocol
 - Signal Protocol envelope: `signal_ciphertext`, `signal_type` (PreKeyMessage or Message)
@@ -128,28 +131,43 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - Concurrent per-peer queue processing (10 parallel peers via semaphore)
 - Filters by destination .onion address
 
-**9. Connection Pool (`src/net/pool.rs`)**
+**7. Connection Pool (`src/net/pool.rs`)**
 - Caches Tor circuits per peer for reuse (avoids 10-30s circuit build per message)
 - Retry-on-stale: evicts dead connections and retries once with fresh circuit
 - Background cleanup: idle connections evicted after 5 minutes
 - Timeouts: 30s circuit build, 10s message send
 
-**7. UI Layer (`src/ui/`)**
+**8. UI Layer (`src/ui/`)**
 - Full TUI with ratatui: friends sidebar, conversation view, channel feed
 - Bootstrap animation screen during Tor connection
 - Header displays: version, Tor connection status, onion address
 - Modals: add friend, friend requests, identity, ephemeral settings, channel subscribe
 - Channel feed view with post composition (own channels) and read-only view (subscriptions)
 - Sidebar shows friends list + channels section (own channels + subscriptions)
+- Dynamic sidebar status icons: ● online, ✎ typing, ○ offline
+- "is typing..." indicator in conversation view
 - Theme struct provides consistent colors across all UI components
 
-**8. Broadcast Channels (`src/ui/channel_feed.rs`, `src/db/queries.rs`)**
+**9. Broadcast Channels (`src/ui/channel_feed.rs`, `src/db/queries.rs`)**
 - Two auto-created channels per user: Public and Friends Only
 - Posts are Ed25519-signed, stored with 100-post retention limit
 - Pull-based sync: subscribers request missed posts via `ChannelSyncRequest/Response`
 - Read receipts: publisher sees "seen by N" count per post
 - Auto-subscribe: friends automatically subscribe to each other's channels on friend accept
 - Periodic sync task runs every 5 minutes
+
+**10. Presence System (`src/presence.rs`)**
+- In-memory `HashMap<String, PeerPresence>` tracks per-peer online/typing state
+- Heartbeat background task sends presence to connected peers every 60s
+- Peers marked offline after 120s without heartbeat
+- Typing indicators with 5s auto-expiry and 4s outgoing debounce
+- Presence messages are best-effort (not queued or encrypted — Tor provides transport security)
+
+**11. Desktop Notifications (`src/notifications.rs`)**
+- Uses `notify-rust` for native desktop notifications
+- Privacy-first: shows sender name only, never message content
+- Global toggle via `[n]` keybinding, persisted in `app_settings` table
+- 2-second flash feedback in footer when toggled
 
 ### Platform-Specific Paths
 
@@ -173,7 +191,7 @@ Database path: `{data_dir}/messages.db`
 - Message queue with retry logic
 - Protocol message types (5 types with JSON serialization)
 - Friend code ↔ .onion address mapping
-- Integration tests (208 total, all passing)
+- Integration tests (226 total, all passing)
 
 **What's Real (Phase 2b + Phase 5 + Phase 6):**
 - `TorClient::new_with_data_dir()` - real arti bootstrap with persistent state
@@ -237,9 +255,15 @@ Database path: `{data_dir}/messages.db`
 - Friend request accept queued (avoids 30s UI block from direct Tor send)
 - 6 comprehensive e2e tests covering full friend-request → X3DH → messaging pipeline
 
+### UX Polish ✅
+- Presence system: typing indicators, online status with heartbeat, dynamic sidebar icons
+- Desktop notifications via notify-rust with global toggle (`[n]` keybinding)
+- Distribution packaging: deb, rpm, AUR (chattor-bin + chattor-git), Homebrew formula
+- CI release workflow for automated package builds
+
 ### Future Work
-- Typing indicators, online status, desktop notifications
-- Backup/restore, packaging for distributions (deb/rpm/AUR/Homebrew)
+- Backup/restore functionality
+- File transfer support
 
 ## Important Technical Details
 
@@ -278,8 +302,8 @@ Database path: `{data_dir}/messages.db`
 8. Stores in `messages` table; FTS triggers auto-update `messages_fts` for search
 
 ### Testing Strategy
-- **Unit tests:** Per-module in `#[cfg(test)]` blocks (~193 tests)
-- **Integration tests:** `tests/integration/messaging_test.rs` (cross-module interaction, 9 tests)
+- **Unit tests:** Per-module in `#[cfg(test)]` blocks (~204 tests)
+- **Integration tests:** `tests/integration/` (cross-module interaction, 16 tests including presence)
 - **E2E tests:** `tests/e2e_messaging.rs` (full Signal Protocol pipeline, offline, 6 tests)
 - **Database tests:** Use tempfile crate for isolated test databases
 - **No stubs:** Tor client, hidden service, Signal crypto, and friend request signatures are all real. TorConnection sends over real arti DataStreams via ConnectionPool.
@@ -289,13 +313,16 @@ Database path: `{data_dir}/messages.db`
 - `src/app.rs` - Central application state and initialization
 - `src/db/schema.rs` - Complete database schema (version 8)
 - `src/db/queries.rs` - All database queries including channel operations
-- `src/protocol/message.rs` - All message types and wire format (12 types)
+- `src/protocol/message.rs` - All message types and wire format (13 types)
 - `src/net/queue.rs` - Offline message delivery queue with exponential backoff
 - `src/net/pool.rs` - Connection pool with per-peer Tor circuit caching
 - `src/ui/channel_feed.rs` - Channel post feed rendering
 - `src/ui/theme.rs` - Theme struct, 7 preset definitions, hex color parsing, TOML config loading
 - `src/tor/hidden_service.rs` - Real arti onion service hosting
+- `src/presence.rs` - Peer presence tracker (online/typing state, heartbeat constants)
+- `src/notifications.rs` - Desktop notifications with notify-rust and global toggle
 - `tests/e2e_messaging.rs` - E2E tests for full X3DH + messaging pipeline
+- `tests/integration/presence_test.rs` - Presence system integration tests
 - `docs/plans/2026-02-06-torrent-chat-design.md` - Complete design vision
 
 ## Common Patterns
@@ -315,7 +342,7 @@ conn.execute("INSERT INTO ...", params)?;
 ### Async/Await
 - Tokio runtime with "full" features
 - `App::init_tor()` is async, but `App::new()` is sync
-- Future: Background tasks for message queue processing, Tor event loop
+- Background tasks: message queue processing, channel sync, heartbeat presence updates
 
 ### Testing Utilities
 - `tempfile::NamedTempFile` for temporary test databases

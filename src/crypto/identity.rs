@@ -6,7 +6,7 @@ use crate::db::Database;
 /// User identity keypair (Ed25519)
 pub struct IdentityKeypair {
     signing_key: SigningKey,
-    verifying_key: VerifyingKey,
+    _verifying_key: VerifyingKey,
 }
 
 impl IdentityKeypair {
@@ -15,17 +15,19 @@ impl IdentityKeypair {
         let mut csprng = OsRng;
         let signing_key = SigningKey::generate(&mut csprng);
         let verifying_key = signing_key.verifying_key();
-        Ok(IdentityKeypair { signing_key, verifying_key })
+        Ok(IdentityKeypair { signing_key, _verifying_key: verifying_key })
     }
 
     /// Create an IdentityKeypair from an existing signing key.
     /// Create from an existing signing key.
+    #[allow(dead_code)]
     pub fn from_signing_key(signing_key: SigningKey) -> Self {
         let verifying_key = signing_key.verifying_key();
-        IdentityKeypair { signing_key, verifying_key }
+        IdentityKeypair { signing_key, _verifying_key: verifying_key }
     }
 
     /// Load identity from database or generate new one
+    #[allow(dead_code)]
     pub fn load_or_generate(db: &Database) -> Result<Self> {
         let conn = db.connection();
 
@@ -78,7 +80,7 @@ impl IdentityKeypair {
 
         Ok(IdentityKeypair {
             signing_key,
-            verifying_key,
+            _verifying_key: verifying_key,
         })
     }
 
@@ -110,18 +112,19 @@ impl IdentityKeypair {
     }
 
     /// Derive .onion address from identity key (v3 format)
+    #[allow(dead_code)]
     pub fn to_onion_address(&self) -> String {
         use sha3::{Sha3_256, Digest};
         use base32::Alphabet;
 
-        let public_key_bytes = self.verifying_key.to_bytes();
+        let public_key_bytes = self._verifying_key.to_bytes();
 
         // v3 onion address format: base32(public_key || checksum || version)
         let version = 0x03u8;
         let mut hasher = Sha3_256::new();
         hasher.update(b".onion checksum");
-        hasher.update(&public_key_bytes);
-        hasher.update(&[version]);
+        hasher.update(public_key_bytes);
+        hasher.update([version]);
         let checksum = &hasher.finalize()[0..2];
 
         let mut address_bytes = Vec::new();
@@ -136,11 +139,13 @@ impl IdentityKeypair {
     }
 
     /// Get the public key
+    #[allow(dead_code)]
     pub fn public_key(&self) -> &VerifyingKey {
-        &self.verifying_key
+        &self._verifying_key
     }
 
     /// Get the secret key bytes
+    #[allow(dead_code)]
     pub fn secret_key(&self) -> &SigningKey {
         &self.signing_key
     }
@@ -151,8 +156,9 @@ impl IdentityKeypair {
     }
 
     /// Verify a signature
+    #[allow(dead_code)]
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
-        self.verifying_key
+        self._verifying_key
             .verify(message, signature)
             .map_err(|e| TorrentChatError::Crypto(format!("Signature verification failed: {}", e)))
     }

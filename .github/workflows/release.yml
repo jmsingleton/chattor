@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: x86_64-linux
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            suffix: aarch64-macos
+          - os: macos-13
+            target: x86_64-apple-darwin
+            suffix: x86_64-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        working-directory: chattor
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Create tarball
+        working-directory: chattor
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARCHIVE="chattor-${VERSION}-${{ matrix.suffix }}.tar.gz"
+          mkdir -p staging
+          cp target/${{ matrix.target }}/release/chattor staging/
+          cp man/chattor.1 staging/
+          cp -r completions staging/
+          cp LICENSE-MIT LICENSE-APACHE staging/
+          tar -czf "${ARCHIVE}" -C staging .
+          echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
+
+      - name: Build .deb package
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: chattor
+        run: |
+          cargo install cargo-deb
+          cargo deb --target ${{ matrix.target }} --no-build
+
+      - name: Build .rpm package
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: chattor
+        run: |
+          cargo install cargo-generate-rpm
+          cargo generate-rpm --target ${{ matrix.target }}
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.suffix }}
+          path: chattor/${{ env.ARCHIVE }}
+
+      - name: Upload .deb
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: chattor/target/${{ matrix.target }}/debian/*.deb
+
+      - name: Upload .rpm
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: chattor/target/${{ matrix.target }}/generate-rpm/*.rpm
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*
+
+  publish-aur:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: archive-x86_64-linux
+          path: artifacts
+
+      - name: Setup SSH for AUR
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AUR_SSH_KEY }}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          echo "Host aur.archlinux.org" >> ~/.ssh/config
+          echo "  IdentityFile ~/.ssh/aur" >> ~/.ssh/config
+          echo "  User aur" >> ~/.ssh/config
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+
+      - name: Compute checksum
+        run: |
+          SHA256=$(sha256sum artifacts/chattor-*-x86_64-linux.tar.gz | cut -d' ' -f1)
+          echo "SHA256=${SHA256}" >> $GITHUB_ENV
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Update chattor-bin
+        run: |
+          git clone ssh://aur@aur.archlinux.org/chattor-bin.git /tmp/chattor-bin
+          cp chattor/dist/aur-bin/PKGBUILD /tmp/chattor-bin/PKGBUILD
+          cd /tmp/chattor-bin
+          sed -i "s/pkgver=.*/pkgver=${VERSION}/" PKGBUILD
+          sed -i "s/sha256sums=.*/sha256sums=('${SHA256}')/" PKGBUILD
+          docker run --rm -v /tmp/chattor-bin:/pkg archlinux bash -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to v${VERSION}"
+          git push
+
+      - name: Update chattor-git
+        run: |
+          git clone ssh://aur@aur.archlinux.org/chattor-git.git /tmp/chattor-git
+          cp chattor/dist/aur-git/PKGBUILD /tmp/chattor-git/PKGBUILD
+          cd /tmp/chattor-git
+          sed -i "s/pkgver=.*/pkgver=${VERSION}/" PKGBUILD
+          docker run --rm -v /tmp/chattor-git:/pkg archlinux bash -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to v${VERSION}"
+          git push
+
+  publish-homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get source tarball checksum
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          URL="https://github.com/jmsingleton/chattor/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
+          curl -sL "${URL}" -o source.tar.gz
+          SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)
+          echo "SHA256=${SHA256}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "URL=${URL}" >> $GITHUB_ENV
+
+      - name: Update Homebrew tap
+        run: |
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/jmsingleton/homebrew-chattor.git /tmp/tap
+          mkdir -p /tmp/tap/Formula
+          cp chattor/dist/homebrew/chattor.rb /tmp/tap/Formula/chattor.rb
+          cd /tmp/tap
+          sed -i "s|url \".*\"|url \"${URL}\"|" Formula/chattor.rb
+          sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Formula/chattor.rb
+          git add Formula/chattor.rb
+          git commit -m "chattor ${VERSION}"
+          git push

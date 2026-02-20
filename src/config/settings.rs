@@ -22,6 +22,7 @@ pub struct Settings {
 
 impl Settings {
     /// Create settings with defaults
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Result<Self> {
         let config_dir = Self::default_config_dir()?;
         let data_dir = Self::default_data_dir()?;

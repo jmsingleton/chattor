@@ -9,6 +9,8 @@ use crate::db::queries::{FriendEntry, ChannelSubscription};
 use crate::ui::theme::Theme;
 
 /// Render the friends sidebar with channels section
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 pub fn render_sidebar(
     f: &mut Frame,
     area: Rect,
@@ -16,12 +18,14 @@ pub fn render_sidebar(
     selected_idx: Option<usize>,
     focused: bool,
     pending_request_count: i64,
+    presence: &std::collections::HashMap<String, (bool, bool)>,
     theme: &Theme,
 ) {
-    render_sidebar_with_channels(f, area, friends, selected_idx, focused, pending_request_count, &[], theme);
+    render_sidebar_with_channels(f, area, friends, selected_idx, focused, pending_request_count, &[], presence, theme);
 }
 
 /// Render the friends sidebar with channels section
+#[allow(clippy::too_many_arguments)]
 pub fn render_sidebar_with_channels(
     f: &mut Frame,
     area: Rect,
@@ -30,6 +34,7 @@ pub fn render_sidebar_with_channels(
     focused: bool,
     pending_request_count: i64,
     channel_subscriptions: &[ChannelSubscription],
+    presence: &std::collections::HashMap<String, (bool, bool)>,
     theme: &Theme,
 ) {
     // Split sidebar into friends + channels
@@ -42,10 +47,11 @@ pub fn render_sidebar_with_channels(
         ])
         .split(area);
 
-    render_friends_list(f, sidebar_chunks[0], friends, selected_idx, focused, pending_request_count, theme);
+    render_friends_list(f, sidebar_chunks[0], friends, selected_idx, focused, pending_request_count, presence, theme);
     render_channels_section(f, sidebar_chunks[1], channel_subscriptions, theme);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_friends_list(
     f: &mut Frame,
     area: Rect,
@@ -53,6 +59,7 @@ fn render_friends_list(
     selected_idx: Option<usize>,
     focused: bool,
     pending_request_count: i64,
+    presence: &std::collections::HashMap<String, (bool, bool)>,
     theme: &Theme,
 ) {
     let title = if pending_request_count > 0 {
@@ -84,13 +91,17 @@ fn render_friends_list(
                 name
             };
 
-            let status_icon = "○"; // FUTURE: show online/offline status via Tor
+            let (status_icon, status_color) = match presence.get(&friend.onion_address) {
+                Some((_, true)) => ("\u{270e}", theme.accent),
+                Some((true, _)) => ("\u{25cf}", theme.sidebar_status_online),
+                _ => ("\u{25cb}", theme.fg_dim),
+            };
 
             let mut spans = vec![
                 Span::raw(arrow),
                 Span::raw(truncated),
                 Span::raw(" "),
-                Span::styled(status_icon, Style::default().fg(theme.fg_dim)),
+                Span::styled(status_icon, Style::default().fg(status_color)),
             ];
 
             if friend.unread_count > 0 {

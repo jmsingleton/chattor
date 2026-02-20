@@ -9,10 +9,12 @@ use std::sync::Arc;
 use base64::Engine;
 
 /// Handles sending encrypted messages
+#[allow(dead_code)]
 pub struct MessageSender {
     db: Arc<Database>,
 }
 
+#[allow(dead_code)]
 impl MessageSender {
     /// Create new message sender
     pub fn new(db: Arc<Database>) -> Self {

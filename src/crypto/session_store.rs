@@ -56,6 +56,7 @@ impl<'a> SessionStore<'a> {
     }
 
     /// Delete session from database
+    #[allow(dead_code)]
     pub fn delete_session(&self, remote_onion: &str) -> Result<()> {
         let conn = self.db.connection();
 

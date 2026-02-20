@@ -39,6 +39,9 @@ pub enum Message {
 
     #[serde(rename = "channel_post_receipt")]
     ChannelPostReceipt(ChannelPostReceiptMessage),
+
+    #[serde(rename = "presence")]
+    Presence(PresenceMessage),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -147,6 +150,22 @@ pub struct ChannelSyncResponseMessage {
 pub struct ChannelPostReceiptMessage {
     pub post_id: Uuid,
     pub reader_onion: String,
+    pub timestamp: i64,
+}
+
+/// Type of presence update
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PresenceType {
+    Heartbeat,
+    TypingStarted,
+    TypingStopped,
+}
+
+/// Lightweight presence message (not encrypted — Tor provides transport security)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PresenceMessage {
+    pub from_onion: String,
+    pub presence_type: PresenceType,
     pub timestamp: i64,
 }
 
@@ -310,5 +329,31 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: Message = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
+    }
+
+    #[test]
+    fn test_presence_message_serialization() {
+        let msg = Message::Presence(PresenceMessage {
+            from_onion: "test.onion".to_string(),
+            presence_type: PresenceType::Heartbeat,
+            timestamp: 1000,
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn test_presence_typing_roundtrip() {
+        for pt in [PresenceType::Heartbeat, PresenceType::TypingStarted, PresenceType::TypingStopped] {
+            let msg = Message::Presence(PresenceMessage {
+                from_onion: "peer.onion".to_string(),
+                presence_type: pt.clone(),
+                timestamp: 42,
+            });
+            let bytes = serde_json::to_vec(&msg).unwrap();
+            let decoded: Message = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(msg, decoded);
+        }
     }
 }

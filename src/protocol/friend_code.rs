@@ -81,7 +81,7 @@ pub fn friend_code_to_onion(code: &str) -> Result<String> {
     let normalized = code.trim().to_lowercase();
 
     // Split on spaces and dashes to extract individual words
-    let words: Vec<&str> = normalized.split(|c: char| c == ' ' || c == '-')
+    let words: Vec<&str> = normalized.split([' ', '-'])
         .filter(|w| !w.is_empty())
         .collect();
 
@@ -105,9 +105,10 @@ pub fn friend_code_to_onion(code: &str) -> Result<String> {
 }
 
 /// Validate that a string looks like a friend code (32 words from our word list).
+#[allow(dead_code)]
 pub fn validate_friend_code(code: &str) -> Result<()> {
     let normalized = code.trim().to_lowercase();
-    let words: Vec<&str> = normalized.split(|c: char| c == ' ' || c == '-')
+    let words: Vec<&str> = normalized.split([' ', '-'])
         .filter(|w| !w.is_empty())
         .collect();
 
@@ -166,7 +167,7 @@ fn pubkey_to_onion(pubkey: &[u8; 32]) -> Result<String> {
     let mut hasher = Sha3_256::new();
     hasher.update(b".onion checksum");
     hasher.update(pubkey);
-    hasher.update(&[0x03u8]); // version
+    hasher.update([0x03u8]); // version
     let hash = hasher.finalize();
     let checksum = &hash[..2];
 

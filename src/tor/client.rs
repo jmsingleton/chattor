@@ -55,6 +55,7 @@ impl TorClient {
     }
 
     /// Create and bootstrap with default config (for backward compat / tests)
+    #[allow(dead_code)]
     pub async fn new() -> Result<Self> {
         let config = TorClientConfig::default();
         let client = ArtiTorClient::create_bootstrapped(config)
@@ -67,6 +68,7 @@ impl TorClient {
     }
 
     /// Check if Tor client is bootstrapped
+    #[allow(dead_code)]
     pub fn is_bootstrapped(&self) -> bool {
         // Arti client is bootstrapped after creation
         true

@@ -13,17 +13,13 @@ pub use bootstrap::{
     BootstrapAction, BootstrapPhase, BootstrapUpdate,
     render_connecting, render_failure, handle_bootstrap_key,
 };
-pub use channel_feed::render_channel_feed;
-pub use conversation::{render_conversation, render_input};
-pub use modals::{render_add_friend_modal, render_friend_request_modal, render_identity_modal};
-pub use sidebar::{render_sidebar, render_sidebar_with_channels};
 pub use state::{AppState, AppAction};
-pub use error::format_error_for_user;
 pub use theme::Theme;
 
 use crate::app::App;
 
 /// Display connection status
+#[allow(dead_code)]
 pub fn display_connection_status(app: &App) {
     println!("\n=== Connection Status ===");
 
@@ -56,6 +52,7 @@ pub fn display_connection_status(app: &App) {
 /// On Linux, CLI tools (wl-copy/xclip/xsel) are tried first because arboard's
 /// clipboard contents die when the Clipboard struct is dropped. CLI tools fork
 /// a background process that persists the contents independently.
+#[allow(clippy::needless_return)]
 pub fn copy_to_clipboard(text: &str) -> bool {
     // On Linux, try CLI tools first — they persist clipboard contents
     // independently of our process, avoiding the "dropped too quickly" issue.

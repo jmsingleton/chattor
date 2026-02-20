@@ -24,6 +24,7 @@ pub enum AppState {
         request_id: i64,
         from_onion: String,
         friend_code: String,
+        #[allow(dead_code)]
         timestamp: i64,
         return_to_list: bool,
     },
@@ -76,8 +77,12 @@ pub enum AppAction {
     ViewFriendRequests,
     PublishChannelPost(String, String),     // (content, channel_type)
     SubscribeToChannel(String),             // publisher .onion address
+    #[allow(dead_code)]
     SelectChannel(String, String, bool),    // (publisher_onion, channel_type, is_own)
     ViewOwnChannel,
+    ToggleNotifications,
+    #[allow(dead_code)]
+    SendPresence(crate::protocol::message::PresenceType),
     Quit,
 }
 
@@ -172,6 +177,7 @@ impl AppState {
                             Ok(None)
                         }
                         KeyCode::Char('p') => Ok(Some(AppAction::ViewOwnChannel)),
+                        KeyCode::Char('n') => Ok(Some(AppAction::ToggleNotifications)),
                         KeyCode::Tab => {
                             if selected_friend_idx.is_none() {
                                 *selected_friend_idx = Some(0);
@@ -789,7 +795,6 @@ mod tests {
 
     #[test]
     fn friend_requests_list_esc_returns_to_normal() {
-        use crate::db::queries::PendingFriendRequest;
         let mut state = AppState::ViewingFriendRequests {
             requests: vec![],
             selected_idx: 0,

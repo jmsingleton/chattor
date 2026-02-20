@@ -2,4 +2,5 @@
 
 mod integration {
     mod messaging_test;
+    mod presence_test;
 }
