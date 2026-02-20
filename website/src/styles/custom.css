@@ -1,1 +1,52 @@
-/* Rose Pine theme — will be populated in Task 2 */
+/* Rose Pine theme — CSS custom property overrides for Astro Starlight */
+
+:root {
+  /* Rose Pine — Base palette */
+  --sl-color-white: #e0def4;       /* Text */
+  --sl-color-gray-1: #e0def4;      /* Text */
+  --sl-color-gray-2: #908caa;      /* Subtle */
+  --sl-color-gray-3: #6e6a86;      /* Muted */
+  --sl-color-gray-4: #524f67;      /* Highlight High */
+  --sl-color-gray-5: #26233a;      /* Overlay */
+  --sl-color-gray-6: #1f1d2e;      /* Surface */
+  --sl-color-black: #191724;       /* Base */
+
+  /* Accent — Iris */
+  --sl-color-accent-low: #2a2540;  /* Iris dimmed */
+  --sl-color-accent: #c4a7e7;      /* Iris */
+  --sl-color-accent-high: #d8c7f0; /* Iris bright */
+
+  /* Named colors using Rose Pine palette */
+  --sl-hue-orange: 35;     /* Gold #f6c177 */
+  --sl-hue-green: 168;     /* Foam #9ccfd8 */
+  --sl-hue-blue: 189;      /* Foam alt */
+  --sl-hue-purple: 267;    /* Iris #c4a7e7 */
+  --sl-hue-red: 343;       /* Love #eb6f92 */
+}
+
+/* Logo glow on hover */
+[data-logo] img:hover {
+  filter: drop-shadow(0 0 8px #c4a7e780);
+  transition: filter 0.2s ease;
+}
+
+/* Code blocks — Overlay background */
+pre {
+  background-color: #26233a !important;
+}
+
+/* Inline code */
+:not(pre) > code {
+  background-color: #26233a;
+  color: #e0def4;
+}
+
+/* Hero section styling */
+.hero {
+  background: radial-gradient(ellipse at center, #1f1d2e 0%, #191724 70%);
+}
+
+/* Links — Foam for external, Iris for internal (handled by accent) */
+a:hover {
+  color: #9ccfd8;
+}
