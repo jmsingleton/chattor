@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/chattor-logo.png" alt="Chattor logo" width="300">
+</p>
+
 # chattor
 
 **Peer-to-peer encrypted chat over Tor, right in your terminal.**
