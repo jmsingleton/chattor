@@ -116,8 +116,12 @@ mod tests {
 
         // Create real session
         let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let (bob_bundle, bob_private) = crate::crypto::PreKeyBundle::generate_real(&bob_identity).unwrap();
+        let _bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let (bob_bundle, bob_private) = {
+            let sig_id = libsignal_protocol::vxeddsa::gen_keypair();
+            let sig_pub = libsignal_protocol::utils::decode_public_key(&sig_id.public).unwrap();
+            crate::crypto::PreKeyBundle::generate_real(&sig_id.secret, &sig_pub).unwrap()
+        };
 
         let session = crate::crypto::SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),
@@ -149,8 +153,12 @@ mod tests {
 
         // Create real session
         let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let (bob_bundle, bob_private) = crate::crypto::PreKeyBundle::generate_real(&bob_identity).unwrap();
+        let _bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let (bob_bundle, bob_private) = {
+            let sig_id = libsignal_protocol::vxeddsa::gen_keypair();
+            let sig_pub = libsignal_protocol::utils::decode_public_key(&sig_id.public).unwrap();
+            crate::crypto::PreKeyBundle::generate_real(&sig_id.secret, &sig_pub).unwrap()
+        };
 
         let session = crate::crypto::SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),

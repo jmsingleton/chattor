@@ -75,7 +75,11 @@ fn test_full_friend_request_to_messaging_pipeline() {
     let bob_onion = "bob1234567890.onion";
 
     // 2. Bob generates PreKeyBundle (simulates friend-request accept)
-    let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_identity).unwrap();
+    let (bob_bundle, bob_private) = {
+        let sig_id = libsignal_protocol::vxeddsa::gen_keypair();
+        let sig_pub = libsignal_protocol::utils::decode_public_key(&sig_id.public).unwrap();
+        PreKeyBundle::generate_real(&sig_id.secret, &sig_pub).unwrap()
+    };
 
     // 3. Bob stores PreKeyPrivateMaterial in app_settings (as the real flow does)
     let (_tmp_bob, bob_db) = temp_db();
@@ -176,7 +180,11 @@ fn test_handshake_enables_acceptor_to_send_first() {
     let bob_identity = IdentityKeypair::generate().unwrap();
 
     // Alice (acceptor) generates bundle; Bob (requester) will initiate session
-    let (alice_bundle, alice_private) = PreKeyBundle::generate_real(&alice_identity).unwrap();
+    let (alice_bundle, alice_private) = {
+        let sig_id = libsignal_protocol::vxeddsa::gen_keypair();
+        let sig_pub = libsignal_protocol::utils::decode_public_key(&sig_id.public).unwrap();
+        PreKeyBundle::generate_real(&sig_id.secret, &sig_pub).unwrap()
+    };
 
     // 1. Bob creates session from Alice's bundle
     let mut bob_session = SignalSession::from_prekey_bundle_real(
@@ -238,7 +246,11 @@ fn test_session_persistence_across_multiple_messages() {
     let alice_identity = IdentityKeypair::generate().unwrap();
     let bob_identity = IdentityKeypair::generate().unwrap();
 
-    let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_identity).unwrap();
+    let (bob_bundle, bob_private) = {
+        let sig_id = libsignal_protocol::vxeddsa::gen_keypair();
+        let sig_pub = libsignal_protocol::utils::decode_public_key(&sig_id.public).unwrap();
+        PreKeyBundle::generate_real(&sig_id.secret, &sig_pub).unwrap()
+    };
 
     // Establish sessions
     let mut alice_session = SignalSession::from_prekey_bundle_real(
@@ -318,7 +330,11 @@ fn test_prekey_material_storage_and_cleanup() {
     let peer_onion = "peer1234567890.onion";
 
     // 1. Generate bundle + private material
-    let (bundle, private_material) = PreKeyBundle::generate_real(&identity).unwrap();
+    let (bundle, private_material) = {
+        let sig_id = libsignal_protocol::vxeddsa::gen_keypair();
+        let sig_pub = libsignal_protocol::utils::decode_public_key(&sig_id.public).unwrap();
+        PreKeyBundle::generate_real(&sig_id.secret, &sig_pub).unwrap()
+    };
 
     // 2. Store identity_secret in app_settings
     let (_tmp, db) = temp_db();
@@ -384,7 +400,11 @@ fn test_message_queue_with_encrypted_messages() {
     let alice_identity = IdentityKeypair::generate().unwrap();
     let bob_identity = IdentityKeypair::generate().unwrap();
 
-    let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_identity).unwrap();
+    let (bob_bundle, bob_private) = {
+        let sig_id = libsignal_protocol::vxeddsa::gen_keypair();
+        let sig_pub = libsignal_protocol::utils::decode_public_key(&sig_id.public).unwrap();
+        PreKeyBundle::generate_real(&sig_id.secret, &sig_pub).unwrap()
+    };
 
     // 1. Alice creates session and encrypts a message
     let mut alice_session = SignalSession::from_prekey_bundle_real(

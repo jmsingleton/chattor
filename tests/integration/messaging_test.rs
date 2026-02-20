@@ -86,7 +86,11 @@ fn test_signal_session_creation() {
     // Create real sessions for Alice (sender) and Bob (receiver)
     let alice_identity = IdentityKeypair::generate().unwrap();
     let bob_identity = IdentityKeypair::generate().unwrap();
-    let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_identity).unwrap();
+    let (bob_bundle, bob_private) = {
+        let sig_id = libsignal_protocol::vxeddsa::gen_keypair();
+        let sig_pub = libsignal_protocol::utils::decode_public_key(&sig_id.public).unwrap();
+        PreKeyBundle::generate_real(&sig_id.secret, &sig_pub).unwrap()
+    };
 
     // Alice creates session with Bob's bundle
     let mut alice_session = SignalSession::from_prekey_bundle_real(

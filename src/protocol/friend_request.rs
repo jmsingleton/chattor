@@ -116,8 +116,11 @@ impl FriendRequestHandler {
         own_onion: &str,
         peer_onion: &str,
     ) -> Result<FriendRequestAcceptMessage> {
-        // Generate PreKey bundle
-        let (bundle, _private_material) = PreKeyBundle::generate_real(identity)?;
+        // Generate a dedicated X25519 Signal identity keypair for X3DH
+        let signal_identity = libsignal_protocol::vxeddsa::gen_keypair();
+        let signal_identity_public_raw = libsignal_protocol::utils::decode_public_key(&signal_identity.public)
+            .map_err(|_| TorrentChatError::Crypto("Failed to decode signal identity public key".into()))?;
+        let (bundle, _private_material) = PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

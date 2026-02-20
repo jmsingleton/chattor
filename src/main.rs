@@ -860,9 +860,14 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
         |row| Ok((row.get(0)?, row.get(1)?)),
     ).map_err(|e| error::TorrentChatError::Database(format!("Failed to load request: {}", e)))?;
 
-    // Generate PreKey bundle for the accept message
+    // Generate PreKey bundle for the accept message.
+    // Generate a dedicated X25519 Signal identity keypair for X3DH.
+    // This is separate from the Ed25519 identity used for friend request signing.
     let identity = app.identity.as_ref().expect("identity set during init");
-    let (bundle, private_keys) = PreKeyBundle::generate_real(identity)?;
+    let signal_identity = libsignal_protocol::vxeddsa::gen_keypair();
+    let signal_identity_public_raw = libsignal_protocol::utils::decode_public_key(&signal_identity.public)
+        .map_err(|_| error::TorrentChatError::Crypto("Failed to decode signal identity public key".into()))?;
+    let (bundle, private_keys) = PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
 
     // Create accept message (inline to avoid Database clone issue)
     let timestamp = std::time::SystemTime::now()
