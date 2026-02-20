@@ -81,40 +81,43 @@ fn test_message_queue_integration() {
 #[test]
 fn test_signal_session_creation() {
     use chattor::crypto::signal::PreKeyBundle;
-    use chattor::crypto::IdentityKeypair;
+
+    /// Helper: generate an X25519 Signal identity keypair for tests.
+    fn gen_signal_identity() -> ([u8; 32], [u8; 32]) {
+        let kp = libsignal_protocol::vxeddsa::gen_keypair();
+        let raw_pub = libsignal_protocol::utils::decode_public_key(&kp.public).unwrap();
+        (kp.secret, raw_pub)
+    }
 
     // Create real sessions for Alice (sender) and Bob (receiver)
-    let alice_identity = IdentityKeypair::generate().unwrap();
-    let bob_identity = IdentityKeypair::generate().unwrap();
-    let (bob_bundle, bob_private) = {
-        let sig_id = libsignal_protocol::vxeddsa::gen_keypair();
-        let sig_pub = libsignal_protocol::utils::decode_public_key(&sig_id.public).unwrap();
-        PreKeyBundle::generate_real(&sig_id.secret, &sig_pub).unwrap()
-    };
+    let (alice_signal_secret, _alice_signal_public) = gen_signal_identity();
+    let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
+    let (bob_bundle, bob_private) =
+        PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
 
     // Alice creates session with Bob's bundle
-    let mut alice_session = SignalSession::from_prekey_bundle_real(
+    let (mut alice_session, _ad, ephemeral_public) = SignalSession::from_prekey_bundle_real(
         "bob.onion".into(),
         &bob_bundle,
         &bob_private,
-        &alice_identity,
+        &alice_signal_secret,
     ).unwrap();
     assert_eq!(alice_session.remote_onion, "bob.onion");
 
     // Alice encrypts a message
     let plaintext = b"Hello, Bob!";
-    let (ciphertext, is_prekey) = alice_session.encrypt(plaintext).unwrap();
+    let (header, ciphertext, is_prekey) = alice_session.encrypt(plaintext).unwrap();
     assert!(is_prekey); // First message is PreKey type
 
-    // Bob creates session from Alice's PreKey message and decrypts
-    let mut bob_session = SignalSession::from_prekey_message_real(
+    // Bob creates session from Alice's X3DH init data and decrypts
+    let alice_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(&alice_signal_secret);
+    let (mut bob_session, _bob_ad) = SignalSession::from_prekey_message_real(
         "alice.onion".into(),
-        &ciphertext,
-        &bob_bundle,
         &bob_private,
-        &bob_identity,
+        &alice_identity_encoded,
+        &ephemeral_public,
     ).unwrap();
-    let decrypted = bob_session.decrypt(&ciphertext, true).unwrap();
+    let decrypted = bob_session.decrypt(&header, &ciphertext).unwrap();
     assert_eq!(plaintext, &decrypted[..]);
 }
 
