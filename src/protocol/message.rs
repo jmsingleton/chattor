@@ -72,10 +72,26 @@ pub struct FriendRequestRejectMessage {
 pub struct TextMessage {
     pub from_onion: String,
     pub to_onion: String,
+    pub signal_header: String,      // base64-encoded encrypted Double Ratchet header
     pub signal_ciphertext: String,  // base64 encrypted payload
     pub signal_type: SignalMessageType,
     pub timestamp: i64,
     pub message_id: Uuid,
+    /// X3DH initiator data, only present on PreKey messages
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x3dh_init: Option<X3DHInitData>,
+}
+
+/// X3DH key exchange initiator data, sent with the first (PreKey) message.
+///
+/// Contains the sender's identity and ephemeral public keys so the
+/// receiver can run x3dh_responder() and establish a session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct X3DHInitData {
+    /// base64-encoded 33-byte (0x05-prefixed) X25519 identity public key
+    pub sender_identity_key: String,
+    /// base64-encoded 33-byte (0x05-prefixed) X25519 ephemeral public key
+    pub sender_ephemeral_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -195,10 +211,12 @@ mod tests {
         let msg = Message::TextMessage(TextMessage {
             from_onion: "alice.onion".to_string(),
             to_onion: "bob.onion".to_string(),
+            signal_header: "header_data".to_string(),
             signal_ciphertext: "encrypted".to_string(),
             signal_type: SignalMessageType::Message,
             timestamp: 1234567890,
             message_id: Uuid::new_v4(),
+            x3dh_init: None,
         });
 
         let json = serde_json::to_string(&msg).unwrap();

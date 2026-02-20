@@ -86,10 +86,12 @@ mod tests {
         let original = Message::TextMessage(TextMessage {
             from_onion: "alice.onion".into(),
             to_onion: "bob.onion".into(),
+            signal_header: "header_data".into(),
             signal_ciphertext: "encrypted_test_data".into(),
             signal_type: SignalMessageType::Message,
             timestamp: 12345,
             message_id: uuid::Uuid::new_v4(),
+            x3dh_init: None,
         });
 
         send_message(&mut stream, &original).await.unwrap();
@@ -107,10 +109,12 @@ mod tests {
         let message = Message::TextMessage(TextMessage {
             from_onion: "alice.onion".into(),
             to_onion: "bob.onion".into(),
+            signal_header: "test_header".into(),
             signal_ciphertext: "test_ciphertext".into(),
             signal_type: SignalMessageType::Message,
             timestamp: 12345,
             message_id: Uuid::new_v4(),
+            x3dh_init: None,
         });
 
         let message_clone = message.clone();
