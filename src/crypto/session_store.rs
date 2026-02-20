@@ -1,5 +1,5 @@
 use crate::db::Database;
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::crypto::signal::SignalSession;
 
 /// Store for Signal Protocol sessions
@@ -30,7 +30,7 @@ impl<'a> SessionStore<'a> {
                 &session_bytes,
                 now,
             ),
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to store session: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to store session: {}", e)))?;
 
         Ok(())
     }
@@ -51,7 +51,7 @@ impl<'a> SessionStore<'a> {
                 Ok(Some(session))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(TorrentChatError::Database(format!("Failed to load session: {}", e))),
+            Err(e) => Err(ChattorError::Database(format!("Failed to load session: {}", e))),
         }
     }
 
@@ -63,7 +63,7 @@ impl<'a> SessionStore<'a> {
         conn.execute(
             "DELETE FROM signal_sessions WHERE remote_onion = ?1",
             [remote_onion],
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to delete session: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to delete session: {}", e)))?;
 
         Ok(())
     }

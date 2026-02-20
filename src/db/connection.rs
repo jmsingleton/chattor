@@ -1,7 +1,7 @@
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 use tracing::{info, warn};
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::db::schema::{CREATE_TABLES, CREATE_APP_SETTINGS, SCHEMA_VERSION};
 
 pub struct Database {
@@ -14,7 +14,7 @@ impl Database {
         let conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to open database: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to open database: {}", e)))?;
 
         let mut db = Database { conn };
         db.initialize()?;
@@ -26,7 +26,7 @@ impl Database {
         // Ensure schema_version table exists first (needed for migrations)
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);"
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to create schema_version: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to create schema_version: {}", e)))?;
 
         // Check if this is an existing database that needs migrations
         let version: rusqlite::Result<i32> = self.conn.query_row(
@@ -54,18 +54,18 @@ impl Database {
 
         // Execute schema creation (IF NOT EXISTS handles already-migrated tables)
         self.conn.execute_batch(CREATE_TABLES)
-            .map_err(|e| TorrentChatError::Database(format!("Failed to create tables: {}", e)))?;
+            .map_err(|e| ChattorError::Database(format!("Failed to create tables: {}", e)))?;
 
         // Create app_settings table (added in v8)
         self.conn.execute_batch(CREATE_APP_SETTINGS)
-            .map_err(|e| TorrentChatError::Database(format!("Failed to create app_settings: {}", e)))?;
+            .map_err(|e| ChattorError::Database(format!("Failed to create app_settings: {}", e)))?;
 
         // Set version if not yet set (fresh database)
         if version.is_err() {
             self.conn.execute(
                 "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
                 [SCHEMA_VERSION]
-            ).map_err(|e| TorrentChatError::Database(format!("Failed to set schema version: {}", e)))?;
+            ).map_err(|e| ChattorError::Database(format!("Failed to set schema version: {}", e)))?;
         }
 
         Ok(())
@@ -88,7 +88,7 @@ impl Database {
             "SELECT version FROM schema_version",
             [],
             |row| row.get(0)
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to get schema version: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to get schema version: {}", e)))?;
         Ok(version)
     }
 
@@ -107,11 +107,11 @@ impl Database {
                  DROP INDEX IF EXISTS idx_queue_conversation;
                  DROP INDEX IF EXISTS idx_queue_retry;
                  DROP TABLE IF EXISTS message_queue;"
-            ).map_err(|e| TorrentChatError::Database(format!("Failed to drop old queue: {}", e)))?;
+            ).map_err(|e| ChattorError::Database(format!("Failed to drop old queue: {}", e)))?;
 
             // Update version
             conn.execute("UPDATE schema_version SET version = 4", [])
-                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+                .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
 
             info!("Migration to schema v4 complete (old message queue replaced)");
         }
@@ -136,11 +136,11 @@ impl Database {
             if !has_column {
                 conn.execute_batch(
                     "ALTER TABLE conversations ADD COLUMN last_read_at INTEGER;"
-                ).map_err(|e| TorrentChatError::Database(format!("Failed to add last_read_at: {}", e)))?;
+                ).map_err(|e| ChattorError::Database(format!("Failed to add last_read_at: {}", e)))?;
             }
 
             conn.execute("UPDATE schema_version SET version = 5", [])
-                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+                .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
 
             info!("Migration to schema v5 complete");
         }
@@ -164,7 +164,7 @@ impl Database {
             if !has_conv_col {
                 conn.execute_batch(
                     "ALTER TABLE conversations ADD COLUMN ephemeral_ttl INTEGER;"
-                ).map_err(|e| TorrentChatError::Database(format!("Failed to add ephemeral_ttl to conversations: {}", e)))?;
+                ).map_err(|e| ChattorError::Database(format!("Failed to add ephemeral_ttl to conversations: {}", e)))?;
             }
 
             // Add expires_at and ephemeral_ttl to messages
@@ -175,11 +175,11 @@ impl Database {
                 conn.execute_batch(
                     "ALTER TABLE messages ADD COLUMN expires_at INTEGER;
                      ALTER TABLE messages ADD COLUMN ephemeral_ttl INTEGER;"
-                ).map_err(|e| TorrentChatError::Database(format!("Failed to add ephemeral columns to messages: {}", e)))?;
+                ).map_err(|e| ChattorError::Database(format!("Failed to add ephemeral columns to messages: {}", e)))?;
             }
 
             conn.execute("UPDATE schema_version SET version = 6", [])
-                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+                .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
 
             info!("Migration to schema v6 complete");
         }
@@ -234,10 +234,10 @@ impl Database {
                     read_at INTEGER NOT NULL,
                     UNIQUE(post_id, reader_onion)
                 );"
-            ).map_err(|e| TorrentChatError::Database(format!("Failed to create channel tables: {}", e)))?;
+            ).map_err(|e| ChattorError::Database(format!("Failed to create channel tables: {}", e)))?;
 
             conn.execute("UPDATE schema_version SET version = 7", [])
-                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+                .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
 
             info!("Migration to schema v7 complete");
         }
@@ -255,10 +255,10 @@ impl Database {
             let conn = self.connection();
 
             conn.execute_batch(crate::db::schema::CREATE_APP_SETTINGS)
-                .map_err(|e| TorrentChatError::Database(format!("Failed to create app_settings: {}", e)))?;
+                .map_err(|e| ChattorError::Database(format!("Failed to create app_settings: {}", e)))?;
 
             conn.execute("UPDATE schema_version SET version = 8", [])
-                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+                .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
 
             info!("Migration to schema v8 complete");
         }
@@ -281,19 +281,19 @@ impl Database {
 
             // Delete all Signal sessions (incompatible with new Double Ratchet format)
             let deleted_sessions = conn.execute("DELETE FROM signal_sessions", [])
-                .map_err(|e| TorrentChatError::Database(format!("Failed to clear signal sessions: {}", e)))?;
+                .map_err(|e| ChattorError::Database(format!("Failed to clear signal sessions: {}", e)))?;
             info!("  Cleared {} old Signal sessions", deleted_sessions);
 
             // Delete stored PreKey private material from app_settings
             let deleted_prekeys = conn.execute(
                 "DELETE FROM app_settings WHERE key LIKE 'prekey_%'",
                 []
-            ).map_err(|e| TorrentChatError::Database(format!("Failed to clear prekey material: {}", e)))?;
+            ).map_err(|e| ChattorError::Database(format!("Failed to clear prekey material: {}", e)))?;
             info!("  Cleared {} stored PreKey entries", deleted_prekeys);
 
             // Update version
             conn.execute("UPDATE schema_version SET version = 9", [])
-                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+                .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
 
             warn!("Schema upgraded to v9. All Signal sessions and PreKey material cleared.");
             warn!("  Sessions will be re-established automatically on next message exchange.");
@@ -315,12 +315,12 @@ impl Database {
 
             // Clear old sessions (incompatible with v3 format)
             let deleted = conn.execute("DELETE FROM signal_sessions", [])
-                .map_err(|e| TorrentChatError::Database(format!("Failed to clear sessions: {}", e)))?;
+                .map_err(|e| ChattorError::Database(format!("Failed to clear sessions: {}", e)))?;
             info!("   Cleared {} old Signal sessions", deleted);
 
             // Update version
             conn.execute("UPDATE schema_version SET version = 3", [])
-                .map_err(|e| TorrentChatError::Database(format!("Failed to update version: {}", e)))?;
+                .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
 
             warn!("⚠️  Schema upgraded to v3. All Signal sessions cleared.");
             warn!("   You'll need to re-establish sessions by:");

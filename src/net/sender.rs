@@ -1,5 +1,5 @@
 use crate::db::Database;
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::crypto::SessionStore;
 use crate::protocol::message::*;
 use crate::tor::connection::TorConnection;
@@ -32,7 +32,7 @@ impl MessageSender {
 
         // Load session
         let mut session = store.load_session(to_onion)?
-            .ok_or_else(|| TorrentChatError::Crypto("No session found".into()))?;
+            .ok_or_else(|| ChattorError::Crypto("No session found".into()))?;
 
         // Create plaintext payload
         let payload = PlaintextPayload {
@@ -46,7 +46,7 @@ impl MessageSender {
         };
 
         let plaintext = serde_json::to_vec(&payload)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to serialize: {}", e)))?;
+            .map_err(|e| ChattorError::Crypto(format!("Failed to serialize: {}", e)))?;
 
         // Encrypt with Signal (Double Ratchet)
         let (header, ciphertext, is_prekey) = session.encrypt(&plaintext)?;
@@ -100,7 +100,7 @@ impl MessageSender {
         conn.execute(
             "UPDATE messages SET status = 'delivered' WHERE message_id = ?1",
             [receipt.message_id.to_string()],
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to update status: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to update status: {}", e)))?;
 
         Ok(())
     }

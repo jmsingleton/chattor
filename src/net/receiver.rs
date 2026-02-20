@@ -1,5 +1,5 @@
 use crate::db::Database;
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::crypto::SessionStore;
 use crate::protocol::message::*;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ impl MessageReceiver {
                 // unknown peers, we'd need to persist our PreKey private material
                 // and call SignalSession::from_prekey_message_real(). For now,
                 // sessions are pre-established via friend request exchange.
-                return Err(TorrentChatError::Crypto(format!(
+                return Err(ChattorError::Crypto(format!(
                     "No session for {} — friend request exchange required first",
                     message.from_onion
                 )));
@@ -39,9 +39,9 @@ impl MessageReceiver {
 
         // Decrypt
         let header = base64::engine::general_purpose::STANDARD.decode(&message.signal_header)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to decode header: {}", e)))?;
+            .map_err(|e| ChattorError::Crypto(format!("Failed to decode header: {}", e)))?;
         let ciphertext = base64::engine::general_purpose::STANDARD.decode(&message.signal_ciphertext)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to decode ciphertext: {}", e)))?;
+            .map_err(|e| ChattorError::Crypto(format!("Failed to decode ciphertext: {}", e)))?;
         let plaintext = session.decrypt(&header, &ciphertext)?;
 
         // Update session
@@ -49,7 +49,7 @@ impl MessageReceiver {
 
         // Deserialize payload
         let payload: PlaintextPayload = serde_json::from_slice(&plaintext)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to parse payload: {}", e)))?;
+            .map_err(|e| ChattorError::Crypto(format!("Failed to parse payload: {}", e)))?;
 
         Ok(payload)
     }
@@ -73,7 +73,7 @@ impl MessageReceiver {
                 &payload.content,
                 payload.sent_at,
             ),
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to store message: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to store message: {}", e)))?;
 
         Ok(())
     }

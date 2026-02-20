@@ -1,4 +1,4 @@
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::protocol::message::Message;
 use crate::tor::client::TorClient;
 use crate::tor::connection::TorConnection;
@@ -92,12 +92,12 @@ impl ConnectionPool {
             TorConnection::connect(&self.tor_client, peer_onion),
         )
         .await
-        .map_err(|_| TorrentChatError::ConnectionTimeout(peer_onion.to_string()))??;
+        .map_err(|_| ChattorError::ConnectionTimeout(peer_onion.to_string()))??;
 
         // Send on fresh connection
         tokio::time::timeout(SEND_TIMEOUT, conn.send(message))
             .await
-            .map_err(|_| TorrentChatError::Network(
+            .map_err(|_| ChattorError::Network(
                 format!("Send timed out ({}s) to {}", SEND_TIMEOUT.as_secs(), peer_onion),
             ))??;
 

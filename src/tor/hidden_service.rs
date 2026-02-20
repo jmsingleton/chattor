@@ -1,4 +1,4 @@
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::tor::client::TorClient;
 use safelog::DisplayRedacted as _;
 use std::sync::Arc;
@@ -21,19 +21,19 @@ impl HiddenService {
     ) -> Result<(Self, impl futures::Stream<Item = RendRequest>)> {
         let nickname: HsNickname = "chattor"
             .parse()
-            .map_err(|e| TorrentChatError::Tor(format!("Invalid service nickname: {}", e)))?;
+            .map_err(|e| ChattorError::Tor(format!("Invalid service nickname: {}", e)))?;
 
         let mut builder = OnionServiceConfigBuilder::default();
         builder.nickname(nickname);
         let config = builder
             .build()
-            .map_err(|e| TorrentChatError::Tor(format!("Failed to build onion service config: {}", e)))?;
+            .map_err(|e| ChattorError::Tor(format!("Failed to build onion service config: {}", e)))?;
 
         let (service, rend_requests) = tor_client
             .inner()
             .launch_onion_service(config)
-            .map_err(|e| TorrentChatError::Tor(format!("Failed to launch onion service: {}", e)))?
-            .ok_or_else(|| TorrentChatError::Tor("Onion service is disabled in config".into()))?;
+            .map_err(|e| ChattorError::Tor(format!("Failed to launch onion service: {}", e)))?
+            .ok_or_else(|| ChattorError::Tor("Onion service is disabled in config".into()))?;
 
         let onion_address = service
             .onion_address()

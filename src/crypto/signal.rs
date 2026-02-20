@@ -1,4 +1,4 @@
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
@@ -106,7 +106,7 @@ impl PreKeyBundle {
         // The message being signed is the encoded SPK public key, matching the
         // X3DH spec: Sig(IK, Encode(SPK)).
         let sig_output = vxeddsa_sign(signal_identity_secret, &signed_prekey_pair.public)
-            .map_err(|()| TorrentChatError::Crypto("VXEdDSA signing failed".into()))?;
+            .map_err(|()| ChattorError::Crypto("VXEdDSA signing failed".into()))?;
 
         // Generate one-time pre-key
         let prekey_pair = gen_keypair();
@@ -114,9 +114,9 @@ impl PreKeyBundle {
 
         // Decode 33-byte encoded public keys to raw 32-byte keys for internal storage
         let signed_prekey_raw = libsignal_protocol::utils::decode_public_key(&signed_prekey_pair.public)
-            .map_err(|_| TorrentChatError::Crypto("Failed to decode signed prekey public key".into()))?;
+            .map_err(|_| ChattorError::Crypto("Failed to decode signed prekey public key".into()))?;
         let prekey_raw = libsignal_protocol::utils::decode_public_key(&prekey_pair.public)
-            .map_err(|_| TorrentChatError::Crypto("Failed to decode prekey public key".into()))?;
+            .map_err(|_| ChattorError::Crypto("Failed to decode prekey public key".into()))?;
 
         // Store private keys as byte arrays
         let private_material = PreKeyPrivateMaterial {
@@ -150,21 +150,21 @@ impl PreKeyBundle {
 
         // Encode identity key (32 bytes -> 33 bytes with 0x05 prefix)
         let identity_raw: [u8; 32] = self.identity_key[..].try_into()
-            .map_err(|_| TorrentChatError::Crypto(
+            .map_err(|_| ChattorError::Crypto(
                 format!("Invalid identity key length: expected 32, got {}", self.identity_key.len())
             ))?;
         let identity_encoded = encode_public_key(&identity_raw);
 
         // Encode signed prekey public key
         let spk_raw: [u8; 32] = self.signed_prekey.public_key[..].try_into()
-            .map_err(|_| TorrentChatError::Crypto(
+            .map_err(|_| ChattorError::Crypto(
                 format!("Invalid signed prekey length: expected 32, got {}", self.signed_prekey.public_key.len())
             ))?;
         let spk_encoded = encode_public_key(&spk_raw);
 
         // Convert signature to fixed-size array
         let signature: [u8; 96] = self.signed_prekey.signature[..].try_into()
-            .map_err(|_| TorrentChatError::Crypto(
+            .map_err(|_| ChattorError::Crypto(
                 format!("Invalid signature length: expected 96, got {}", self.signed_prekey.signature.len())
             ))?;
 
@@ -172,7 +172,7 @@ impl PreKeyBundle {
         let one_time_prekey = match &self.prekey {
             Some(pk) => {
                 let pk_raw: [u8; 32] = pk.public_key[..].try_into()
-                    .map_err(|_| TorrentChatError::Crypto(
+                    .map_err(|_| ChattorError::Crypto(
                         format!("Invalid prekey length: expected 32, got {}", pk.public_key.len())
                     ))?;
                 let pk_encoded = encode_public_key(&pk_raw);
@@ -205,15 +205,15 @@ impl PreKeyBundle {
         use libsignal_protocol::utils::encode_public_key;
 
         let identity_raw: [u8; 32] = self.identity_key[..].try_into()
-            .map_err(|_| TorrentChatError::Crypto("Invalid identity key length".into()))?;
+            .map_err(|_| ChattorError::Crypto("Invalid identity key length".into()))?;
         let identity_encoded = encode_public_key(&identity_raw);
 
         let spk_raw: [u8; 32] = self.signed_prekey.public_key[..].try_into()
-            .map_err(|_| TorrentChatError::Crypto("Invalid signed prekey length".into()))?;
+            .map_err(|_| ChattorError::Crypto("Invalid signed prekey length".into()))?;
         let spk_encoded = encode_public_key(&spk_raw);
 
         let signature: [u8; 96] = self.signed_prekey.signature[..].try_into()
-            .map_err(|_| TorrentChatError::Crypto("Invalid signature length".into()))?;
+            .map_err(|_| ChattorError::Crypto("Invalid signature length".into()))?;
 
         Ok(vxeddsa_verify(&identity_encoded, &spk_encoded, &signature).is_some())
     }
@@ -288,25 +288,25 @@ impl SignalSession {
 
         // Perform full X3DH as initiator
         let x3dh_result = libsignal_protocol::x3dh::x3dh_initiator(signal_identity_secret, &ls_bundle)
-            .map_err(|e| TorrentChatError::Crypto(format!("X3DH initiator failed: {:?}", e)))?;
+            .map_err(|e| ChattorError::Crypto(format!("X3DH initiator failed: {:?}", e)))?;
 
         // Decode Bob's signed prekey public from the bundle (raw 32 bytes)
         let bob_spk_raw: [u8; 32] = bundle.signed_prekey.public_key[..].try_into()
-            .map_err(|_| TorrentChatError::Crypto("Invalid signed prekey length".into()))?;
+            .map_err(|_| ChattorError::Crypto("Invalid signed prekey length".into()))?;
         let bob_spk_pubkey = X25519PublicKey::from(bob_spk_raw);
 
         // Initialize Double Ratchet sender state
         let ratchet_state = libsignal_protocol::ratchet::init_sender_state(
             x3dh_result.shared_secret,
             bob_spk_pubkey,
-        ).map_err(|e| TorrentChatError::Crypto(format!("Ratchet init_sender failed: {:?}", e)))?;
+        ).map_err(|e| ChattorError::Crypto(format!("Ratchet init_sender failed: {:?}", e)))?;
 
         // Build associated data: encode(alice_identity) || encode(bob_identity)
         // Alice's identity public key (derived from our secret)
         let alice_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(signal_identity_secret);
         // Bob's identity key (from bundle, raw 32 bytes -> encode to 33 bytes)
         let bob_identity_raw: [u8; 32] = bundle.identity_key[..].try_into()
-            .map_err(|_| TorrentChatError::Crypto("Invalid identity key length".into()))?;
+            .map_err(|_| ChattorError::Crypto("Invalid identity key length".into()))?;
         let bob_identity_encoded = encode_public_key(&bob_identity_raw);
 
         let mut associated_data = Vec::with_capacity(66);
@@ -353,7 +353,7 @@ impl SignalSession {
             private_material.prekey_secret.as_ref(),
             alice_identity_public,
             alice_ephemeral_public,
-        ).map_err(|e| TorrentChatError::Crypto(format!("X3DH responder failed: {:?}", e)))?;
+        ).map_err(|e| ChattorError::Crypto(format!("X3DH responder failed: {:?}", e)))?;
 
         // Build the receiver's DH keypair from the signed prekey
         let spk_secret = StaticSecret::from(private_material.signed_prekey_secret);
@@ -410,7 +410,7 @@ impl SignalSession {
             &mut self.state,
             plaintext,
             &self.associated_data,
-        ).map_err(|e| TorrentChatError::Crypto(format!("Ratchet encrypt failed: {:?}", e)))?;
+        ).map_err(|e| ChattorError::Crypto(format!("Ratchet encrypt failed: {:?}", e)))?;
 
         let was_first = self.is_first_message;
         self.is_first_message = false;
@@ -429,7 +429,7 @@ impl SignalSession {
             header,
             ciphertext,
             &self.associated_data,
-        ).map_err(|e| TorrentChatError::Crypto(format!("Ratchet decrypt failed: {:?}", e)))
+        ).map_err(|e| ChattorError::Crypto(format!("Ratchet decrypt failed: {:?}", e)))
     }
 
     /// Serialize session state for storage (JSON).
@@ -442,17 +442,17 @@ impl SignalSession {
             ephemeral_public: self.ephemeral_public.map(|ep| ep.to_vec()),
         };
         serde_json::to_vec(&s)
-            .map_err(|e| TorrentChatError::Crypto(format!("session serialize: {e}")))
+            .map_err(|e| ChattorError::Crypto(format!("session serialize: {e}")))
     }
 
     /// Deserialize session state from storage (JSON).
     pub fn from_bytes(_remote_onion: String, data: Vec<u8>) -> Result<Self> {
         let s: DeserializableSession = serde_json::from_slice(&data)
-            .map_err(|e| TorrentChatError::Crypto(format!("session deserialize: {e}")))?;
+            .map_err(|e| ChattorError::Crypto(format!("session deserialize: {e}")))?;
         let ephemeral_public = match s.ephemeral_public {
             Some(v) => {
                 let arr: [u8; 33] = v.try_into()
-                    .map_err(|_| TorrentChatError::Crypto("Invalid ephemeral_public length".into()))?;
+                    .map_err(|_| ChattorError::Crypto("Invalid ephemeral_public length".into()))?;
                 Some(arr)
             }
             None => None,

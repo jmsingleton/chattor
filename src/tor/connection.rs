@@ -1,4 +1,4 @@
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::tor::client::TorClient;
 use crate::protocol::message::{Message, MessageEnvelope};
 use crate::net::framing::send_message;
@@ -24,7 +24,7 @@ impl TorConnection {
         let stream = tor_client.inner()
             .connect_with_prefs((remote_onion, CHATTOR_PORT), &StreamPrefs::default())
             .await
-            .map_err(|e| TorrentChatError::Tor(format!("Failed to connect to {}: {}", remote_onion, e)))?;
+            .map_err(|e| ChattorError::Tor(format!("Failed to connect to {}: {}", remote_onion, e)))?;
 
         info!("Connected to {} via Tor", remote_onion);
 

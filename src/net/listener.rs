@@ -50,7 +50,7 @@ async fn handle_connection(
 
     // Send to app (unwrap envelope payload)
     tx.send(IncomingMessage { message: envelope.payload, remote_addr }).await
-        .map_err(|e| crate::error::TorrentChatError::Network(format!("Failed to send to app: {}", e)))?;
+        .map_err(|e| crate::error::ChattorError::Network(format!("Failed to send to app: {}", e)))?;
 
     Ok(())
 }

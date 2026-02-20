@@ -1,4 +1,4 @@
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::crypto::{IdentityKeypair, PreKeyBundle};
 use crate::protocol::message::*;
 use crate::db::Database;
@@ -103,7 +103,7 @@ impl FriendRequestHandler {
                 &request.from_friendcode,
                 request.timestamp,
             ),
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to store request: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to store request: {}", e)))?;
 
         let id = conn.last_insert_rowid();
         Ok(id)
@@ -119,7 +119,7 @@ impl FriendRequestHandler {
         // Generate a dedicated X25519 Signal identity keypair for X3DH
         let signal_identity = libsignal_protocol::vxeddsa::gen_keypair();
         let signal_identity_public_raw = libsignal_protocol::utils::decode_public_key(&signal_identity.public)
-            .map_err(|_| TorrentChatError::Crypto("Failed to decode signal identity public key".into()))?;
+            .map_err(|_| ChattorError::Crypto("Failed to decode signal identity public key".into()))?;
         let (bundle, _private_material) = PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
 
         let timestamp = std::time::SystemTime::now()
@@ -134,7 +134,7 @@ impl FriendRequestHandler {
 
         // Serialize bundle to JSON then base64
         let bundle_json = serde_json::to_string(&bundle)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to serialize bundle: {}", e)))?;
+            .map_err(|e| ChattorError::Crypto(format!("Failed to serialize bundle: {}", e)))?;
 
         Ok(FriendRequestAcceptMessage {
             from_onion: own_onion.to_string(),
@@ -162,7 +162,7 @@ impl FriendRequestHandler {
                 &accept.from_onion[..10], // Use first 10 chars as name
                 accept.timestamp,
             ),
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to add friend: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to add friend: {}", e)))?;
 
         Ok(())
     }
@@ -176,13 +176,13 @@ impl FriendRequestHandler {
             "SELECT from_onion, 'bob.onion' FROM friend_requests WHERE id = ?1",
             [request_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(|e| TorrentChatError::Database(format!("Request not found: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Request not found: {}", e)))?;
 
         // Update request status
         conn.execute(
             "UPDATE friend_requests SET status = 'accepted' WHERE id = ?1",
             [request_id],
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to update request: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to update request: {}", e)))?;
 
         // Add friend
         conn.execute(
@@ -196,7 +196,7 @@ impl FriendRequestHandler {
                     .unwrap()
                     .as_secs() as i64,
             ),
-        ).map_err(|e| TorrentChatError::Database(format!("Failed to add friend: {}", e)))?;
+        ).map_err(|e| ChattorError::Database(format!("Failed to add friend: {}", e)))?;
 
         // Create accept message
         self.create_accept_message(identity, &own_onion, &from_onion)

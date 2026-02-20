@@ -810,7 +810,7 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
         // Try to decode as a friend code (reversible word encoding of .onion)
         match crate::protocol::friend_code::friend_code_to_onion(trimmed) {
             Ok(onion) => onion,
-            Err(_) => return Err(error::TorrentChatError::Tor(
+            Err(_) => return Err(error::ChattorError::Tor(
                 "Enter a .onion address or friend code (word sequence from their Identity)".into()
             )),
         }
@@ -819,7 +819,7 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
 
     // Get our .onion address
     let own_onion = app.onion_address.as_ref()
-        .ok_or_else(|| error::TorrentChatError::Tor("Tor not initialized yet".into()))?;
+        .ok_or_else(|| error::ChattorError::Tor("Tor not initialized yet".into()))?;
 
     // Generate our own friend code to include in the request
     let own_friend_code = crate::tor::address::onion_to_friend_code(own_onion)
@@ -852,7 +852,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
 
     // Get our .onion address
     let own_onion = app.onion_address.as_ref()
-        .ok_or_else(|| error::TorrentChatError::Tor("Tor not initialized yet".into()))?;
+        .ok_or_else(|| error::ChattorError::Tor("Tor not initialized yet".into()))?;
 
     // Get the friend request from database
     let conn = app.db.connection();
@@ -860,7 +860,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
         "SELECT from_onion, friend_code FROM friend_requests WHERE id = ?1",
         [request_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
-    ).map_err(|e| error::TorrentChatError::Database(format!("Failed to load request: {}", e)))?;
+    ).map_err(|e| error::ChattorError::Database(format!("Failed to load request: {}", e)))?;
 
     // Generate PreKey bundle for the accept message.
     // Generate a dedicated X25519 Signal identity keypair for X3DH.
@@ -868,7 +868,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     let identity = app.identity.as_ref().expect("identity set during init");
     let signal_identity = libsignal_protocol::vxeddsa::gen_keypair();
     let signal_identity_public_raw = libsignal_protocol::utils::decode_public_key(&signal_identity.public)
-        .map_err(|_| error::TorrentChatError::Crypto("Failed to decode signal identity public key".into()))?;
+        .map_err(|_| error::ChattorError::Crypto("Failed to decode signal identity public key".into()))?;
     let (bundle, private_keys) = PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
 
     // Create accept message (inline to avoid Database clone issue)
@@ -883,7 +883,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
 
     // Serialize bundle to JSON
     let bundle_json = serde_json::to_string(&bundle)
-        .map_err(|e| error::TorrentChatError::Crypto(format!("Failed to serialize bundle: {}", e)))?;
+        .map_err(|e| error::ChattorError::Crypto(format!("Failed to serialize bundle: {}", e)))?;
 
     let accept_msg = protocol::message::FriendRequestAcceptMessage {
         from_onion: own_onion.to_string(),
@@ -902,13 +902,13 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
         (&format!("prekey_identity:{}", from_onion), &identity_b64),
-    ).map_err(|e| error::TorrentChatError::Database(
+    ).map_err(|e| error::ChattorError::Database(
         format!("Failed to store PreKey identity material: {}", e)
     ))?;
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
         (&format!("prekey_spk:{}", from_onion), &spk_b64),
-    ).map_err(|e| error::TorrentChatError::Database(
+    ).map_err(|e| error::ChattorError::Database(
         format!("Failed to store PreKey SPK material: {}", e)
     ))?;
     if let Some(opk_secret) = private_keys.prekey_secret {
@@ -916,7 +916,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
         conn.execute(
             "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
             (&format!("prekey_opk:{}", from_onion), &opk_b64),
-        ).map_err(|e| error::TorrentChatError::Database(
+        ).map_err(|e| error::ChattorError::Database(
             format!("Failed to store PreKey OPK material: {}", e)
         ))?;
     }
@@ -926,7 +926,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
         (&format!("signal_identity_secret:{}", from_onion), &signal_secret_b64),
-    ).map_err(|e| error::TorrentChatError::Database(
+    ).map_err(|e| error::ChattorError::Database(
         format!("Failed to store Signal identity secret: {}", e)
     ))?;
 
@@ -940,7 +940,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     conn.execute(
         "UPDATE friend_requests SET status = 'accepted' WHERE id = ?1",
         [request_id],
-    ).map_err(|e| error::TorrentChatError::Database(format!("Failed to update request: {}", e)))?;
+    ).map_err(|e| error::ChattorError::Database(format!("Failed to update request: {}", e)))?;
 
     // Use a truncated display name that's more readable
     let display_name = if from_onion.len() > 16 {
@@ -957,7 +957,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
             &display_name,
             timestamp,
         ),
-    ).map_err(|e| error::TorrentChatError::Database(format!("Failed to add friend: {}", e)))?;
+    ).map_err(|e| error::ChattorError::Database(format!("Failed to add friend: {}", e)))?;
 
     // Auto-subscribe to their channels
     db::queries::add_channel_subscription(&app.db, &from_onion, "public")?;
@@ -980,7 +980,7 @@ fn handle_reject_friend_request(app: &App, request_id: i64) -> Result<()> {
     let rows_affected = conn.execute(
         "DELETE FROM friend_requests WHERE id = ?1",
         [request_id],
-    ).map_err(|e| error::TorrentChatError::Database(format!("Failed to delete request: {}", e)))?;
+    ).map_err(|e| error::ChattorError::Database(format!("Failed to delete request: {}", e)))?;
 
     if rows_affected == 0 {
         eprintln!("Friend request #{} not found", request_id);
@@ -1004,7 +1004,7 @@ async fn try_send_direct(
     message: &protocol::message::Message,
 ) -> Result<()> {
     let pool = app.connection_pool.as_ref()
-        .ok_or_else(|| error::TorrentChatError::Tor("Connection pool not initialized".into()))?;
+        .ok_or_else(|| error::ChattorError::Tor("Connection pool not initialized".into()))?;
 
     pool.send(peer_onion, message).await
 }
@@ -1024,7 +1024,7 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 "INSERT INTO friend_requests (from_onion, friend_code, received_at, status)
                  VALUES (?1, ?2, ?3, 'pending')",
                 (&req.from_onion, &req.from_friendcode, now),
-            ).map_err(|e| error::TorrentChatError::Database(
+            ).map_err(|e| error::ChattorError::Database(
                 format!("Failed to save friend request: {}", e)
             ))?;
 
@@ -1044,11 +1044,11 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             // Decode header and ciphertext from wire format
             let store = crypto::SessionStore::new(&app.db);
             let header = base64::engine::general_purpose::STANDARD.decode(&text_msg.signal_header)
-                .map_err(|e| error::TorrentChatError::Crypto(
+                .map_err(|e| error::ChattorError::Crypto(
                     format!("Failed to decode header: {}", e)
                 ))?;
             let ciphertext = base64::engine::general_purpose::STANDARD.decode(&text_msg.signal_ciphertext)
-                .map_err(|e| error::TorrentChatError::Crypto(
+                .map_err(|e| error::ChattorError::Crypto(
                     format!("Failed to decode ciphertext: {}", e)
                 ))?;
 
@@ -1057,7 +1057,7 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                     let plaintext = session.decrypt(&header, &ciphertext)?;
                     store.store_session(&session)?;
                     serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
-                        .map_err(|e| error::TorrentChatError::Crypto(
+                        .map_err(|e| error::ChattorError::Crypto(
                             format!("Failed to parse payload: {}", e)
                         ))?
                 }
@@ -1068,27 +1068,27 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
 
                     // Extract X3DH init data from the message
                     let x3dh_init = text_msg.x3dh_init.as_ref()
-                        .ok_or_else(|| error::TorrentChatError::Crypto(
+                        .ok_or_else(|| error::ChattorError::Crypto(
                             format!("PreKey message from {} missing X3DH init data", from_onion)
                         ))?;
 
                     let alice_identity_bytes = base64::engine::general_purpose::STANDARD
                         .decode(&x3dh_init.sender_identity_key)
-                        .map_err(|e| error::TorrentChatError::Crypto(
+                        .map_err(|e| error::ChattorError::Crypto(
                             format!("Failed to decode sender identity key: {}", e)
                         ))?;
                     let alice_identity_public: [u8; 33] = alice_identity_bytes.try_into()
-                        .map_err(|_| error::TorrentChatError::Crypto(
+                        .map_err(|_| error::ChattorError::Crypto(
                             "Sender identity key has wrong length (expected 33)".into()
                         ))?;
 
                     let alice_ephemeral_bytes = base64::engine::general_purpose::STANDARD
                         .decode(&x3dh_init.sender_ephemeral_key)
-                        .map_err(|e| error::TorrentChatError::Crypto(
+                        .map_err(|e| error::ChattorError::Crypto(
                             format!("Failed to decode sender ephemeral key: {}", e)
                         ))?;
                     let alice_ephemeral_public: [u8; 33] = alice_ephemeral_bytes.try_into()
-                        .map_err(|_| error::TorrentChatError::Crypto(
+                        .map_err(|_| error::ChattorError::Crypto(
                             "Sender ephemeral key has wrong length (expected 33)".into()
                         ))?;
 
@@ -1098,14 +1098,14 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                         "SELECT value FROM app_settings WHERE key = ?1",
                         [&format!("prekey_identity:{}", from_onion)],
                         |row| row.get(0),
-                    ).map_err(|_| error::TorrentChatError::Crypto(
+                    ).map_err(|_| error::ChattorError::Crypto(
                         format!("No stored PreKey identity material for {}", from_onion)
                     ))?;
                     let spk_b64: String = conn.query_row(
                         "SELECT value FROM app_settings WHERE key = ?1",
                         [&format!("prekey_spk:{}", from_onion)],
                         |row| row.get(0),
-                    ).map_err(|_| error::TorrentChatError::Crypto(
+                    ).map_err(|_| error::ChattorError::Crypto(
                         format!("No stored PreKey SPK material for {}", from_onion)
                     ))?;
                     let opk_b64: Option<String> = conn.query_row(
@@ -1116,20 +1116,20 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
 
                     let identity_secret: [u8; 32] = base64::engine::general_purpose::STANDARD
                         .decode(&identity_b64)
-                        .map_err(|e| error::TorrentChatError::Crypto(
+                        .map_err(|e| error::ChattorError::Crypto(
                             format!("Failed to decode PreKey identity: {}", e)
                         ))?
                         .try_into()
-                        .map_err(|_| error::TorrentChatError::Crypto(
+                        .map_err(|_| error::ChattorError::Crypto(
                             "PreKey identity secret has wrong length".into()
                         ))?;
                     let signed_prekey_secret: [u8; 32] = base64::engine::general_purpose::STANDARD
                         .decode(&spk_b64)
-                        .map_err(|e| error::TorrentChatError::Crypto(
+                        .map_err(|e| error::ChattorError::Crypto(
                             format!("Failed to decode PreKey SPK: {}", e)
                         ))?
                         .try_into()
-                        .map_err(|_| error::TorrentChatError::Crypto(
+                        .map_err(|_| error::ChattorError::Crypto(
                             "PreKey SPK secret has wrong length".into()
                         ))?;
                     let prekey_secret: Option<[u8; 32]> = opk_b64.map(|b64| {
@@ -1165,7 +1165,7 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                     ).ok();
 
                     serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
-                        .map_err(|e| error::TorrentChatError::Crypto(
+                        .map_err(|e| error::ChattorError::Crypto(
                             format!("Failed to parse payload: {}", e)
                         ))?
                 }
@@ -1367,7 +1367,7 @@ async fn process_message_queue(app: &App) -> Result<()> {
     }
 
     let pool = app.connection_pool.as_ref()
-        .ok_or_else(|| error::TorrentChatError::Tor("Connection pool not initialized".into()))?;
+        .ok_or_else(|| error::ChattorError::Tor("Connection pool not initialized".into()))?;
     let pool = Arc::clone(pool);
 
     // Semaphore limits concurrent peer tasks to 10
@@ -1428,7 +1428,7 @@ fn handle_incoming_accept(
 
     // Deserialize the remote peer's PreKey bundle from the accept message
     let bundle: PreKeyBundle = serde_json::from_str(&accept.signal_prekey_bundle)
-        .map_err(|e| error::TorrentChatError::Crypto(
+        .map_err(|e| error::ChattorError::Crypto(
             format!("Failed to parse PreKey bundle: {}", e)
         ))?;
 
@@ -1451,10 +1451,10 @@ fn handle_incoming_accept(
         ) {
             Ok(b64) => {
                 let bytes = base64::engine::general_purpose::STANDARD.decode(&b64)
-                    .map_err(|e| error::TorrentChatError::Crypto(
+                    .map_err(|e| error::ChattorError::Crypto(
                         format!("Failed to decode stored Signal identity secret: {}", e)
                     ))?;
-                bytes.try_into().map_err(|_| error::TorrentChatError::Crypto(
+                bytes.try_into().map_err(|_| error::ChattorError::Crypto(
                     "Stored Signal identity secret has wrong length".into()
                 ))?
             }
@@ -1490,10 +1490,10 @@ fn handle_incoming_accept(
     // Without this, the acceptor can't send messages because they deferred
     // session creation until our first PreKey message arrives.
     let own_onion = app.onion_address.as_ref()
-        .ok_or_else(|| error::TorrentChatError::Tor("Tor not initialized".into()))?;
+        .ok_or_else(|| error::ChattorError::Tor("Tor not initialized".into()))?;
     {
         let mut session = store.load_session(&accept.from_onion)?
-            .ok_or_else(|| error::TorrentChatError::Crypto("Session just stored but not found".into()))?;
+            .ok_or_else(|| error::ChattorError::Crypto("Session just stored but not found".into()))?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1507,7 +1507,7 @@ fn handle_incoming_accept(
             ephemeral_ttl: None,
         };
         let plaintext = serde_json::to_vec(&handshake)
-            .map_err(|e| error::TorrentChatError::Crypto(format!("Handshake serialize: {}", e)))?;
+            .map_err(|e| error::ChattorError::Crypto(format!("Handshake serialize: {}", e)))?;
 
         let (header, ciphertext, is_prekey) = session.encrypt(&plaintext)?;
         store.store_session(&session)?; // persist updated ratchet state
@@ -1551,7 +1551,7 @@ fn handle_incoming_accept(
             &if accept.from_onion.len() > 16 { format!("{}…", &accept.from_onion[..16]) } else { accept.from_onion.clone() },
             accept.timestamp,
         ),
-    ).map_err(|e| error::TorrentChatError::Database(
+    ).map_err(|e| error::ChattorError::Database(
         format!("Failed to add friend: {}", e)
     ))?;
 

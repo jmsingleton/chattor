@@ -42,7 +42,7 @@ impl Settings {
         #[cfg(target_os = "macos")]
         {
             let home = std::env::var("HOME")
-                .map_err(|_| crate::error::TorrentChatError::Io(
+                .map_err(|_| crate::error::ChattorError::Io(
                     std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
                 ))?;
             Ok(PathBuf::from(home).join("Library/Application Support/chattor"))
@@ -51,7 +51,7 @@ impl Settings {
         #[cfg(not(target_os = "macos"))]
         {
             let home = std::env::var("HOME")
-                .map_err(|_| crate::error::TorrentChatError::Io(
+                .map_err(|_| crate::error::ChattorError::Io(
                     std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
                 ))?;
             Ok(PathBuf::from(home).join(".config/chattor"))
@@ -63,7 +63,7 @@ impl Settings {
         #[cfg(target_os = "macos")]
         {
             let home = std::env::var("HOME")
-                .map_err(|_| crate::error::TorrentChatError::Io(
+                .map_err(|_| crate::error::ChattorError::Io(
                     std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
                 ))?;
             Ok(PathBuf::from(home).join("Library/Application Support/chattor"))
@@ -72,7 +72,7 @@ impl Settings {
         #[cfg(not(target_os = "macos"))]
         {
             let home = std::env::var("HOME")
-                .map_err(|_| crate::error::TorrentChatError::Io(
+                .map_err(|_| crate::error::ChattorError::Io(
                     std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
                 ))?;
             Ok(PathBuf::from(home).join(".local/share/chattor"))

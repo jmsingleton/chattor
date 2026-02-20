@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 #[allow(dead_code)]
-pub enum TorrentChatError {
+pub enum ChattorError {
     #[error("Database error: {0}")]
     Database(String),
 
@@ -47,9 +47,7 @@ pub enum TorrentChatError {
     Tor(String),
 }
 
-#[allow(dead_code)]
-pub type ChattorError = TorrentChatError;
-pub type Result<T> = std::result::Result<T, TorrentChatError>;
+pub type Result<T> = std::result::Result<T, ChattorError>;
 
 #[cfg(test)]
 mod tests {
@@ -57,14 +55,14 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let err = TorrentChatError::Tor("connection failed".to_string());
+        let err = ChattorError::Tor("connection failed".to_string());
         assert_eq!(err.to_string(), "Tor error: connection failed");
     }
 
     #[test]
     fn test_io_error_conversion() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-        let err: TorrentChatError = io_err.into();
-        assert!(matches!(err, TorrentChatError::Io(_)));
+        let err: ChattorError = io_err.into();
+        assert!(matches!(err, ChattorError::Io(_)));
     }
 }

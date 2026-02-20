@@ -1,5 +1,5 @@
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
-use crate::error::{Result, TorrentChatError};
+use crate::error::{Result, ChattorError};
 use crate::protocol::message::{MessageEnvelope, PROTOCOL_VERSION};
 
 /// Send a `MessageEnvelope` with a 4-byte big-endian length prefix.
@@ -9,24 +9,24 @@ where
 {
     // Serialize to JSON
     let json = serde_json::to_vec(envelope)
-        .map_err(|e| TorrentChatError::Network(format!("Failed to serialize: {}", e)))?;
+        .map_err(|e| ChattorError::Network(format!("Failed to serialize: {}", e)))?;
 
     if json.len() > 10_000_000 {
-        return Err(TorrentChatError::Network("Message too large".into()));
+        return Err(ChattorError::Network("Message too large".into()));
     }
 
     // Write length prefix (4 bytes, big-endian)
     let len = (json.len() as u32).to_be_bytes();
     stream.write_all(&len).await
-        .map_err(|e| TorrentChatError::Network(format!("Failed to write length: {}", e)))?;
+        .map_err(|e| ChattorError::Network(format!("Failed to write length: {}", e)))?;
 
     // Write message payload
     stream.write_all(&json).await
-        .map_err(|e| TorrentChatError::Network(format!("Failed to write payload: {}", e)))?;
+        .map_err(|e| ChattorError::Network(format!("Failed to write payload: {}", e)))?;
 
     // Flush to ensure sent
     stream.flush().await
-        .map_err(|e| TorrentChatError::Network(format!("Failed to flush: {}", e)))?;
+        .map_err(|e| ChattorError::Network(format!("Failed to flush: {}", e)))?;
 
     Ok(())
 }
@@ -41,26 +41,26 @@ where
     // Read length prefix (4 bytes, big-endian)
     let mut len_bytes = [0u8; 4];
     stream.read_exact(&mut len_bytes).await
-        .map_err(|e| TorrentChatError::Network(format!("Failed to read length: {}", e)))?;
+        .map_err(|e| ChattorError::Network(format!("Failed to read length: {}", e)))?;
 
     let len = u32::from_be_bytes(len_bytes) as usize;
 
     if len > 10_000_000 {
-        return Err(TorrentChatError::Network("Message too large".into()));
+        return Err(ChattorError::Network("Message too large".into()));
     }
 
     // Read message payload
     let mut json_bytes = vec![0u8; len];
     stream.read_exact(&mut json_bytes).await
-        .map_err(|e| TorrentChatError::Network(format!("Failed to read payload: {}", e)))?;
+        .map_err(|e| ChattorError::Network(format!("Failed to read payload: {}", e)))?;
 
     // Deserialize envelope
     let envelope: MessageEnvelope = serde_json::from_slice(&json_bytes)
-        .map_err(|e| TorrentChatError::Network(format!("Failed to parse message: {}", e)))?;
+        .map_err(|e| ChattorError::Network(format!("Failed to parse message: {}", e)))?;
 
     // Validate protocol version
     if envelope.version != PROTOCOL_VERSION {
-        return Err(TorrentChatError::Network(format!(
+        return Err(ChattorError::Network(format!(
             "Unsupported protocol version {} (expected {})",
             envelope.version, PROTOCOL_VERSION
         )));
