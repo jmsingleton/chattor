@@ -2,9 +2,6 @@ use crate::error::{Result, TorrentChatError};
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
-// Note: chacha20poly1305, hkdf, sha2 are no longer used in this module.
-// Encryption/decryption is handled internally by libsignal_protocol::ratchet.
-
 /// PreKey bundle for Signal Protocol session initialization.
 ///
 /// All public keys are stored as raw 32-byte X25519 keys internally (no 0x05 prefix)
