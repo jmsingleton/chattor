@@ -6,3 +6,4 @@ pub mod framing;
 pub mod sender;
 pub mod receiver;
 pub mod pool;
+pub mod rate_limit;
