@@ -6,7 +6,7 @@ use arti_client::DataStream;
 use tracing::info;
 
 /// Port used for chattor peer-to-peer communication over Tor
-pub const CHATTOR_PORT: u16 = 9051;
+pub const CHATTOR_PORT: u16 = 9735;
 
 /// Connection to peer over Tor
 pub struct TorConnection {
@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn test_chattor_port_constant() {
-        assert_eq!(CHATTOR_PORT, 9051);
+        assert_eq!(CHATTOR_PORT, 9735);
     }
 
     #[tokio::test]
