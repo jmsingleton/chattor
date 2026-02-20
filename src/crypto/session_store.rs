@@ -16,7 +16,7 @@ impl<'a> SessionStore<'a> {
     /// Store session in database
     pub fn store_session(&self, session: &SignalSession) -> Result<()> {
         let conn = self.db.connection();
-        let session_bytes = session.to_bytes();
+        let session_bytes = session.to_bytes()?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -74,18 +74,30 @@ mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
+    /// Helper: generate an X25519 Signal identity keypair for tests.
+    fn gen_signal_identity() -> ([u8; 32], [u8; 32]) {
+        let kp = libsignal_protocol::vxeddsa::gen_keypair();
+        let raw_pub = libsignal_protocol::utils::decode_public_key(&kp.public).unwrap();
+        (kp.secret, raw_pub)
+    }
+
     #[test]
     fn test_store_and_load_session() {
         let temp_db = NamedTempFile::new().unwrap();
         let db = crate::db::Database::open(temp_db.path()).unwrap();
-
         let store = SessionStore::new(&db);
 
-        // Create and store session
-        let bundle = crate::crypto::signal::PreKeyBundle::generate().unwrap();
-        let session = crate::crypto::signal::SignalSession::from_prekey_bundle(
+        // Create a real session pair so we have a valid session to store
+        let (alice_signal_secret, _) = gen_signal_identity();
+        let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
+        let (bob_bundle, bob_private) =
+            crate::crypto::signal::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+
+        let (session, _ad, _eph) = crate::crypto::signal::SignalSession::from_prekey_bundle_real(
             "test.onion".into(),
-            &bundle
+            &bob_bundle,
+            &bob_private,
+            &alice_signal_secret,
         ).unwrap();
 
         store.store_session(&session).unwrap();
@@ -105,19 +117,16 @@ mod tests {
         let store = SessionStore::new(&db);
 
         // Create real session
-        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let _bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let (bob_bundle, bob_private) = {
-            let sig_id = libsignal_protocol::vxeddsa::gen_keypair();
-            let sig_pub = libsignal_protocol::utils::decode_public_key(&sig_id.public).unwrap();
-            crate::crypto::signal::PreKeyBundle::generate_real(&sig_id.secret, &sig_pub).unwrap()
-        };
+        let (alice_signal_secret, _) = gen_signal_identity();
+        let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
+        let (bob_bundle, bob_private) =
+            crate::crypto::signal::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
 
-        let session = crate::crypto::signal::SignalSession::from_prekey_bundle_real(
+        let (session, _ad, _eph) = crate::crypto::signal::SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),
             &bob_bundle,
             &bob_private,
-            &alice_identity,
+            &alice_signal_secret,
         ).unwrap();
 
         // Store session
@@ -130,7 +139,7 @@ mod tests {
         // Verify session state is preserved
         let mut loaded_session = loaded.unwrap();
         // Encrypt with loaded session to verify it works
-        let (ciphertext, _) = loaded_session.encrypt(b"test").unwrap();
-        assert!(ciphertext.len() > 0);
+        let (_header, ciphertext, _is_prekey) = loaded_session.encrypt(b"test").unwrap();
+        assert!(!ciphertext.is_empty());
     }
 }

@@ -536,7 +536,8 @@ async fn main() -> Result<()> {
                                                 match plaintext {
                                                     Some(pt) => {
                                                         match session.encrypt(&pt) {
-                                                            Ok((ciphertext, is_prekey)) => {
+                                                            // TODO(task3): send header separately in wire format
+                                                            Ok((_header, ciphertext, is_prekey)) => {
                                                                 store.store_session(&session).ok();
                                                                 Some(protocol::message::TextMessage {
                                                                     from_onion: own_onion.clone(),
@@ -1024,7 +1025,8 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
 
             let payload = match store.load_session(from_onion)? {
                 Some(mut session) => {
-                    let plaintext = session.decrypt(&ciphertext, is_prekey)?;
+                    // TODO(task3): wire format should carry header+ciphertext separately
+                    let plaintext = session.decrypt(&[], &ciphertext)?;
                     store.store_session(&session)?;
                     serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
                         .map_err(|e| error::TorrentChatError::Crypto(
@@ -1056,21 +1058,25 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
 
                     let private_material = crypto::PreKeyPrivateMaterial {
                         identity_secret,
-                        signed_prekey_secret: [0u8; 32], // unused by from_prekey_message_real
-                        prekey_secret: None,
+                        signed_prekey_secret: [0u8; 32], // TODO(task4): load real SPK secret
+                        prekey_secret: None,             // TODO(task4): load real OPK secret
                     };
-                    let dummy_bundle = crypto::PreKeyBundle::generate()?;
-                    let identity = app.identity.as_ref().expect("identity set during init");
 
-                    let mut session = crypto::SignalSession::from_prekey_message_real(
+                    // TODO(task4): Parse alice_identity_public and alice_ephemeral_public
+                    // from the wire format (PreKey message header). For now, use placeholder
+                    // 33-byte encoded keys. This code path won't work until Task 3/4.
+                    let alice_identity_placeholder: [u8; 33] = [0x05; 33];
+                    let alice_ephemeral_placeholder: [u8; 33] = [0x05; 33];
+
+                    let (mut session, _ad) = crypto::SignalSession::from_prekey_message_real(
                         from_onion.clone(),
-                        &ciphertext,
-                        &dummy_bundle,
                         &private_material,
-                        identity,
+                        &alice_identity_placeholder,
+                        &alice_ephemeral_placeholder,
                     )?;
 
-                    let plaintext = session.decrypt(&ciphertext, true)?;
+                    // TODO(task3): wire format should carry header+ciphertext separately
+                    let plaintext = session.decrypt(&[], &ciphertext)?;
                     store.store_session(&session)?;
 
                     // Clean up stored PreKey material (session is now established)
@@ -1347,20 +1353,21 @@ fn handle_incoming_accept(
             format!("Failed to parse PreKey bundle: {}", e)
         ))?;
 
-    // Create Signal session: we (the initiator) generate a fresh ephemeral key
-    // and compute DH(our_ephemeral, peer_identity_pub). The private material
-    // and identity parameters are unused in the simplified X3DH.
-    let identity = app.identity.as_ref().expect("identity set during init");
+    // Create Signal session: we (the initiator) perform full X3DH with the peer's bundle.
+    // TODO(task4): Load our real Signal identity secret from app_settings.
+    // For now, use a placeholder. This code path won't work correctly until Task 4.
+    let _identity = app.identity.as_ref().expect("identity set during init");
     let dummy_private = PreKeyPrivateMaterial {
         identity_secret: [0u8; 32],
         signed_prekey_secret: [0u8; 32],
         prekey_secret: None,
     };
-    let session = SignalSession::from_prekey_bundle_real(
+    let placeholder_signal_secret: [u8; 32] = [0u8; 32]; // TODO(task4): use real signal identity
+    let (session, _ad, _ephemeral_public) = SignalSession::from_prekey_bundle_real(
         accept.from_onion.clone(),
         &bundle,
         &dummy_private,
-        identity,
+        &placeholder_signal_secret,
     )?;
 
     // Store session
@@ -1390,8 +1397,9 @@ fn handle_incoming_accept(
         let plaintext = serde_json::to_vec(&handshake)
             .map_err(|e| error::TorrentChatError::Crypto(format!("Handshake serialize: {}", e)))?;
 
-        let (ciphertext, is_prekey) = session.encrypt(&plaintext)?;
-        store.store_session(&session)?; // persist updated send_counter
+        // TODO(task3): send header separately in wire format
+        let (_header, ciphertext, is_prekey) = session.encrypt(&plaintext)?;
+        store.store_session(&session)?; // persist updated ratchet state
 
         let handshake_msg = protocol::message::Message::TextMessage(protocol::message::TextMessage {
             from_onion: own_onion.clone(),

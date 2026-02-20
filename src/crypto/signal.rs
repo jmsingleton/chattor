@@ -1,12 +1,9 @@
 use crate::error::{Result, TorrentChatError};
 use serde::{Deserialize, Serialize};
-use chacha20poly1305::{
-    aead::{Aead, KeyInit},
-    ChaCha20Poly1305, Nonce,
-};
-use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret, SharedSecret};
-use hkdf::Hkdf;
-use sha2::Sha256;
+use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
+
+// Note: chacha20poly1305, hkdf, sha2 are no longer used in this module.
+// Encryption/decryption is handled internally by libsignal_protocol::ratchet.
 
 /// PreKey bundle for Signal Protocol session initialization.
 ///
@@ -28,9 +25,7 @@ pub struct PreKeyBundle {
 #[derive(Debug)]
 pub struct PreKeyPrivateMaterial {
     pub identity_secret: [u8; 32],      // X25519 private key bytes
-    #[allow(dead_code)]
     pub signed_prekey_secret: [u8; 32], // X25519 private key bytes
-    #[allow(dead_code)]
     pub prekey_secret: Option<[u8; 32]>, // X25519 private key bytes
 }
 
@@ -49,22 +44,13 @@ pub struct PreKey {
     pub public_key: Vec<u8>,
 }
 
-/// Serializable session state for proper persistence
-#[derive(Serialize, Deserialize)]
-struct SessionState {
-    remote_onion: String,
-    shared_secret_bytes: Option<[u8; 32]>,
-    send_counter: u64,
-    recv_counter: u64,
-    ephemeral_public: Option<[u8; 32]>,
-}
-
 impl PreKeyBundle {
     /// Generate new PreKey bundle with random bytes (test-only).
     ///
     /// Creates a bundle with random (non-cryptographic) key material.
     /// Useful only for error-path testing where valid keys are not needed.
     /// For production use, see `generate_real()`.
+    #[allow(dead_code)]
     pub fn generate() -> Result<Self> {
         use rand::Rng;
 
@@ -162,7 +148,6 @@ impl PreKeyBundle {
     ///
     /// Encodes the internally-stored raw 32-byte public keys into 33-byte
     /// encoded keys (with 0x05 prefix) as expected by the libsignal X3DH API.
-    #[allow(dead_code)]
     pub fn to_libsignal_bundle(&self) -> Result<libsignal_protocol::x3dh::PreKeyBundle> {
         use libsignal_protocol::utils::encode_public_key;
 
@@ -237,259 +222,250 @@ impl PreKeyBundle {
     }
 }
 
-/// Signal session for encryption/decryption
+// ---------------------------------------------------------------------------
+// SignalSession — backed by libsignal-dezire Double Ratchet
+// ---------------------------------------------------------------------------
+
+/// Signal session for encryption/decryption using the Double Ratchet algorithm.
+///
+/// Wraps `libsignal_protocol::ratchet::RatchetState` to provide forward secrecy,
+/// out-of-order message handling, and replay detection.
 pub struct SignalSession {
     pub remote_onion: String,
-    #[allow(dead_code)]
-    session_data: Vec<u8>,
-    // Real Signal Protocol session data
-    shared_secret: Option<SharedSecret>,
-    send_counter: u64,
-    recv_counter: u64,
-    ephemeral_public: Option<[u8; 32]>, // Store ephemeral public key for PreKey message
+    state: libsignal_protocol::ratchet::RatchetState,
+    /// Associated data for encrypt/decrypt (alice_identity || bob_identity, both 33-byte encoded)
+    associated_data: Vec<u8>,
+    /// Only set for the first message (PreKey message)
+    is_first_message: bool,
+    /// Ephemeral public key from X3DH (needed for wire format of first message)
+    ephemeral_public: Option<[u8; 33]>,
+}
+
+/// Serializable form for session persistence (serialization direction — uses references)
+#[derive(Serialize)]
+struct SerializableSessionRef<'a> {
+    remote_onion: &'a str,
+    state: &'a libsignal_protocol::ratchet::RatchetState,
+    associated_data: &'a [u8],
+    is_first_message: bool,
+    /// Stored as Vec<u8> because [u8; 33] doesn't impl Serialize in serde (max 32)
+    ephemeral_public: Option<Vec<u8>>,
+}
+
+/// Deserializable form for session persistence (deserialization direction — owns data)
+#[derive(Deserialize)]
+struct DeserializableSession {
+    remote_onion: String,
+    state: libsignal_protocol::ratchet::RatchetState,
+    associated_data: Vec<u8>,
+    is_first_message: bool,
+    /// Stored as Vec<u8> because [u8; 33] doesn't impl Deserialize in serde (max 32)
+    ephemeral_public: Option<Vec<u8>>,
 }
 
 impl SignalSession {
-    /// Create test session with no shared_secret (test-only).
-    /// encrypt/decrypt will error — use from_prekey_bundle_real() for functional sessions.
-    #[cfg(test)]
-    pub fn from_prekey_bundle(remote_onion: String, bundle: &PreKeyBundle) -> Result<Self> {
-        let session_data = serde_json::to_vec(bundle)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to serialize bundle: {}", e)))?;
-
-        Ok(SignalSession {
-            remote_onion,
-            session_data,
-            shared_secret: None,
-            send_counter: 0,
-            recv_counter: 0,
-            ephemeral_public: None,
-        })
-    }
-
-    /// Create session from PreKey bundle (initiator) with real Signal Protocol
+    /// Create session from PreKey bundle (initiator / Alice side) with real X3DH + Double Ratchet.
     ///
-    /// **Security Note:** This is a simplified X3DH implementation using only one
-    /// Diffie-Hellman operation. Full X3DH requires 3-4 DH operations for proper
-    /// forward secrecy and authentication.
+    /// Performs full X3DH key agreement with the remote peer's PreKey bundle,
+    /// then initializes a Double Ratchet sender state.
     ///
     /// # Arguments
     /// * `remote_onion` - The remote peer's .onion address
     /// * `bundle` - The remote peer's PreKey bundle
-    /// * `_remote_private` - Unused in simplified X3DH
-    /// * `_local_identity` - Unused in simplified X3DH
+    /// * `_private_material` - Unused (kept for API compat during transition)
+    /// * `signal_identity_secret` - Our X25519 Signal identity private key (32 bytes)
+    ///
+    /// # Returns
+    /// `(session, associated_data, ephemeral_public)` — the caller needs `ephemeral_public`
+    /// and `associated_data` for the wire format.
     pub fn from_prekey_bundle_real(
         remote_onion: String,
         bundle: &PreKeyBundle,
-        _remote_private: &PreKeyPrivateMaterial,
-        _local_identity: &crate::crypto::IdentityKeypair,
-    ) -> Result<Self> {
-        use rand::rngs::OsRng;
+        _private_material: &PreKeyPrivateMaterial,
+        signal_identity_secret: &[u8; 32],
+    ) -> Result<(Self, Vec<u8>, [u8; 33])> {
+        use libsignal_protocol::utils::encode_public_key;
 
-        // Generate ephemeral key for this session
-        let ephemeral_secret = StaticSecret::random_from_rng(OsRng);
-        let ephemeral_public = X25519PublicKey::from(&ephemeral_secret);
+        // Convert our PreKeyBundle to libsignal format
+        let ls_bundle = bundle.to_libsignal_bundle()?;
 
-        // Parse remote identity public key
-        let remote_identity_pub = X25519PublicKey::from(
-            <[u8; 32]>::try_from(&bundle.identity_key[..32])
-                .map_err(|_| TorrentChatError::Crypto("Invalid identity key length".into()))?
-        );
+        // Perform full X3DH as initiator
+        let x3dh_result = libsignal_protocol::x3dh::x3dh_initiator(signal_identity_secret, &ls_bundle)
+            .map_err(|e| TorrentChatError::Crypto(format!("X3DH initiator failed: {:?}", e)))?;
 
-        // Compute shared secret (X3DH simplified)
-        let shared_secret = ephemeral_secret.diffie_hellman(&remote_identity_pub);
+        // Decode Bob's signed prekey public from the bundle (raw 32 bytes)
+        let bob_spk_raw: [u8; 32] = bundle.signed_prekey.public_key[..].try_into()
+            .map_err(|_| TorrentChatError::Crypto("Invalid signed prekey length".into()))?;
+        let bob_spk_pubkey = X25519PublicKey::from(bob_spk_raw);
 
-        // Store ephemeral public key for inclusion in first message
-        let ephemeral_bytes = ephemeral_public.to_bytes();
+        // Initialize Double Ratchet sender state
+        let ratchet_state = libsignal_protocol::ratchet::init_sender_state(
+            x3dh_result.shared_secret,
+            bob_spk_pubkey,
+        ).map_err(|e| TorrentChatError::Crypto(format!("Ratchet init_sender failed: {:?}", e)))?;
 
-        Ok(SignalSession {
-            remote_onion,
-            session_data: Vec::new(), // Not used in real mode
-            shared_secret: Some(shared_secret),
-            send_counter: 0,
-            recv_counter: 0,
-            ephemeral_public: Some(ephemeral_bytes),
-        })
+        // Build associated data: encode(alice_identity) || encode(bob_identity)
+        // Alice's identity public key (derived from our secret)
+        let alice_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(signal_identity_secret);
+        // Bob's identity key (from bundle, raw 32 bytes -> encode to 33 bytes)
+        let bob_identity_raw: [u8; 32] = bundle.identity_key[..].try_into()
+            .map_err(|_| TorrentChatError::Crypto("Invalid identity key length".into()))?;
+        let bob_identity_encoded = encode_public_key(&bob_identity_raw);
+
+        let mut associated_data = Vec::with_capacity(66);
+        associated_data.extend_from_slice(&alice_identity_encoded);
+        associated_data.extend_from_slice(&bob_identity_encoded);
+
+        let ephemeral_public = x3dh_result.ephemeral_public;
+
+        Ok((
+            SignalSession {
+                remote_onion,
+                state: ratchet_state,
+                associated_data: associated_data.clone(),
+                is_first_message: true,
+                ephemeral_public: Some(ephemeral_public),
+            },
+            associated_data,
+            ephemeral_public,
+        ))
     }
 
-    /// Create session from received PreKey message (recipient) with real Signal Protocol
+    /// Create session from received PreKey message (responder / Bob side) with real X3DH + Double Ratchet.
     ///
-    /// **Security Note:** This is a simplified X3DH implementation using only one
-    /// Diffie-Hellman operation. Full X3DH requires 3-4 DH operations for proper
-    /// forward secrecy and authentication.
+    /// Performs the X3DH responder side, then initializes a Double Ratchet receiver state.
     ///
     /// # Arguments
     /// * `remote_onion` - The remote peer's .onion address
-    /// * `ciphertext` - The PreKey message (includes ephemeral public key)
-    /// * `_local_bundle` - Unused in simplified X3DH
-    /// * `local_private` - Private key material for this peer
-    /// * `_local_identity` - Unused in simplified X3DH
+    /// * `private_material` - Our PreKey private material (identity, signed prekey, one-time prekey)
+    /// * `alice_identity_public` - Alice's identity public key (33-byte encoded with 0x05 prefix)
+    /// * `alice_ephemeral_public` - Alice's ephemeral public key (33-byte encoded with 0x05 prefix)
+    ///
+    /// # Returns
+    /// `(session, associated_data)`
     pub fn from_prekey_message_real(
         remote_onion: String,
-        ciphertext: &[u8],
-        _local_bundle: &PreKeyBundle,
-        local_private: &PreKeyPrivateMaterial,
-        _local_identity: &crate::crypto::IdentityKeypair,
-    ) -> Result<Self> {
-        // Parse the ephemeral public key from message header (first 32 bytes)
-        if ciphertext.len() < 32 {
-            return Err(TorrentChatError::Crypto("Message too short for PreKey message".into()));
-        }
+        private_material: &PreKeyPrivateMaterial,
+        alice_identity_public: &[u8; 33],
+        alice_ephemeral_public: &[u8; 33],
+    ) -> Result<(Self, Vec<u8>)> {
+        // Perform X3DH responder
+        let shared_secret = libsignal_protocol::x3dh::x3dh_responder(
+            &private_material.identity_secret,
+            &private_material.signed_prekey_secret,
+            private_material.prekey_secret.as_ref(),
+            alice_identity_public,
+            alice_ephemeral_public,
+        ).map_err(|e| TorrentChatError::Crypto(format!("X3DH responder failed: {:?}", e)))?;
 
-        let ephemeral_pub = X25519PublicKey::from(
-            <[u8; 32]>::try_from(&ciphertext[..32])
-                .map_err(|_| TorrentChatError::Crypto("Invalid ephemeral key".into()))?
+        // Build the receiver's DH keypair from the signed prekey
+        let spk_secret = StaticSecret::from(private_material.signed_prekey_secret);
+        let spk_public = X25519PublicKey::from(&spk_secret);
+
+        // Initialize Double Ratchet receiver state
+        let ratchet_state = libsignal_protocol::ratchet::init_receiver_state(
+            shared_secret,
+            (spk_secret, spk_public),
         );
 
-        // Use our identity private key
-        let local_identity_secret = StaticSecret::from(local_private.identity_secret);
+        // Build associated data: encode(alice_identity) || encode(bob_identity)
+        // Alice's identity is already encoded (33 bytes)
+        // Bob's identity public key (derived from our secret)
+        let bob_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(&private_material.identity_secret);
 
-        // Compute shared secret
-        let shared_secret = local_identity_secret.diffie_hellman(&ephemeral_pub);
+        let mut associated_data = Vec::with_capacity(66);
+        associated_data.extend_from_slice(alice_identity_public);
+        associated_data.extend_from_slice(&bob_identity_encoded);
 
-        Ok(SignalSession {
-            remote_onion,
-            session_data: Vec::new(), // Not used in real mode
-            shared_secret: Some(shared_secret),
-            send_counter: 0,
-            recv_counter: 0,
-            ephemeral_public: None, // Recipient doesn't need to store ephemeral key
-        })
+        Ok((
+            SignalSession {
+                remote_onion,
+                state: ratchet_state,
+                associated_data: associated_data.clone(),
+                is_first_message: false,
+                ephemeral_public: None,
+            },
+            associated_data,
+        ))
     }
 
-    /// Encrypt plaintext
-    pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<(Vec<u8>, bool)> {
-        // If we have a real shared secret, use real encryption
-        if let Some(ref shared_secret) = self.shared_secret {
-            // Use HKDF for proper key derivation
-            let shared_secret_bytes = shared_secret.as_bytes();
-            let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes);
-            let mut key_bytes = [0u8; 32];
-            let counter_bytes = self.send_counter.to_be_bytes();
-            let mut info = Vec::new();
-            info.extend_from_slice(b"chattor-message-key");
-            info.extend_from_slice(&counter_bytes);
-            hk.expand(&info, &mut key_bytes)
-                .map_err(|_| TorrentChatError::Crypto("HKDF expand failed".into()))?;
-            let key = chacha20poly1305::Key::from_slice(&key_bytes);
-            let cipher = ChaCha20Poly1305::new(key);
-
-            // Generate nonce from counter
-            let mut nonce_bytes = [0u8; 12];
-            nonce_bytes[4..12].copy_from_slice(&self.send_counter.to_be_bytes());
-            let nonce = Nonce::from_slice(&nonce_bytes);
-
-            // Encrypt
-            let ciphertext = cipher.encrypt(nonce, plaintext)
-                .map_err(|e| TorrentChatError::Crypto(format!("Encryption failed: {}", e)))?;
-
-            // PreKey message = first message from the initiator (who has an ephemeral key).
-            // Use .take() so that only the very first encrypt prepends the ephemeral.
-            let ephemeral_for_prekey = self.ephemeral_public.take();
-            let is_prekey = ephemeral_for_prekey.is_some();
-            let mut result = Vec::new();
-
-            if let Some(ephemeral_pub) = ephemeral_for_prekey {
-                result.extend_from_slice(&ephemeral_pub);
-            }
-            result.extend_from_slice(&ciphertext);
-
-            // Increment counter
-            self.send_counter += 1;
-
-            Ok((result, is_prekey))
-        } else {
-            Err(TorrentChatError::Crypto(
-                format!("No encryption session established for {}", self.remote_onion)
-            ))
-        }
+    /// Get the associated data for this session.
+    #[allow(dead_code)]
+    pub fn associated_data(&self) -> &[u8] {
+        &self.associated_data
     }
 
-    /// Decrypt ciphertext
+    /// Get the ephemeral public key (only available before first encrypt on initiator side).
+    #[allow(dead_code)]
+    pub fn ephemeral_public(&self) -> Option<&[u8; 33]> {
+        self.ephemeral_public.as_ref()
+    }
+
+    /// Encrypt plaintext using the Double Ratchet.
     ///
-    /// `is_prekey_message` indicates whether the ciphertext has a 32-byte
-    /// ephemeral public key prefix (from the initiator's first message).
-    /// The caller determines this from the wire-format `signal_type` field.
-    pub fn decrypt(&mut self, ciphertext: &[u8], is_prekey_message: bool) -> Result<Vec<u8>> {
-        // If we have a real shared secret, use real decryption
-        if let Some(ref shared_secret) = self.shared_secret {
-            // Strip ephemeral key header if this is a PreKey message
-            let actual_ciphertext = if is_prekey_message && ciphertext.len() > 32 {
-                &ciphertext[32..]
-            } else {
-                ciphertext
-            };
+    /// # Returns
+    /// `(header, ciphertext, is_first_message)` where:
+    /// - `header` is the encrypted ratchet header
+    /// - `ciphertext` is the encrypted message
+    /// - `is_first_message` indicates this is the first message (PreKey message)
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>, bool)> {
+        let (header, ciphertext) = libsignal_protocol::ratchet::encrypt(
+            &mut self.state,
+            plaintext,
+            &self.associated_data,
+        ).map_err(|e| TorrentChatError::Crypto(format!("Ratchet encrypt failed: {:?}", e)))?;
 
-            // Use HKDF for proper key derivation
-            let shared_secret_bytes = shared_secret.as_bytes();
-            let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes);
-            let mut key_bytes = [0u8; 32];
-            let counter_bytes = self.recv_counter.to_be_bytes();
-            let mut info = Vec::new();
-            info.extend_from_slice(b"chattor-message-key");
-            info.extend_from_slice(&counter_bytes);
-            hk.expand(&info, &mut key_bytes)
-                .map_err(|_| TorrentChatError::Crypto("HKDF expand failed".into()))?;
-            let key = chacha20poly1305::Key::from_slice(&key_bytes);
-            let cipher = ChaCha20Poly1305::new(key);
+        let was_first = self.is_first_message;
+        self.is_first_message = false;
 
-            // Generate nonce
-            let mut nonce_bytes = [0u8; 12];
-            nonce_bytes[4..12].copy_from_slice(&self.recv_counter.to_be_bytes());
-            let nonce = Nonce::from_slice(&nonce_bytes);
-
-            // Decrypt
-            let plaintext = cipher.decrypt(nonce, actual_ciphertext)
-                .map_err(|e| TorrentChatError::Crypto(format!("Decryption failed: {}", e)))?;
-
-            // Increment counter
-            self.recv_counter += 1;
-
-            Ok(plaintext)
-        } else {
-            Err(TorrentChatError::Crypto(
-                format!("No decryption session established for {}", self.remote_onion)
-            ))
-        }
+        Ok((header, ciphertext, was_first))
     }
 
-    /// Serialize session state for storage
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let state = SessionState {
-            remote_onion: self.remote_onion.clone(),
-            shared_secret_bytes: self.shared_secret.as_ref().map(|s| s.to_bytes()),
-            send_counter: self.send_counter,
-            recv_counter: self.recv_counter,
-            ephemeral_public: self.ephemeral_public,
+    /// Decrypt ciphertext using the Double Ratchet.
+    ///
+    /// # Arguments
+    /// * `header` - The encrypted ratchet header
+    /// * `ciphertext` - The encrypted message body
+    pub fn decrypt(&mut self, header: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
+        libsignal_protocol::ratchet::decrypt(
+            &mut self.state,
+            header,
+            ciphertext,
+            &self.associated_data,
+        ).map_err(|e| TorrentChatError::Crypto(format!("Ratchet decrypt failed: {:?}", e)))
+    }
+
+    /// Serialize session state for storage (JSON).
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let s = SerializableSessionRef {
+            remote_onion: &self.remote_onion,
+            state: &self.state,
+            associated_data: &self.associated_data,
+            is_first_message: self.is_first_message,
+            ephemeral_public: self.ephemeral_public.map(|ep| ep.to_vec()),
         };
-        bincode::serialize(&state).expect("Failed to serialize session state")
+        serde_json::to_vec(&s)
+            .map_err(|e| TorrentChatError::Crypto(format!("session serialize: {e}")))
     }
 
-    /// Deserialize session state from storage
-    pub fn from_bytes(_remote_onion: String, bytes: Vec<u8>) -> Result<Self> {
-        let state: SessionState = bincode::deserialize(&bytes)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to deserialize session: {}", e)))?;
-
-        // Reconstruct SharedSecret from raw bytes
-        // SharedSecret is an opaque type without a public constructor from bytes,
-        // so we use unsafe transmute since we control the serialization on both
-        // sides and know the internal representation is [u8; 32].
-        let shared_secret = state.shared_secret_bytes.map(|secret_bytes| {
-            // SAFETY: SharedSecret is a wrapper around [u8; 32] with the same memory layout.
-            // This is safe because:
-            // 1. We serialized it from SharedSecret.to_bytes() which gives us the raw [u8; 32]
-            // 2. We're reconstructing the exact same type
-            // 3. SharedSecret has no invariants beyond being 32 bytes
-            unsafe { std::mem::transmute::<[u8; 32], SharedSecret>(secret_bytes) }
-        });
-
-        Ok(SignalSession {
-            remote_onion: state.remote_onion,
-            shared_secret,
-            send_counter: state.send_counter,
-            recv_counter: state.recv_counter,
-            ephemeral_public: state.ephemeral_public,
-            session_data: bytes,  // Keep for backward compatibility
+    /// Deserialize session state from storage (JSON).
+    pub fn from_bytes(_remote_onion: String, data: Vec<u8>) -> Result<Self> {
+        let s: DeserializableSession = serde_json::from_slice(&data)
+            .map_err(|e| TorrentChatError::Crypto(format!("session deserialize: {e}")))?;
+        let ephemeral_public = match s.ephemeral_public {
+            Some(v) => {
+                let arr: [u8; 33] = v.try_into()
+                    .map_err(|_| TorrentChatError::Crypto("Invalid ephemeral_public length".into()))?;
+                Some(arr)
+            }
+            None => None,
+        };
+        Ok(Self {
+            remote_onion: s.remote_onion,
+            state: s.state,
+            associated_data: s.associated_data,
+            is_first_message: s.is_first_message,
+            ephemeral_public,
         })
     }
 }
@@ -503,6 +479,36 @@ mod tests {
         let kp = libsignal_protocol::vxeddsa::gen_keypair();
         let raw_pub = libsignal_protocol::utils::decode_public_key(&kp.public).unwrap();
         (kp.secret, raw_pub)
+    }
+
+    /// Helper: set up a complete Alice-Bob session pair using real X3DH + Double Ratchet.
+    /// Returns (alice_session, bob_session).
+    fn setup_session_pair() -> (SignalSession, SignalSession) {
+        let (alice_signal_secret, _alice_signal_public) = gen_signal_identity();
+        let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
+
+        // Bob generates his PreKey bundle
+        let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+
+        // Alice creates session from Bob's bundle (initiator)
+        let (alice_session, _ad, ephemeral_public) = SignalSession::from_prekey_bundle_real(
+            "bob.onion".into(),
+            &bob_bundle,
+            &bob_private,  // unused but required by signature
+            &alice_signal_secret,
+        ).unwrap();
+
+        // Bob creates session from Alice's PreKey message (responder)
+        // He needs Alice's identity public and ephemeral public (both 33-byte encoded)
+        let alice_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(&alice_signal_secret);
+        let (bob_session, _bob_ad) = SignalSession::from_prekey_message_real(
+            "alice.onion".into(),
+            &bob_private,
+            &alice_identity_encoded,
+            &ephemeral_public,
+        ).unwrap();
+
+        (alice_session, bob_session)
     }
 
     #[test]
@@ -641,125 +647,207 @@ mod tests {
         assert_eq!(alice_result.shared_secret, bob_result.unwrap());
     }
 
+    // -----------------------------------------------------------------------
+    // Double Ratchet session tests
+    // -----------------------------------------------------------------------
+
     #[test]
-    fn test_real_session_encryption_decryption() {
-        // This test uses the old simplified X3DH in SignalSession (Task 2 scope).
-        // We keep it passing by generating a signal identity and passing it through.
-        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+    fn test_real_session_encrypt_decrypt_roundtrip() {
+        let (mut alice, mut bob) = setup_session_pair();
 
-        // Generate Bob's Signal identity keypair
-        let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
-
-        // Bob generates PreKey bundle with signal identity
-        let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
-
-        // Alice creates session from Bob's bundle (simplified X3DH -- will be updated in Task 2)
-        let mut alice_session = SignalSession::from_prekey_bundle_real(
-            "bob.onion".into(),
-            &bob_bundle,
-            &bob_private,
-            &alice_identity,
-        ).unwrap();
-
-        // Alice encrypts
+        // Alice sends first message (PreKey message)
         let plaintext = b"Hello Bob!";
-        let (ciphertext, is_prekey) = alice_session.encrypt(plaintext).unwrap();
+        let (header, ciphertext, is_prekey) = alice.encrypt(plaintext).unwrap();
 
-        assert!(is_prekey); // First message should be PreKey type
-        assert_ne!(ciphertext, plaintext); // Should be encrypted
+        assert!(is_prekey, "First message should be PreKey type");
+        assert_ne!(ciphertext, plaintext, "Ciphertext should differ from plaintext");
 
-        // Bob creates session from Alice's PreKey message
-        let mut bob_session = SignalSession::from_prekey_message_real(
-            "alice.onion".into(),
-            &ciphertext,
-            &bob_bundle,
-            &bob_private,
-            &bob_identity,
-        ).unwrap();
-
-        // Bob decrypts (this is a PreKey message -- has ephemeral prefix)
-        let decrypted = bob_session.decrypt(&ciphertext, true).unwrap();
+        // Bob decrypts
+        let decrypted = bob.decrypt(&header, &ciphertext).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
     #[test]
-    fn test_encrypt_without_shared_secret_errors() {
-        let bundle = PreKeyBundle::generate().unwrap();
-        let mut session = SignalSession::from_prekey_bundle(
-            "test.onion".into(),
-            &bundle,
-        ).unwrap();
+    fn test_bidirectional_messaging() {
+        let (mut alice, mut bob) = setup_session_pair();
 
-        // Session has no real shared_secret — should error, not return plaintext
-        let result = session.encrypt(b"hello");
-        assert!(result.is_err(), "encrypt() should error without shared_secret");
+        // Alice -> Bob
+        let (h1, c1, _) = alice.encrypt(b"Hello Bob!").unwrap();
+        let d1 = bob.decrypt(&h1, &c1).unwrap();
+        assert_eq!(d1, b"Hello Bob!");
+
+        // Bob -> Alice
+        let (h2, c2, _) = bob.encrypt(b"Hello Alice!").unwrap();
+        let d2 = alice.decrypt(&h2, &c2).unwrap();
+        assert_eq!(d2, b"Hello Alice!");
+
+        // Alice -> Bob again
+        let (h3, c3, is_prekey) = alice.encrypt(b"How are you?").unwrap();
+        assert!(!is_prekey, "Not first message anymore");
+        let d3 = bob.decrypt(&h3, &c3).unwrap();
+        assert_eq!(d3, b"How are you?");
     }
 
     #[test]
-    fn test_decrypt_without_shared_secret_errors() {
-        let bundle = PreKeyBundle::generate().unwrap();
-        let mut session = SignalSession::from_prekey_bundle(
-            "test.onion".into(),
-            &bundle,
-        ).unwrap();
+    fn test_multiple_messages_same_direction() {
+        let (mut alice, mut bob) = setup_session_pair();
 
-        // Session has no real shared_secret — should error, not return plaintext
-        let result = session.decrypt(b"some ciphertext", false);
-        assert!(result.is_err(), "decrypt() should error without shared_secret");
+        let (h1, c1, _) = alice.encrypt(b"Message 1").unwrap();
+        let (h2, c2, _) = alice.encrypt(b"Message 2").unwrap();
+        let (h3, c3, _) = alice.encrypt(b"Message 3").unwrap();
+
+        // Bob decrypts in order
+        assert_eq!(bob.decrypt(&h1, &c1).unwrap(), b"Message 1");
+        assert_eq!(bob.decrypt(&h2, &c2).unwrap(), b"Message 2");
+        assert_eq!(bob.decrypt(&h3, &c3).unwrap(), b"Message 3");
     }
 
     #[test]
-    fn test_session_serialization_prevents_nonce_reuse() {
-        let alice_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let bob_identity = crate::crypto::IdentityKeypair::generate().unwrap();
+    fn test_out_of_order_messages() {
+        let (mut alice, mut bob) = setup_session_pair();
 
-        // Generate Bob's Signal identity keypair
-        let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
+        let (h1, c1, _) = alice.encrypt(b"Message 1").unwrap();
+        let (h2, c2, _) = alice.encrypt(b"Message 2").unwrap();
+        let (h3, c3, _) = alice.encrypt(b"Message 3").unwrap();
 
-        // Bob generates PreKey bundle
-        let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+        // Bob receives out of order: 1, 3, 2
+        assert_eq!(bob.decrypt(&h1, &c1).unwrap(), b"Message 1");
+        assert_eq!(bob.decrypt(&h3, &c3).unwrap(), b"Message 3");
+        assert_eq!(bob.decrypt(&h2, &c2).unwrap(), b"Message 2");
+    }
 
-        // Alice creates session and sends two messages
-        let mut alice_session = SignalSession::from_prekey_bundle_real(
-            "bob.onion".into(),
-            &bob_bundle,
-            &bob_private,
-            &alice_identity,
-        ).unwrap();
+    #[test]
+    fn test_session_serialization_roundtrip() {
+        let (mut alice, mut bob) = setup_session_pair();
 
-        let (msg1, _) = alice_session.encrypt(b"Message 1").unwrap();
-        let (msg2, _) = alice_session.encrypt(b"Message 2").unwrap();
+        // Alice sends two messages
+        let (h1, c1, _) = alice.encrypt(b"Message 1").unwrap();
+        let (h2, c2, _) = alice.encrypt(b"Message 2").unwrap();
 
-        // Serialize Alice's session after sending two messages
-        let serialized = alice_session.to_bytes();
+        // Serialize Alice's session
+        let serialized = alice.to_bytes().unwrap();
 
         // Deserialize into a new session
         let mut alice_restored = SignalSession::from_bytes("bob.onion".into(), serialized).unwrap();
 
-        // Verify counters were preserved (send_counter should be 2)
-        // Send another message - this should use counter 2, not reuse 0 or 1
-        let (msg3, is_prekey) = alice_restored.encrypt(b"Message 3").unwrap();
+        // Send another message from restored session
+        let (h3, c3, is_prekey) = alice_restored.encrypt(b"Message 3").unwrap();
+        assert!(!is_prekey, "Restored session should not be first message");
 
-        // Third message should NOT be a PreKey message (counter != 0)
-        assert!(!is_prekey);
+        // Bob decrypts all three
+        assert_eq!(bob.decrypt(&h1, &c1).unwrap(), b"Message 1");
+        assert_eq!(bob.decrypt(&h2, &c2).unwrap(), b"Message 2");
+        assert_eq!(bob.decrypt(&h3, &c3).unwrap(), b"Message 3");
+    }
 
-        // Verify all messages use different ciphertexts (different nonces)
-        assert_ne!(msg1, msg2);
-        assert_ne!(msg2, msg3);
-        assert_ne!(msg1, msg3);
+    #[test]
+    fn test_session_serialization_both_sides() {
+        let (mut alice, mut bob) = setup_session_pair();
 
-        // Bob should be able to decrypt all three messages in order
-        let mut bob_session = SignalSession::from_prekey_message_real(
-            "alice.onion".into(),
-            &msg1,
+        // Exchange a message
+        let (h1, c1, _) = alice.encrypt(b"Hello").unwrap();
+        bob.decrypt(&h1, &c1).unwrap();
+
+        // Serialize both
+        let alice_bytes = alice.to_bytes().unwrap();
+        let bob_bytes = bob.to_bytes().unwrap();
+
+        // Restore both
+        let mut alice2 = SignalSession::from_bytes("bob.onion".into(), alice_bytes).unwrap();
+        let mut bob2 = SignalSession::from_bytes("alice.onion".into(), bob_bytes).unwrap();
+
+        // Continue conversation
+        let (h2, c2, _) = bob2.encrypt(b"World").unwrap();
+        assert_eq!(alice2.decrypt(&h2, &c2).unwrap(), b"World");
+    }
+
+    #[test]
+    fn test_tampered_ciphertext_rejected() {
+        let (mut alice, mut bob) = setup_session_pair();
+
+        let (header, mut ciphertext, _) = alice.encrypt(b"Secret message").unwrap();
+
+        // Tamper with ciphertext
+        if !ciphertext.is_empty() {
+            ciphertext[0] ^= 0xFF;
+        }
+
+        let result = bob.decrypt(&header, &ciphertext);
+        assert!(result.is_err(), "Tampered ciphertext should fail decryption");
+    }
+
+    #[test]
+    fn test_tampered_header_rejected() {
+        let (mut alice, mut bob) = setup_session_pair();
+
+        let (mut header, ciphertext, _) = alice.encrypt(b"Secret message").unwrap();
+
+        // Tamper with header
+        if !header.is_empty() {
+            header[0] ^= 0xFF;
+        }
+
+        let result = bob.decrypt(&header, &ciphertext);
+        assert!(result.is_err(), "Tampered header should fail decryption");
+    }
+
+    #[test]
+    fn test_replay_detection() {
+        let (mut alice, mut bob) = setup_session_pair();
+
+        let (header, ciphertext, _) = alice.encrypt(b"Once only").unwrap();
+
+        // First decrypt succeeds
+        let d1 = bob.decrypt(&header, &ciphertext).unwrap();
+        assert_eq!(d1, b"Once only");
+
+        // Replay should fail
+        let result = bob.decrypt(&header, &ciphertext);
+        assert!(result.is_err(), "Replayed message should be rejected");
+    }
+
+    #[test]
+    fn test_is_first_message_flag() {
+        let (mut alice, _bob) = setup_session_pair();
+
+        let (_, _, first) = alice.encrypt(b"First").unwrap();
+        assert!(first, "First encrypt should set is_first_message=true");
+
+        let (_, _, second) = alice.encrypt(b"Second").unwrap();
+        assert!(!second, "Second encrypt should set is_first_message=false");
+    }
+
+    #[test]
+    fn test_associated_data_consistency() {
+        let (alice, bob) = setup_session_pair();
+
+        // AD should be 66 bytes (two 33-byte encoded keys)
+        assert_eq!(alice.associated_data().len(), 66);
+        assert_eq!(bob.associated_data().len(), 66);
+
+        // Both sides should have the same AD (alice_ik || bob_ik)
+        assert_eq!(alice.associated_data(), bob.associated_data(),
+            "Both sides should compute identical associated data");
+    }
+
+    #[test]
+    fn test_ephemeral_public_available_on_initiator() {
+        let (alice_signal_secret, _) = gen_signal_identity();
+        let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
+        let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+
+        let (session, _, eph) = SignalSession::from_prekey_bundle_real(
+            "bob.onion".into(),
             &bob_bundle,
             &bob_private,
-            &bob_identity,
+            &alice_signal_secret,
         ).unwrap();
 
-        assert_eq!(bob_session.decrypt(&msg1, true).unwrap(), b"Message 1");
-        assert_eq!(bob_session.decrypt(&msg2, false).unwrap(), b"Message 2");
-        assert_eq!(bob_session.decrypt(&msg3, false).unwrap(), b"Message 3");
+        // Ephemeral public should be a 33-byte encoded key
+        assert_eq!(eph.len(), 33);
+        assert_eq!(eph[0], 0x05);
+
+        // Also accessible from session
+        assert!(session.ephemeral_public().is_some());
     }
 }
