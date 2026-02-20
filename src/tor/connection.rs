@@ -1,6 +1,6 @@
 use crate::error::{Result, TorrentChatError};
 use crate::tor::client::TorClient;
-use crate::protocol::message::Message;
+use crate::protocol::message::{Message, MessageEnvelope};
 use crate::net::framing::send_message;
 use arti_client::DataStream;
 use tracing::info;
@@ -31,9 +31,10 @@ impl TorConnection {
         Ok(TorConnection { stream })
     }
 
-    /// Send message over connection
+    /// Send message over connection, wrapped in a versioned envelope.
     pub async fn send(&mut self, message: &Message) -> Result<()> {
-        send_message(&mut self.stream, message).await
+        let envelope = MessageEnvelope::new(message.clone());
+        send_message(&mut self.stream, &envelope).await
     }
 }
 

@@ -46,10 +46,10 @@ async fn handle_connection(
     tx: mpsc::Sender<IncomingMessage>,
 ) -> Result<()> {
     // Use shared framing module instead of duplicating read logic
-    let message = crate::net::framing::receive_message(&mut stream).await?;
+    let envelope = crate::net::framing::receive_message(&mut stream).await?;
 
-    // Send to app
-    tx.send(IncomingMessage { message, remote_addr }).await
+    // Send to app (unwrap envelope payload)
+    tx.send(IncomingMessage { message: envelope.payload, remote_addr }).await
         .map_err(|e| crate::error::TorrentChatError::Network(format!("Failed to send to app: {}", e)))?;
 
     Ok(())
@@ -72,9 +72,9 @@ pub async fn listen_for_tor_connections(
             match stream_request.accept(Connected::new_empty()).await {
                 Ok(mut data_stream) => {
                     match crate::net::framing::receive_message(&mut data_stream).await {
-                        Ok(message) => {
+                        Ok(envelope) => {
                             let _ = tx.send(IncomingMessage {
-                                message,
+                                message: envelope.payload,
                                 remote_addr: "tor-rendezvous".to_string(),
                             }).await;
                         }
@@ -101,7 +101,7 @@ mod tests {
     #[tokio::test]
     async fn test_listener_accepts_connections() {
         use tokio::io::AsyncWriteExt;
-        use crate::protocol::message::{Message, DeliveryReceiptMessage};
+        use crate::protocol::message::{Message, MessageEnvelope, DeliveryReceiptMessage};
         use uuid::Uuid;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -117,13 +117,14 @@ mod tests {
         // Connect as client and send a message
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
 
-        // Create a test message
+        // Create a test message wrapped in an envelope
         let msg = Message::DeliveryReceipt(DeliveryReceiptMessage {
             message_id: Uuid::new_v4(),
             timestamp: 1234567890,
         });
+        let envelope = MessageEnvelope::new(msg);
 
-        let json = serde_json::to_vec(&msg).unwrap();
+        let json = serde_json::to_vec(&envelope).unwrap();
         let len = json.len() as u32;
 
         // Send length prefix

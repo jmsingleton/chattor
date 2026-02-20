@@ -1,14 +1,14 @@
 use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
 use crate::error::{Result, TorrentChatError};
-use crate::protocol::message::Message;
+use crate::protocol::message::{MessageEnvelope, PROTOCOL_VERSION};
 
-/// Send message with length prefix (works with any async stream)
-pub async fn send_message<S>(stream: &mut S, message: &Message) -> Result<()>
+/// Send a `MessageEnvelope` with a 4-byte big-endian length prefix.
+pub async fn send_message<S>(stream: &mut S, envelope: &MessageEnvelope) -> Result<()>
 where
     S: AsyncWrite + Unpin
 {
     // Serialize to JSON
-    let json = serde_json::to_vec(message)
+    let json = serde_json::to_vec(envelope)
         .map_err(|e| TorrentChatError::Network(format!("Failed to serialize: {}", e)))?;
 
     if json.len() > 10_000_000 {
@@ -31,8 +31,10 @@ where
     Ok(())
 }
 
-/// Receive message with length prefix (works with any async stream)
-pub async fn receive_message<S>(stream: &mut S) -> Result<Message>
+/// Receive a `MessageEnvelope` with a 4-byte big-endian length prefix.
+///
+/// Returns an error if the envelope's protocol version is not supported.
+pub async fn receive_message<S>(stream: &mut S) -> Result<MessageEnvelope>
 where
     S: AsyncRead + Unpin
 {
@@ -52,11 +54,19 @@ where
     stream.read_exact(&mut json_bytes).await
         .map_err(|e| TorrentChatError::Network(format!("Failed to read payload: {}", e)))?;
 
-    // Deserialize message
-    let message: Message = serde_json::from_slice(&json_bytes)
+    // Deserialize envelope
+    let envelope: MessageEnvelope = serde_json::from_slice(&json_bytes)
         .map_err(|e| TorrentChatError::Network(format!("Failed to parse message: {}", e)))?;
 
-    Ok(message)
+    // Validate protocol version
+    if envelope.version != PROTOCOL_VERSION {
+        return Err(TorrentChatError::Network(format!(
+            "Unsupported protocol version {} (expected {})",
+            envelope.version, PROTOCOL_VERSION
+        )));
+    }
+
+    Ok(envelope)
 }
 
 #[cfg(test)]
@@ -74,10 +84,10 @@ mod tests {
         // Server task
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let msg = receive_message(&mut stream).await.unwrap();
+            let envelope = receive_message(&mut stream).await.unwrap();
 
             // Echo back
-            send_message(&mut stream, &msg).await.unwrap();
+            send_message(&mut stream, &envelope).await.unwrap();
         });
 
         // Client
@@ -94,10 +104,12 @@ mod tests {
             x3dh_init: None,
         });
 
-        send_message(&mut stream, &original).await.unwrap();
+        let envelope = MessageEnvelope::new(original.clone());
+        send_message(&mut stream, &envelope).await.unwrap();
         let received = receive_message(&mut stream).await.unwrap();
 
-        assert_eq!(format!("{:?}", original), format!("{:?}", received));
+        assert_eq!(received.version, PROTOCOL_VERSION);
+        assert_eq!(format!("{:?}", original), format!("{:?}", received.payload));
     }
 
     #[tokio::test]
@@ -117,17 +129,48 @@ mod tests {
             x3dh_init: None,
         });
 
-        let message_clone = message.clone();
+        let envelope = MessageEnvelope::new(message.clone());
 
         // Send on one end
         tokio::spawn(async move {
-            send_message(&mut client, &message_clone).await.unwrap();
+            send_message(&mut client, &envelope).await.unwrap();
         });
 
         // Receive on other end
         let received = receive_message(&mut server).await.unwrap();
 
         // Verify
-        assert_eq!(format!("{:?}", message), format!("{:?}", received));
+        assert_eq!(received.version, PROTOCOL_VERSION);
+        assert_eq!(format!("{:?}", message), format!("{:?}", received.payload));
+    }
+
+    #[tokio::test]
+    async fn test_receive_rejects_unsupported_version() {
+        let (mut client, mut server) = tokio::io::duplex(1024);
+
+        // Manually construct an envelope with a bad version
+        let bad_envelope = serde_json::json!({
+            "version": 99,
+            "payload": {
+                "type": "presence",
+                "from_onion": "test.onion",
+                "presence_type": "Heartbeat",
+                "timestamp": 1000
+            }
+        });
+        let json = serde_json::to_vec(&bad_envelope).unwrap();
+
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let len = (json.len() as u32).to_be_bytes();
+            client.write_all(&len).await.unwrap();
+            client.write_all(&json).await.unwrap();
+            client.flush().await.unwrap();
+        });
+
+        let result = receive_message(&mut server).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unsupported protocol version 99"));
     }
 }
