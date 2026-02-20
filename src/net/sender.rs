@@ -49,8 +49,7 @@ impl MessageSender {
             .map_err(|e| TorrentChatError::Crypto(format!("Failed to serialize: {}", e)))?;
 
         // Encrypt with Signal (Double Ratchet)
-        // TODO(task3): Wire format needs to send header+ciphertext separately
-        let (_header, ciphertext, is_prekey) = session.encrypt(&plaintext)?;
+        let (header, ciphertext, is_prekey) = session.encrypt(&plaintext)?;
 
         // Update session in database
         store.store_session(&session)?;
@@ -59,6 +58,7 @@ impl MessageSender {
         let message = TextMessage {
             from_onion: from_onion.to_string(),
             to_onion: to_onion.to_string(),
+            signal_header: base64::engine::general_purpose::STANDARD.encode(&header),
             signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
             signal_type: if is_prekey {
                 SignalMessageType::PrekeyMessage
@@ -67,6 +67,7 @@ impl MessageSender {
             },
             timestamp: payload.sent_at,
             message_id: Uuid::new_v4(),
+            x3dh_init: None,
         };
 
         Ok(message)

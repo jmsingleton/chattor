@@ -38,12 +38,11 @@ impl MessageReceiver {
         };
 
         // Decrypt
+        let header = base64::engine::general_purpose::STANDARD.decode(&message.signal_header)
+            .map_err(|e| TorrentChatError::Crypto(format!("Failed to decode header: {}", e)))?;
         let ciphertext = base64::engine::general_purpose::STANDARD.decode(&message.signal_ciphertext)
-            .map_err(|e| TorrentChatError::Crypto(format!("Failed to decode base64: {}", e)))?;
-        // TODO(task3): Wire format needs to carry header+ciphertext separately.
-        // For now, treat entire ciphertext as body with empty header as placeholder.
-        let _is_prekey = message.signal_type == SignalMessageType::PrekeyMessage;
-        let plaintext = session.decrypt(&[], &ciphertext)?;
+            .map_err(|e| TorrentChatError::Crypto(format!("Failed to decode ciphertext: {}", e)))?;
+        let plaintext = session.decrypt(&header, &ciphertext)?;
 
         // Update session
         store.store_session(&session)?;
