@@ -8,13 +8,11 @@ class Chattor < Formula
   depends_on "rust" => :build
 
   def install
-    cd "chattor" do
-      system "cargo", "install", *std_cargo_args
-      man1.install "man/chattor.1"
-      bash_completion.install "completions/chattor.bash" => "chattor"
-      zsh_completion.install "completions/_chattor"
-      fish_completion.install "completions/chattor.fish"
-    end
+    system "cargo", "install", *std_cargo_args
+    man1.install "man/chattor.1"
+    bash_completion.install "completions/chattor.bash" => "chattor"
+    zsh_completion.install "completions/_chattor"
+    fish_completion.install "completions/chattor.fish"
   end
 
   test do

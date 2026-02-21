@@ -34,11 +34,9 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release binary
-        working-directory: chattor
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Create tarball
-        working-directory: chattor
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           ARCHIVE="chattor-${VERSION}-${{ matrix.suffix }}.tar.gz"
@@ -52,14 +50,12 @@ jobs:
 
       - name: Build .deb package
         if: matrix.os == 'ubuntu-latest'
-        working-directory: chattor
         run: |
           cargo install cargo-deb
           cargo deb --target ${{ matrix.target }} --no-build
 
       - name: Build .rpm package
         if: matrix.os == 'ubuntu-latest'
-        working-directory: chattor
         run: |
           cargo install cargo-generate-rpm
           cargo generate-rpm --target ${{ matrix.target }}
@@ -68,21 +64,21 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: archive-${{ matrix.suffix }}
-          path: chattor/${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}
 
       - name: Upload .deb
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: deb
-          path: chattor/target/${{ matrix.target }}/debian/*.deb
+          path: target/${{ matrix.target }}/debian/*.deb
 
       - name: Upload .rpm
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: rpm
-          path: chattor/target/${{ matrix.target }}/generate-rpm/*.rpm
+          path: target/${{ matrix.target }}/generate-rpm/*.rpm
 
   release:
     needs: build
@@ -132,7 +128,7 @@ jobs:
       - name: Update chattor-bin
         run: |
           git clone ssh://aur@aur.archlinux.org/chattor-bin.git /tmp/chattor-bin
-          cp chattor/dist/aur-bin/PKGBUILD /tmp/chattor-bin/PKGBUILD
+          cp dist/aur-bin/PKGBUILD /tmp/chattor-bin/PKGBUILD
           cd /tmp/chattor-bin
           sed -i "s/pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           sed -i "s/sha256sums=.*/sha256sums=('${SHA256}')/" PKGBUILD
@@ -144,7 +140,7 @@ jobs:
       - name: Update chattor-git
         run: |
           git clone ssh://aur@aur.archlinux.org/chattor-git.git /tmp/chattor-git
-          cp chattor/dist/aur-git/PKGBUILD /tmp/chattor-git/PKGBUILD
+          cp dist/aur-git/PKGBUILD /tmp/chattor-git/PKGBUILD
           cd /tmp/chattor-git
           sed -i "s/pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           docker run --rm -v /tmp/chattor-git:/pkg archlinux bash -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO"
@@ -172,7 +168,7 @@ jobs:
         run: |
           git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/jmsingleton/homebrew-chattor.git /tmp/tap
           mkdir -p /tmp/tap/Formula
-          cp chattor/dist/homebrew/chattor.rb /tmp/tap/Formula/chattor.rb
+          cp dist/homebrew/chattor.rb /tmp/tap/Formula/chattor.rb
           cd /tmp/tap
           sed -i "s|url \".*\"|url \"${URL}\"|" Formula/chattor.rb
           sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Formula/chattor.rb
