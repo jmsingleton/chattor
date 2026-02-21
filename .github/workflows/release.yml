@@ -21,7 +21,7 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             suffix: aarch64-macos
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             suffix: x86_64-macos
     runs-on: ${{ matrix.os }}
