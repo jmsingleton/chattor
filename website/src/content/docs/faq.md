@@ -27,7 +27,7 @@ chattor routes all traffic through Tor, which hides your IP address from peers. 
 
 Three layers:
 
-1. **End-to-end**: Signal Protocol (X3DH + ChaCha20-Poly1305) between peers
+1. **End-to-end**: Signal Protocol (X3DH + Double Ratchet) between peers
 2. **In-transit**: Tor encryption for network transport
 3. **At-rest**: SQLCipher for the local database
 

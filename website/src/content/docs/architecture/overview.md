@@ -19,8 +19,8 @@ User → TUI (ratatui) → Signal Protocol (E2E) → Tor Hidden Service → Peer
 When you send a message:
 
 1. You type in the TUI input bar
-2. The message is encrypted with **Signal Protocol** (ChaCha20-Poly1305)
-3. The ciphertext is wrapped in a JSON envelope with type metadata
+2. The message is encrypted with **Signal Protocol** (Double Ratchet via libsignal-dezire)
+3. The ciphertext is wrapped in a versioned `MessageEnvelope` with protocol version, ratchet header, and type metadata
 4. It's sent via the **connection pool** (reuses cached Tor circuits)
 5. If the peer is offline, it's queued in the **message queue** with retries
 6. The peer's Tor hidden service receives the envelope
@@ -35,13 +35,14 @@ The central `App` struct owns all runtime state: settings, database, identity ke
 
 ### Database Layer (`src/db/`)
 
-SQLCipher provides at-rest encryption. The schema (currently v8) includes tables for friends, conversations, messages, signal sessions, blocked users, channels, and a key-value settings store. FTS5 virtual tables enable full-text message search with auto-sync triggers.
+SQLCipher provides at-rest encryption. The schema (currently v9) includes tables for friends, conversations, messages, signal sessions, blocked users, channels, and a key-value settings store. FTS5 virtual tables enable full-text message search with auto-sync triggers.
 
-Migrations run automatically from v2 through v8 on startup.
+Migrations run automatically from v2 through v9 on startup.
 
 ### Networking (`src/net/`)
 
-- **Connection Pool** (`pool.rs`): Caches Tor circuits per peer. Idle connections evicted after 5 minutes. Retry-on-stale: dead connections are evicted and retried with a fresh circuit.
+- **Connection Pool** (`pool.rs`): Uses DashMap for lock-free concurrent access. Caches Tor circuits per peer (max 50). Idle connections evicted after 5 minutes. Retry-on-stale: dead connections are evicted and retried with a fresh circuit.
+- **Rate Limiter** (`rate_limit.rs`): Per-peer token bucket rate limiter (5 req/s sustained, 20 burst) to prevent abuse.
 - **Message Queue** (`queue.rs`): FIFO queue persisted in the database. Exponential backoff retries (30s base, doubles each attempt, capped at 15min, 24h expiry).
 - **Framing** (`framing.rs`): Length-prefixed TCP framing for message I/O over Tor streams.
 
@@ -49,7 +50,7 @@ Migrations run automatically from v2 through v8 on startup.
 
 13 message types: `FriendRequest`, `FriendRequestAccept`, `FriendRequestReject`, `TextMessage`, `DeliveryReceipt`, `ReadReceipt`, `ChannelSubscribe`, `ChannelUnsubscribe`, `ChannelPost`, `ChannelSyncRequest`, `ChannelSyncResponse`, `ChannelPostReceipt`, `Presence`.
 
-All messages are JSON-serialized. Encrypted messages use a Signal Protocol envelope with base64-encoded ciphertext and a type flag (PreKeyMessage or Message).
+All messages are wrapped in a versioned `MessageEnvelope` and JSON-serialized. Encrypted messages include a Double Ratchet header, base64-encoded ciphertext, and a type flag (PreKeyMessage or Message).
 
 ### UI (`src/ui/`)
 
