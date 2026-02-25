@@ -1143,9 +1143,13 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                         ))?;
                     let prekey_secret: Option<[u8; 32]> = opk_b64.map(|b64| {
                         let bytes = base64::engine::general_purpose::STANDARD.decode(&b64)
-                            .expect("Failed to decode PreKey OPK");
-                        bytes.try_into().expect("PreKey OPK has wrong length")
-                    });
+                            .map_err(|e| error::ChattorError::Crypto(
+                                format!("Failed to decode PreKey OPK: {}", e)
+                            ))?;
+                        bytes.try_into().map_err(|_| error::ChattorError::Crypto(
+                            "PreKey OPK has wrong length".into()
+                        ))
+                    }).transpose()?;
 
                     let private_material = crypto::PreKeyPrivateMaterial {
                         identity_secret,
@@ -1207,7 +1211,7 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                     message_id: text_msg.message_id,
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .unwrap_or_default()
                         .as_secs() as i64,
                 };
                 let receipt_msg = protocol::message::Message::DeliveryReceipt(receipt);
@@ -1267,7 +1271,7 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 reader_onion: app.onion_address.clone().unwrap_or_default(),
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs() as i64,
             };
             let receipt_msg = protocol::message::Message::ChannelPostReceipt(receipt);
@@ -1360,7 +1364,7 @@ async fn process_message_queue(app: &App) -> Result<()> {
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs() as i64;
 
     let pending = app.message_queue.get_pending_messages(&app.db, now)?;
@@ -1388,7 +1392,10 @@ async fn process_message_queue(app: &App) -> Result<()> {
         let sem = Arc::clone(&semaphore);
 
         join_set.spawn(async move {
-            let _permit = sem.acquire().await.expect("semaphore closed");
+            let _permit = match sem.acquire().await {
+                Ok(permit) => permit,
+                Err(_) => return Vec::new(), // semaphore closed
+            };
             let mut results: Vec<(i64, i64, i64, bool)> = Vec::new(); // (id, created_at, retry_count, success)
 
             for queued in messages {
@@ -1475,7 +1482,8 @@ fn handle_incoming_accept(
         }
     };
 
-    let _identity = app.identity.as_ref().expect("identity set during init");
+    let _identity = app.identity.as_ref()
+        .ok_or_else(|| error::ChattorError::Crypto("Identity not initialized".into()))?;
     let dummy_private = PreKeyPrivateMaterial {
         identity_secret: [0u8; 32],
         signed_prekey_secret: [0u8; 32],
@@ -1506,7 +1514,7 @@ fn handle_incoming_accept(
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs() as i64;
 
         let handshake = protocol::message::PlaintextPayload {
