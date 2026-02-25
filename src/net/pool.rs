@@ -65,9 +65,14 @@ impl ConnectionPool {
     ///
     /// On send failure with a cached connection, evicts it and retries once
     /// with a fresh circuit. Returns error only if the fresh attempt also fails.
+    ///
+    /// Uses remove/insert instead of get_mut to release the DashMap lock
+    /// before performing network I/O, avoiding shard-level blocking.
     pub async fn send(&self, peer_onion: &str, message: &Message) -> Result<()> {
-        // Try cached connection first
-        if let Some(mut pooled) = self.connections.get_mut(peer_onion) {
+        // Try to take a cached connection (releases DashMap lock immediately)
+        let cached = self.connections.remove(peer_onion).map(|(_, pc)| pc);
+
+        if let Some(mut pooled) = cached {
             pooled.last_used = Instant::now();
             let send_result = tokio::time::timeout(
                 SEND_TIMEOUT,
@@ -75,18 +80,19 @@ impl ConnectionPool {
             ).await;
 
             match send_result {
-                Ok(Ok(())) => return Ok(()),
+                Ok(Ok(())) => {
+                    // Put connection back in pool
+                    self.connections.insert(peer_onion.to_string(), pooled);
+                    return Ok(());
+                }
                 _ => {
-                    // Must drop the mutable ref before removing
-                    drop(pooled);
-                    // Stale connection — evict and fall through to fresh connect
-                    self.connections.remove(peer_onion);
+                    // Stale connection — don't put it back, fall through to fresh
                     tracing::debug!("Evicted stale connection to {}", peer_onion);
                 }
             }
         }
 
-        // Create fresh connection
+        // Create fresh connection (no DashMap lock held)
         let mut conn = tokio::time::timeout(
             CONNECT_TIMEOUT,
             TorConnection::connect(&self.tor_client, peer_onion),
