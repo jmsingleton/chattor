@@ -198,17 +198,16 @@ pub fn render_input(
 
     // Show cursor when focused
     let display_text = if focused {
-        if cursor < input.len() {
-            format!("{}{}\u{2588}{}", prompt, &input[..cursor], &input[cursor..])
+        let (before, after) = crate::ui::input::split_at_char(input, cursor);
+        if after.is_empty() {
+            format!("{}{}\u{2588}", prompt, before)
         } else {
-            format!("{}{}\u{2588}", prompt, input)
+            format!("{}{}\u{2588}{}", prompt, before, after)
         }
+    } else if input.is_empty() {
+        format!("{}Type a message...", prompt)
     } else {
-        if input.is_empty() {
-            format!("{}Type a message...", prompt)
-        } else {
-            format!("{}{}", prompt, input)
-        }
+        format!("{}{}", prompt, input)
     };
 
     let widget = Paragraph::new(display_text)

@@ -120,27 +120,19 @@ impl AppState {
                             }
                         }
                         KeyCode::Char(c) => {
-                            input.insert(*cursor, c);
-                            *cursor += 1;
+                            crate::ui::input::insert_char(input, cursor, c);
                             Ok(None)
                         }
                         KeyCode::Backspace => {
-                            if *cursor > 0 {
-                                *cursor -= 1;
-                                input.remove(*cursor);
-                            }
+                            crate::ui::input::backspace(input, cursor);
                             Ok(None)
                         }
                         KeyCode::Left => {
-                            if *cursor > 0 {
-                                *cursor -= 1;
-                            }
+                            crate::ui::input::move_left(cursor);
                             Ok(None)
                         }
                         KeyCode::Right => {
-                            if *cursor < input.len() {
-                                *cursor += 1;
-                            }
+                            crate::ui::input::move_right(input, cursor);
                             Ok(None)
                         }
                         _ => Ok(None),
@@ -214,27 +206,19 @@ impl AppState {
             AppState::AddingFriend { input, cursor, error } => {
                 match key.code {
                     KeyCode::Char(c) => {
-                        input.insert(*cursor, c);
-                        *cursor += 1;
+                        crate::ui::input::insert_char(input, cursor, c);
                         Ok(None)
                     }
                     KeyCode::Backspace => {
-                        if *cursor > 0 {
-                            *cursor -= 1;
-                            input.remove(*cursor);
-                        }
+                        crate::ui::input::backspace(input, cursor);
                         Ok(None)
                     }
                     KeyCode::Left => {
-                        if *cursor > 0 {
-                            *cursor -= 1;
-                        }
+                        crate::ui::input::move_left(cursor);
                         Ok(None)
                     }
                     KeyCode::Right => {
-                        if *cursor < input.len() {
-                            *cursor += 1;
-                        }
+                        crate::ui::input::move_right(input, cursor);
                         Ok(None)
                     }
                     KeyCode::Enter => {
@@ -392,15 +376,11 @@ impl AppState {
                 if *is_own {
                     match key.code {
                         KeyCode::Char(c) => {
-                            input.insert(*cursor, c);
-                            *cursor += 1;
+                            crate::ui::input::insert_char(input, cursor, c);
                             Ok(None)
                         }
                         KeyCode::Backspace => {
-                            if *cursor > 0 {
-                                *cursor -= 1;
-                                input.remove(*cursor);
-                            }
+                            crate::ui::input::backspace(input, cursor);
                             Ok(None)
                         }
                         KeyCode::Enter => {
@@ -434,15 +414,11 @@ impl AppState {
             AppState::SubscribingToChannel { input, cursor, error } => {
                 match key.code {
                     KeyCode::Char(c) => {
-                        input.insert(*cursor, c);
-                        *cursor += 1;
+                        crate::ui::input::insert_char(input, cursor, c);
                         Ok(None)
                     }
                     KeyCode::Backspace => {
-                        if *cursor > 0 {
-                            *cursor -= 1;
-                            input.remove(*cursor);
-                        }
+                        crate::ui::input::backspace(input, cursor);
                         Ok(None)
                     }
                     KeyCode::Enter => {
@@ -1046,6 +1022,35 @@ mod tests {
         };
         state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn input_focused_emoji_typing() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Char('\u{1F600}'), KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).unwrap();
+        match &state {
+            AppState::Normal { input, cursor, .. } => {
+                assert_eq!(input, "\u{1F600}a");
+                assert_eq!(*cursor, 2); // char count, not byte count
+            }
+            _ => panic!("Expected Normal state"),
+        }
+        state.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)).unwrap();
+        match &state {
+            AppState::Normal { input, cursor, .. } => {
+                assert_eq!(input, "\u{1F600}");
+                assert_eq!(*cursor, 1);
+            }
+            _ => panic!("Expected Normal state"),
+        }
     }
 
     #[test]

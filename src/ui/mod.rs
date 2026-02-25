@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod modals;
 pub mod sidebar;
 pub mod state;
+pub mod input;
 pub mod error;
 pub mod theme;
 
@@ -91,14 +92,10 @@ pub fn copy_to_clipboard(text: &str) -> bool {
     // On non-Linux, arboard works fine without wait()
     #[cfg(not(target_os = "linux"))]
     {
-        match arboard::Clipboard::new() {
-            Ok(mut clipboard) => {
-                match clipboard.set_text(text) {
-                    Ok(()) => return true,
-                    Err(_) => {}
-                }
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            if let Ok(()) = clipboard.set_text(text) {
+                return true;
             }
-            Err(_) => {}
         }
         clipboard_fallback(text)
     }

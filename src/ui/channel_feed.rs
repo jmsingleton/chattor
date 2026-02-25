@@ -24,8 +24,12 @@ pub fn render_channel_feed(
     theme: &Theme,
 ) {
     let ch_label = if channel_type == "public" { "Public" } else { "Friends Only" };
-    let owner_label = if is_own { "My" } else {
-        if publisher_onion.len() > 12 { &publisher_onion[..12] } else { publisher_onion }
+    let owner_label = if is_own {
+        "My"
+    } else if publisher_onion.len() > 12 {
+        &publisher_onion[..12]
+    } else {
+        publisher_onion
     };
     let title = format!(" {} {} Channel ", owner_label, ch_label);
 
@@ -131,10 +135,13 @@ fn render_channel_input(
     cursor: usize,
     theme: &Theme,
 ) {
-    let display_text = if cursor < input.len() {
-        format!("> {}\u{2588}{}", &input[..cursor], &input[cursor..])
-    } else {
-        format!("> {}\u{2588}", input)
+    let display_text = {
+        let (before, after) = crate::ui::input::split_at_char(input, cursor);
+        if after.is_empty() {
+            format!("> {}\u{2588}", before)
+        } else {
+            format!("> {}\u{2588}{}", before, after)
+        }
     };
 
     let widget = Paragraph::new(display_text)
