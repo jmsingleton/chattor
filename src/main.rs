@@ -265,7 +265,7 @@ async fn main() -> Result<()> {
 
     let mut last_typing_sent: Option<std::time::Instant> = None;
     let mut was_typing = false;
-    let mut notification_flash: Option<(std::time::Instant, &str)> = None;
+    let mut status_flash: Option<(std::time::Instant, String)> = None;
 
     // Main event loop
     let result = loop {
@@ -336,15 +336,15 @@ async fn main() -> Result<()> {
             channel_post_read_counts,
             theme: theme.clone(),
             presence: presence_snapshot,
-            notification_flash: notification_flash
+            status_flash: status_flash
                 .as_ref()
                 .filter(|(t, _)| t.elapsed() < std::time::Duration::from_secs(2))
-                .map(|(_, msg)| msg.to_string()),
+                .map(|(_, msg)| msg.clone()),
         };
 
-        // Expire notification flash
-        if notification_flash.as_ref().is_some_and(|(t, _)| t.elapsed() >= std::time::Duration::from_secs(2)) {
-            notification_flash = None;
+        // Expire status flash
+        if status_flash.as_ref().is_some_and(|(t, _)| t.elapsed() >= std::time::Duration::from_secs(2)) {
+            status_flash = None;
         }
 
         // Render current state
@@ -385,8 +385,13 @@ async fn main() -> Result<()> {
                             let app_lock = app.lock().await;
 
                             match handle_accept_friend_request(&app_lock, id) {
-                                Ok(_) => {}
-                                Err(e) => eprintln!("Failed to accept friend request: {}", e),
+                                Ok(_) => {
+                                    status_flash = Some((std::time::Instant::now(), "Friend request accepted".to_string()));
+                                }
+                                Err(e) => {
+                                    status_flash = Some((std::time::Instant::now(),
+                                        crate::ui::error::format_error_for_user(&e)));
+                                }
                             }
 
                             if return_to_list {
@@ -406,8 +411,13 @@ async fn main() -> Result<()> {
                             let app_lock = app.lock().await;
 
                             match handle_reject_friend_request(&app_lock, id) {
-                                Ok(_) => {}
-                                Err(e) => eprintln!("Failed to reject friend request: {}", e),
+                                Ok(_) => {
+                                    status_flash = Some((std::time::Instant::now(), "Friend request rejected".to_string()));
+                                }
+                                Err(e) => {
+                                    status_flash = Some((std::time::Instant::now(),
+                                        crate::ui::error::format_error_for_user(&e)));
+                                }
                             }
 
                             if return_to_list {
@@ -578,7 +588,8 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     } else {
-                                        eprintln!("Failed to encrypt message: no session for {}", peer_onion);
+                                        status_flash = Some((std::time::Instant::now(),
+                                            "Message failed \u{2014} no encryption session".to_string()));
                                         db::queries::update_message_status(&app_lock.db, &msg_id, "failed").ok();
                                     }
                                 }
@@ -698,9 +709,9 @@ async fn main() -> Result<()> {
                             let app_lock = app.lock().await;
                             let new_state = notifications::toggle(&app_lock.db);
                             drop(app_lock);
-                            notification_flash = Some((
+                            status_flash = Some((
                                 std::time::Instant::now(),
-                                if new_state { "Notifications: ON" } else { "Notifications: OFF" },
+                                if new_state { "Notifications: ON".to_string() } else { "Notifications: OFF".to_string() },
                             ));
                         }
                         Some(AppAction::SendPresence(_)) => {} // Reserved for future use

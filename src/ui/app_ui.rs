@@ -24,7 +24,7 @@ pub struct RenderContext {
     pub theme: Theme,
     /// Per-onion presence: (is_online, is_typing)
     pub presence: std::collections::HashMap<String, (bool, bool)>,
-    pub notification_flash: Option<String>,
+    pub status_flash: Option<String>,
 }
 
 /// Render the application UI based on current state
@@ -136,7 +136,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
     }
 
     // Footer
-    let footer_spans = if let Some(ref flash) = ctx.notification_flash {
+    let footer_spans = if let Some(ref flash) = ctx.status_flash {
         vec![
             Span::raw("  "),
             Span::styled(flash.as_str(), Style::default().fg(ctx.theme.accent).add_modifier(Modifier::BOLD)),

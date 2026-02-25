@@ -324,13 +324,17 @@ impl AppState {
                         Ok(None)
                     }
                     KeyCode::Char('o') | KeyCode::Char('1') => {
-                        if crate::ui::copy_to_clipboard(onion_address) {
+                        if !onion_address.starts_with('(')
+                            && crate::ui::copy_to_clipboard(onion_address)
+                        {
                             *copied_field = Some("onion".into());
                         }
                         Ok(None)
                     }
                     KeyCode::Char('c') | KeyCode::Char('2') => {
-                        if crate::ui::copy_to_clipboard(friend_code) {
+                        if !friend_code.starts_with('(')
+                            && crate::ui::copy_to_clipboard(friend_code)
+                        {
                             *copied_field = Some("code".into());
                         }
                         Ok(None)
