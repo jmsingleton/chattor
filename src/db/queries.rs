@@ -19,12 +19,7 @@ impl FriendEntry {
         if let Some(ref name) = self.display_name {
             name.clone()
         } else {
-            let addr = &self.onion_address;
-            if addr.len() > 12 {
-                format!("{}...", &addr[..12])
-            } else {
-                addr.clone()
-            }
+            crate::ui::input::truncate_display_dots(&self.onion_address, 12)
         }
     }
 }

@@ -316,6 +316,8 @@ async fn main() -> Result<()> {
             (Vec::new(), std::collections::HashMap::new())
         };
 
+        let friend_count = friends.len();
+
         // Release lock before rendering
         drop(app_lock);
 
@@ -356,7 +358,7 @@ async fn main() -> Result<()> {
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => {
-                    match app_state.handle_key(key)? {
+                    match app_state.handle_key(key, friend_count)? {
                         Some(AppAction::SendFriendRequest(code)) => {
                             let app_lock = app.lock().await;
 
@@ -472,7 +474,7 @@ async fn main() -> Result<()> {
                                                     message_id: uuid,
                                                     timestamp: std::time::SystemTime::now()
                                                         .duration_since(std::time::UNIX_EPOCH)
-                                                        .unwrap()
+                                                        .unwrap_or_default()
                                                         .as_secs() as i64,
                                                 };
                                                 let receipt_msg = protocol::message::Message::ReadReceipt(receipt);
@@ -598,12 +600,20 @@ async fn main() -> Result<()> {
                             let post_id = uuid::Uuid::new_v4().to_string();
                             let now = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
+                                .unwrap_or_default()
                                 .as_secs() as i64;
 
                             // Sign the post
                             let sign_data = format!("{}{}{}", post_id, content, now);
-                            let signature = base64::engine::general_purpose::STANDARD.encode(app_lock.identity.as_ref().expect("identity set during init").sign(sign_data.as_bytes()).to_bytes());
+                            let identity = match app_lock.identity.as_ref() {
+                                Some(id) => id,
+                                None => {
+                                    eprintln!("Cannot publish channel post: identity not initialized");
+                                    drop(app_lock);
+                                    continue;
+                                }
+                            };
+                            let signature = base64::engine::general_purpose::STANDARD.encode(identity.sign(sign_data.as_bytes()).to_bytes());
 
                             // Store locally
                             db::queries::store_channel_post(
@@ -652,7 +662,7 @@ async fn main() -> Result<()> {
                                     channel_type: protocol::message::ChannelType::Public,
                                     timestamp: std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap()
+                                        .unwrap_or_default()
                                         .as_secs() as i64,
                                 }
                             );
@@ -826,8 +836,10 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
         .unwrap_or_else(|_| "unknown".to_string());
 
     // Create friend request message
+    let identity = app.identity.as_ref()
+        .ok_or_else(|| error::ChattorError::Crypto("Identity not initialized".into()))?;
     let request_msg = FriendRequestHandler::create_request(
-        app.identity.as_ref().expect("identity set during init"),
+        identity,
         own_onion,
         &own_friend_code,
     )?;
@@ -865,7 +877,8 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     // Generate PreKey bundle for the accept message.
     // Generate a dedicated X25519 Signal identity keypair for X3DH.
     // This is separate from the Ed25519 identity used for friend request signing.
-    let identity = app.identity.as_ref().expect("identity set during init");
+    let identity = app.identity.as_ref()
+        .ok_or_else(|| error::ChattorError::Crypto("Identity not initialized".into()))?;
     let signal_identity = libsignal_protocol::vxeddsa::gen_keypair();
     let signal_identity_public_raw = libsignal_protocol::utils::decode_public_key(&signal_identity.public)
         .map_err(|_| error::ChattorError::Crypto("Failed to decode signal identity public key".into()))?;
@@ -874,7 +887,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     // Create accept message (inline to avoid Database clone issue)
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs() as i64;
 
     // Sign message
@@ -933,7 +946,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     // Add friend to database
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs() as i64;
 
     // Mark request as accepted FIRST (so UI updates immediately)
@@ -943,11 +956,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     ).map_err(|e| error::ChattorError::Database(format!("Failed to update request: {}", e)))?;
 
     // Use a truncated display name that's more readable
-    let display_name = if from_onion.len() > 16 {
-        format!("{}…", &from_onion[..16])
-    } else {
-        from_onion.clone()
-    };
+    let display_name = crate::ui::input::truncate_display(&from_onion, 16);
 
     conn.execute(
         "INSERT OR IGNORE INTO friends (onion_address, display_name, added_at, status)
@@ -1017,7 +1026,7 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             let conn = app.db.connection();
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs() as i64;
 
             conn.execute(
@@ -1548,7 +1557,7 @@ fn handle_incoming_accept(
          VALUES (?1, ?2, ?3, 'active')",
         (
             &accept.from_onion,
-            &if accept.from_onion.len() > 16 { format!("{}…", &accept.from_onion[..16]) } else { accept.from_onion.clone() },
+            &crate::ui::input::truncate_display(&accept.from_onion, 16),
             accept.timestamp,
         ),
     ).map_err(|e| error::ChattorError::Database(

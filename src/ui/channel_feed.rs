@@ -24,12 +24,12 @@ pub fn render_channel_feed(
     theme: &Theme,
 ) {
     let ch_label = if channel_type == "public" { "Public" } else { "Friends Only" };
+    let owner_label_owned;
     let owner_label = if is_own {
         "My"
-    } else if publisher_onion.len() > 12 {
-        &publisher_onion[..12]
     } else {
-        publisher_onion
+        owner_label_owned = crate::ui::input::truncate_display_dots(publisher_onion, 12);
+        &owner_label_owned
     };
     let title = format!(" {} {} Channel ", owner_label, ch_label);
 

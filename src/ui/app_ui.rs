@@ -41,8 +41,8 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
     // Header
     let addr_display = ctx.own_onion.as_deref()
         .map(|a| {
-            let trunc = if a.len() > 16 { &a[..16] } else { a };
-            format!("  [@{}...]", trunc)
+            let trunc = crate::ui::input::truncate_display_dots(a, 16);
+            format!("  [@{}]", trunc)
         })
         .unwrap_or_default();
 

@@ -159,7 +159,7 @@ impl FriendRequestHandler {
              VALUES (?1, ?2, ?3, 'active')",
             (
                 &accept.from_onion,
-                &accept.from_onion[..10], // Use first 10 chars as name
+                &crate::ui::input::truncate_display_dots(&accept.from_onion, 10),
                 accept.timestamp,
             ),
         ).map_err(|e| ChattorError::Database(format!("Failed to add friend: {}", e)))?;
@@ -190,7 +190,7 @@ impl FriendRequestHandler {
              VALUES (?1, ?2, ?3, 'active')",
             (
                 &from_onion,
-                &from_onion[..10],
+                &crate::ui::input::truncate_display_dots(&from_onion, 10),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()

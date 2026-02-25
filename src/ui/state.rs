@@ -87,7 +87,7 @@ pub enum AppAction {
 }
 
 impl AppState {
-    pub fn handle_key(&mut self, key: KeyEvent) -> Result<Option<AppAction>> {
+    pub fn handle_key(&mut self, key: KeyEvent, friend_count: usize) -> Result<Option<AppAction>> {
         // Check global keys first
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Ok(Some(AppAction::Quit));
@@ -186,7 +186,9 @@ impl AppState {
                         }
                         KeyCode::Down => {
                             if let Some(idx) = selected_friend_idx {
-                                *idx += 1;
+                                if *idx + 1 < friend_count {
+                                    *idx += 1;
+                                }
                             }
                             Ok(None)
                         }
@@ -472,7 +474,7 @@ mod tests {
     fn normal_nav_mode_quit() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::Quit));
     }
 
@@ -480,7 +482,7 @@ mod tests {
     fn normal_nav_mode_add_friend() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert!(action.is_none());
         assert!(matches!(state, AppState::AddingFriend { .. }));
     }
@@ -489,7 +491,7 @@ mod tests {
     fn normal_nav_mode_view_identity() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::ViewMyIdentity));
     }
 
@@ -504,7 +506,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
-        state.handle_key(key).unwrap();
+        state.handle_key(key, 10).unwrap();
         match &state {
             AppState::Normal { selected_friend_idx, .. } => {
                 assert_eq!(*selected_friend_idx, Some(0));
@@ -524,7 +526,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::SelectFriend(0)));
         match &state {
             AppState::Normal { input_focused, .. } => {
@@ -544,8 +546,8 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE)).unwrap();
-        state.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 10).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), 10).unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "hi");
@@ -566,7 +568,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::SendMessage("hello".to_string())));
         match &state {
             AppState::Normal { input, cursor, .. } => {
@@ -588,7 +590,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        state.handle_key(key).unwrap();
+        state.handle_key(key, 10).unwrap();
         match &state {
             AppState::Normal { input_focused, .. } => {
                 assert!(!input_focused);
@@ -608,7 +610,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
-        state.handle_key(key).unwrap();
+        state.handle_key(key, 10).unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "h");
@@ -623,7 +625,7 @@ mod tests {
         // From Normal
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::Quit));
 
         // From AddingFriend
@@ -633,7 +635,7 @@ mod tests {
             error: None,
         };
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::Quit));
 
         // From ViewingMyIdentity
@@ -643,7 +645,7 @@ mod tests {
             copied_field: None,
         };
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::Quit));
     }
 
@@ -655,7 +657,7 @@ mod tests {
             error: None,
         };
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::SendFriendRequest("friend.onion".to_string())));
     }
 
@@ -667,7 +669,7 @@ mod tests {
             error: None,
         };
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        state.handle_key(key).unwrap();
+        state.handle_key(key, 10).unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 
@@ -681,7 +683,7 @@ mod tests {
             return_to_list: false,
         };
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::AcceptFriendRequest(42)));
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -694,7 +696,7 @@ mod tests {
             copied_field: None,
         };
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        state.handle_key(key).unwrap();
+        state.handle_key(key, 10).unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 
@@ -702,7 +704,7 @@ mod tests {
     fn tab_initializes_friend_selection() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
-        state.handle_key(key).unwrap();
+        state.handle_key(key, 10).unwrap();
         match &state {
             AppState::Normal { selected_friend_idx, .. } => {
                 assert_eq!(*selected_friend_idx, Some(0));
@@ -715,7 +717,7 @@ mod tests {
     fn normal_nav_mode_view_friend_requests() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::ViewFriendRequests));
     }
 
@@ -731,19 +733,19 @@ mod tests {
         };
 
         // Down
-        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10).unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 1);
         } else { panic!("Wrong state"); }
 
         // Down at bottom stays at bottom
-        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10).unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 1);
         } else { panic!("Wrong state"); }
 
         // Up
-        state.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), 10).unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 0);
         } else { panic!("Wrong state"); }
@@ -759,7 +761,7 @@ mod tests {
             selected_idx: 0,
         };
 
-        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
         match &state {
             AppState::ViewingFriendRequest { request_id, return_to_list, .. } => {
                 assert_eq!(*request_id, 42);
@@ -776,7 +778,7 @@ mod tests {
             selected_idx: 0,
         };
 
-        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10).unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 
@@ -790,7 +792,7 @@ mod tests {
             return_to_list: true,
         };
 
-        let action = state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).unwrap();
+        let action = state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10).unwrap();
         assert_eq!(action, Some(AppAction::AcceptFriendRequest(42)));
         assert!(matches!(state, AppState::ViewingFriendRequests { .. }));
     }
@@ -806,7 +808,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert!(action.is_none());
         match &state {
             AppState::Normal { input, .. } => {
@@ -827,7 +829,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert!(action.is_none());
         match &state {
             AppState::SettingEphemeral { conversation_id, selected_idx } => {
@@ -849,7 +851,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert!(action.is_none());
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -861,8 +863,8 @@ mod tests {
             selected_idx: 0,
         };
         // Down twice to select "1 hour" (index 2)
-        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
-        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10).unwrap();
         match &state {
             AppState::SettingEphemeral { selected_idx, .. } => {
                 assert_eq!(*selected_idx, 2);
@@ -870,7 +872,7 @@ mod tests {
             _ => panic!("Expected SettingEphemeral state"),
         }
         // Enter to confirm
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
         assert_eq!(action, Some(AppAction::SetEphemeralTtl(42, Some(3600))));
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -882,7 +884,7 @@ mod tests {
             selected_idx: 2,
         };
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert!(action.is_none());
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -891,7 +893,7 @@ mod tests {
     fn test_view_own_channel_hotkey() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert_eq!(action, Some(AppAction::ViewOwnChannel));
     }
 
@@ -899,7 +901,7 @@ mod tests {
     fn test_subscribe_channel_hotkey() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
-        let action = state.handle_key(key).unwrap();
+        let action = state.handle_key(key, 10).unwrap();
         assert!(action.is_none());
         assert!(matches!(state, AppState::SubscribingToChannel { .. }));
     }
@@ -911,8 +913,8 @@ mod tests {
             cursor: 0,
             error: None,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).unwrap();
-        state.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE), 10).unwrap();
         match &state {
             AppState::SubscribingToChannel { input, cursor, .. } => {
                 assert_eq!(input, "ab");
@@ -929,7 +931,7 @@ mod tests {
             cursor: 10,
             error: None,
         };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
         assert_eq!(action, Some(AppAction::SubscribeToChannel("peer.onion".to_string())));
     }
 
@@ -940,7 +942,7 @@ mod tests {
             cursor: 0,
             error: None,
         };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
         assert!(action.is_none());
         match &state {
             AppState::SubscribingToChannel { error, .. } => {
@@ -957,7 +959,7 @@ mod tests {
             cursor: 5,
             error: None,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10).unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 
@@ -971,7 +973,7 @@ mod tests {
             cursor: 11,
             scroll_offset: 0,
         };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
         assert_eq!(action, Some(AppAction::PublishChannelPost("hello world".to_string(), "public".to_string())));
         match &state {
             AppState::ViewingChannel { input, cursor, .. } => {
@@ -992,7 +994,7 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
         };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
         assert!(action.is_none());
     }
 
@@ -1006,7 +1008,7 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10).unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 
@@ -1020,7 +1022,7 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10).unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 
@@ -1034,8 +1036,8 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Char('\u{1F600}'), KeyModifiers::NONE)).unwrap();
-        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('\u{1F600}'), KeyModifiers::NONE), 10).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10).unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "\u{1F600}a");
@@ -1043,7 +1045,7 @@ mod tests {
             }
             _ => panic!("Expected Normal state"),
         }
-        state.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)).unwrap();
+        state.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE), 10).unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "\u{1F600}");
@@ -1063,13 +1065,42 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
         };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)).unwrap();
+        let action = state.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), 10).unwrap();
         assert!(action.is_none());
         match &state {
             AppState::ViewingChannel { input, .. } => {
                 assert_eq!(input, "");
             }
             _ => panic!("Expected ViewingChannel state"),
+        }
+    }
+
+    #[test]
+    fn down_arrow_bounded_by_friend_count() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(2),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        // With 3 friends (indices 0,1,2), down from index 2 should stay at 2
+        let key = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        state.handle_key(key, 3).unwrap();
+        match &state {
+            AppState::Normal { selected_friend_idx, .. } => {
+                assert_eq!(*selected_friend_idx, Some(2));
+            }
+            _ => panic!("Expected Normal state"),
+        }
+        // With 5 friends, down from 2 should go to 3
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 5).unwrap();
+        match &state {
+            AppState::Normal { selected_friend_idx, .. } => {
+                assert_eq!(*selected_friend_idx, Some(3));
+            }
+            _ => panic!("Expected Normal state"),
         }
     }
 

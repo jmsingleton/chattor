@@ -44,6 +44,28 @@ pub fn char_to_byte(s: &str, char_idx: usize) -> usize {
         .unwrap_or(s.len())
 }
 
+/// Truncate a string to at most `max_chars` characters, appending "…" if truncated.
+pub fn truncate_display(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count > max_chars {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}…", truncated)
+    } else {
+        s.to_string()
+    }
+}
+
+/// Truncate a string to at most `max_chars` characters, appending "..." if truncated.
+pub fn truncate_display_dots(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count > max_chars {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}...", truncated)
+    } else {
+        s.to_string()
+    }
+}
+
 /// Split `s` at the given char index, returning `(before, after)`.
 ///
 /// If `char_idx` is beyond the end of `s`, returns `(s, "")`.
@@ -432,5 +454,26 @@ mod tests {
         let (before, after) = split_at_char(&s, c);
         assert_eq!(before, "你\u{1F600}");
         assert_eq!(after, "z");
+    }
+
+    // ── truncate_display ──────────────────────────────────────────
+
+    #[test]
+    fn truncate_ascii() {
+        assert_eq!(truncate_display("abcdefghij", 5), "abcde…");
+        assert_eq!(truncate_display("abcde", 5), "abcde");
+        assert_eq!(truncate_display("abc", 5), "abc");
+    }
+
+    #[test]
+    fn truncate_multibyte() {
+        assert_eq!(truncate_display("你好世界再见", 4), "你好世界…");
+        assert_eq!(truncate_display("😀😀😀", 2), "😀😀…");
+    }
+
+    #[test]
+    fn truncate_dots_ascii() {
+        assert_eq!(truncate_display_dots("abcdefghij", 5), "abcde...");
+        assert_eq!(truncate_display_dots("abc", 5), "abc");
     }
 }
