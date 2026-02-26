@@ -19,12 +19,7 @@ impl FriendEntry {
         if let Some(ref name) = self.display_name {
             name.clone()
         } else {
-            let addr = &self.onion_address;
-            if addr.len() > 12 {
-                format!("{}...", &addr[..12])
-            } else {
-                addr.clone()
-            }
+            crate::ui::input::truncate_display_dots(&self.onion_address, 12)
         }
     }
 }
@@ -566,6 +561,7 @@ pub fn store_channel_post_receipt(db: &Database, post_id: &str, reader_onion: &s
 }
 
 /// Get read count for a post (publisher side)
+#[allow(dead_code)]
 pub fn get_channel_post_read_count(db: &Database, post_id: &str) -> Result<i64> {
     let count: i64 = db.connection().query_row(
         "SELECT COUNT(*) FROM channel_post_receipts WHERE post_id = ?1",
@@ -573,6 +569,44 @@ pub fn get_channel_post_read_count(db: &Database, post_id: &str) -> Result<i64> 
         |row| row.get(0),
     ).map_err(|e| ChattorError::Database(format!("Failed to count post receipts: {}", e)))?;
     Ok(count)
+}
+
+/// Get read counts for multiple posts in a single query (publisher side).
+/// Returns a map of post_id -> count. Posts with zero reads are omitted.
+pub fn get_channel_post_read_counts_batch(
+    db: &Database,
+    post_ids: &[&str],
+) -> Result<std::collections::HashMap<String, i64>> {
+    if post_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let placeholders: Vec<String> = (1..=post_ids.len()).map(|i| format!("?{}", i)).collect();
+    let sql = format!(
+        "SELECT post_id, COUNT(*) FROM channel_post_receipts WHERE post_id IN ({}) GROUP BY post_id",
+        placeholders.join(", ")
+    );
+
+    let conn = db.connection();
+    let mut stmt = conn.prepare(&sql)
+        .map_err(|e| ChattorError::Database(format!("Failed to prepare batch read counts: {}", e)))?;
+
+    let params: Vec<&dyn rusqlite::types::ToSql> = post_ids.iter()
+        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .collect();
+
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    }).map_err(|e| ChattorError::Database(format!("Failed to query batch read counts: {}", e)))?;
+
+    let mut counts = std::collections::HashMap::new();
+    for row in rows {
+        let (post_id, count) = row
+            .map_err(|e| ChattorError::Database(format!("Failed to read batch count row: {}", e)))?;
+        counts.insert(post_id, count);
+    }
+
+    Ok(counts)
 }
 
 /// Get posts from a channel since a timestamp (for sync responses)
@@ -1107,5 +1141,29 @@ mod tests {
             unread_count: 0,
         };
         assert_eq!(entry2.display(), "Alice");
+    }
+
+    #[test]
+    fn test_batch_channel_post_read_counts() {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+
+        store_channel_post_receipt(&db, "post-1", "bob.onion", 1000).unwrap();
+        store_channel_post_receipt(&db, "post-1", "carol.onion", 2000).unwrap();
+        store_channel_post_receipt(&db, "post-2", "bob.onion", 3000).unwrap();
+        // post-3 has no receipts
+
+        let counts = get_channel_post_read_counts_batch(&db, &["post-1", "post-2", "post-3"]).unwrap();
+        assert_eq!(counts.get("post-1"), Some(&2));
+        assert_eq!(counts.get("post-2"), Some(&1));
+        assert_eq!(counts.get("post-3"), None); // no receipts = not in map
+    }
+
+    #[test]
+    fn test_batch_channel_post_read_counts_empty() {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+        let counts = get_channel_post_read_counts_batch(&db, &[]).unwrap();
+        assert!(counts.is_empty());
     }
 }

@@ -16,6 +16,14 @@ impl Database {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
         ).map_err(|e| ChattorError::Database(format!("Failed to open database: {}", e)))?;
 
+        // Optimize SQLite for concurrent read/write workload
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA cache_size=-8000;
+             PRAGMA busy_timeout=5000;"
+        ).map_err(|e| ChattorError::Database(format!("Failed to set pragmas: {}", e)))?;
+
         let mut db = Database { conn };
         db.initialize()?;
         Ok(db)

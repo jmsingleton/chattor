@@ -85,11 +85,7 @@ fn render_friends_list(
 
             // Truncate name to fit sidebar (leave room for arrow + status + unread)
             let max_name_len = 14;
-            let truncated = if name.len() > max_name_len {
-                format!("{}…", &name[..max_name_len])
-            } else {
-                name
-            };
+            let truncated = crate::ui::input::truncate_display(&name, max_name_len);
 
             let (status_icon, status_color) = match presence.get(&friend.onion_address) {
                 Some((_, true)) => ("\u{270e}", theme.accent),
@@ -160,11 +156,7 @@ fn render_channels_section(
         ])));
 
         for sub in subscriptions {
-            let name = if sub.publisher_onion.len() > 8 {
-                format!("{}...", &sub.publisher_onion[..8])
-            } else {
-                sub.publisher_onion.clone()
-            };
+            let name = crate::ui::input::truncate_display_dots(&sub.publisher_onion, 8);
             let ch_label = if sub.channel_type == "public" { "pub" } else { "fri" };
             items.push(ListItem::new(Line::from(vec![
                 Span::styled(format!("    {} [{}]", name, ch_label), Style::default().fg(theme.fg)),

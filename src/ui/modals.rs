@@ -75,11 +75,7 @@ pub fn render_friend_request_modal(
 
     f.render_widget(Clear, area);
 
-    let onion_short = if from_onion.len() > 16 {
-        format!("{}…", &from_onion[..16])
-    } else {
-        from_onion.to_string()
-    };
+    let onion_short = crate::ui::input::truncate_display(from_onion, 16);
 
     let block = Block::default()
         .title(format!(" Friend Request from {} ", onion_short))
@@ -176,11 +172,7 @@ pub fn render_friend_request_list(
             let is_selected = i == selected_idx;
             let arrow = if is_selected { "\u{25b8} " } else { "  " };
 
-            let onion_display = if req.from_onion.len() > 16 {
-                format!("{}...", &req.from_onion[..16])
-            } else {
-                req.from_onion.clone()
-            };
+            let onion_display = crate::ui::input::truncate_display_dots(&req.from_onion, 16);
 
             let elapsed = now - req.received_at;
             let time_ago = if elapsed < 60 {
