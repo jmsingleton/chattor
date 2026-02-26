@@ -840,6 +840,7 @@ dependencies = [
  "dashmap",
  "ed25519-dalek",
  "futures",
+ "libc",
  "libsignal-dezire",
  "notify-rust",
  "rand 0.8.5",

@@ -7,6 +7,7 @@ pub mod app;
 pub mod cli;
 pub mod config;
 pub mod crypto;
+pub mod daemon;
 pub mod db;
 pub mod handlers;
 pub mod tor;

@@ -69,6 +69,9 @@ arboard = "3"
 # Desktop notifications
 notify-rust = "4"
 
+# Unix process management
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3.8"
 

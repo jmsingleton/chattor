@@ -2,6 +2,8 @@ mod app;
 mod cli;
 mod config;
 mod crypto;
+#[allow(dead_code)]
+mod daemon;
 mod db;
 mod error;
 mod handlers;
