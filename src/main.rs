@@ -58,14 +58,14 @@ async fn main() -> Result<()> {
         Some(Command::Friends { action }) => {
             use cli::FriendsAction;
             let (method, params) = match action {
-                FriendsAction::List => ("friends.list", serde_json::json!({})),
-                FriendsAction::Add { code } => ("friends.add", serde_json::json!({ "code": code })),
+                FriendsAction::List => ("friends_list", serde_json::json!({})),
+                FriendsAction::Add { code } => ("friends_add", serde_json::json!({ "code": code })),
                 FriendsAction::Remove { onion } => {
-                    ("friends.remove", serde_json::json!({ "onion": onion }))
+                    ("friends_remove", serde_json::json!({ "onion": onion }))
                 }
-                FriendsAction::Requests => ("friends.requests", serde_json::json!({})),
-                FriendsAction::Accept { id } => ("friends.accept", serde_json::json!({ "id": id })),
-                FriendsAction::Reject { id } => ("friends.reject", serde_json::json!({ "id": id })),
+                FriendsAction::Requests => ("friends_requests", serde_json::json!({})),
+                FriendsAction::Accept { id } => ("friends_accept", serde_json::json!({ "id": id })),
+                FriendsAction::Reject { id } => ("friends_reject", serde_json::json!({ "id": id })),
             };
             let result = client::rpc_call(&settings.data_dir, method, params).await?;
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
         Some(Command::Send { peer, message }) => {
             let result = client::rpc_call(
                 &settings.data_dir,
-                "send",
+                "send_message",
                 serde_json::json!({ "peer": peer, "message": message }),
             )
             .await?;
@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
         Some(Command::Recv { peer }) => {
             let result = client::rpc_call(
                 &settings.data_dir,
-                "recv",
+                "recv_messages",
                 serde_json::json!({ "peer": peer }),
             )
             .await?;
@@ -121,19 +121,19 @@ async fn main() -> Result<()> {
         Some(Command::Channels { action }) => {
             use cli::ChannelsAction;
             let (method, params) = match action {
-                ChannelsAction::List => ("channels.list", serde_json::json!({})),
+                ChannelsAction::List => ("channels_list", serde_json::json!({})),
                 ChannelsAction::Publish {
                     channel_type,
                     message,
                 } => (
-                    "channels.publish",
+                    "channels_publish",
                     serde_json::json!({ "channel_type": channel_type, "message": message }),
                 ),
                 ChannelsAction::Subscribe { onion } => {
-                    ("channels.subscribe", serde_json::json!({ "onion": onion }))
+                    ("channels_subscribe", serde_json::json!({ "onion": onion }))
                 }
                 ChannelsAction::Feed { channel } => {
-                    ("channels.feed", serde_json::json!({ "channel": channel }))
+                    ("channels_feed", serde_json::json!({ "channel_id": channel }))
                 }
             };
             let result = client::rpc_call(&settings.data_dir, method, params).await?;
@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
         Some(Command::Ephemeral { peer, ttl }) => {
             let result = client::rpc_call(
                 &settings.data_dir,
-                "ephemeral",
+                "ephemeral_set",
                 serde_json::json!({ "peer": peer, "ttl": ttl }),
             )
             .await?;
@@ -153,8 +153,8 @@ async fn main() -> Result<()> {
         Some(Command::Notifications { state }) => {
             let result = client::rpc_call(
                 &settings.data_dir,
-                "notifications",
-                serde_json::json!({ "state": state }),
+                "notifications_toggle",
+                serde_json::json!({ "enabled": state == "on" }),
             )
             .await?;
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
