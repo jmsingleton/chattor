@@ -1,36 +1,33 @@
-mod error;
 mod app;
 mod cli;
 mod config;
 mod crypto;
 mod db;
-mod tor;
-mod protocol;
+mod error;
 mod net;
 mod notifications;
 mod presence;
+mod protocol;
+mod tor;
 mod ui;
 
+use crate::crypto::IdentityKeypair;
+use app::App;
+use base64::Engine;
 use clap::Parser;
 use cli::Cli;
-use error::Result;
-use app::App;
-use ui::{AppState, AppAction, RenderContext};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal,
-};
-use std::time::Duration;
+use error::Result;
+use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
-use crate::crypto::IdentityKeypair;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
-use base64::Engine;
+use ui::{AppAction, AppState, RenderContext};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -50,7 +47,8 @@ async fn main() -> Result<()> {
     };
 
     // Watch channel to broadcast connection pool to background tasks
-    let (pool_tx, pool_rx) = tokio::sync::watch::channel::<Option<Arc<crate::net::pool::ConnectionPool>>>(None);
+    let (pool_tx, pool_rx) =
+        tokio::sync::watch::channel::<Option<Arc<crate::net::pool::ConnectionPool>>>(None);
 
     // Load theme
     let theme = {
@@ -83,9 +81,8 @@ async fn main() -> Result<()> {
 
     // --- Bootstrap Phase ---
     // Create watch channel for Tor init progress
-    let (bootstrap_tx, mut bootstrap_rx) = tokio::sync::watch::channel(
-        ui::BootstrapUpdate::Progress(0)
-    );
+    let (bootstrap_tx, mut bootstrap_rx) =
+        tokio::sync::watch::channel(ui::BootstrapUpdate::Progress(0));
 
     // Spawn Tor init in background, communicating via watch channel
     let app_tor = Arc::clone(&app);
@@ -107,6 +104,7 @@ async fn main() -> Result<()> {
     });
 
     // Run bootstrap animation loop
+    let mut continued_offline = false;
     let mut phase = ui::BootstrapPhase::new();
     let bootstrap_start = std::time::Instant::now();
     let bootstrap_timeout = std::time::Duration::from_secs(60);
@@ -114,7 +112,11 @@ async fn main() -> Result<()> {
     loop {
         // Render current bootstrap frame
         match &phase {
-            ui::BootstrapPhase::Connecting { frame, tick, progress } => {
+            ui::BootstrapPhase::Connecting {
+                frame,
+                tick,
+                progress,
+            } => {
                 let f = *frame;
                 let t = *tick;
                 let p = *progress;
@@ -175,13 +177,13 @@ async fn main() -> Result<()> {
                             return Ok(());
                         }
                         ui::BootstrapAction::ContinueOffline => {
+                            continued_offline = true;
                             break;
                         }
                         ui::BootstrapAction::Retry => {
                             phase = ui::BootstrapPhase::new();
-                            let (new_tx, new_rx) = tokio::sync::watch::channel(
-                                ui::BootstrapUpdate::Progress(0)
-                            );
+                            let (new_tx, new_rx) =
+                                tokio::sync::watch::channel(ui::BootstrapUpdate::Progress(0));
                             bootstrap_rx = new_rx;
                             let app_retry = Arc::clone(&app);
                             let pool_tx_retry = pool_tx.clone();
@@ -196,9 +198,8 @@ async fn main() -> Result<()> {
                                         let _ = new_tx.send(ui::BootstrapUpdate::Connected);
                                     }
                                     Err(e) => {
-                                        let _ = new_tx.send(ui::BootstrapUpdate::Failed(
-                                            format!("{}", e)
-                                        ));
+                                        let _ = new_tx
+                                            .send(ui::BootstrapUpdate::Failed(format!("{}", e)));
                                     }
                                 }
                             });
@@ -224,7 +225,10 @@ async fn main() -> Result<()> {
                 let app_lock = app_sync.lock().await;
                 if let Ok(requests) = collect_sync_requests(&app_lock) {
                     for (peer_onion, sync_msg) in requests {
-                        app_lock.message_queue.enqueue(&app_lock.db, &peer_onion, &sync_msg, "low").ok();
+                        app_lock
+                            .message_queue
+                            .enqueue(&app_lock.db, &peer_onion, &sync_msg, "low")
+                            .ok();
                     }
                 }
             }
@@ -268,7 +272,7 @@ async fn main() -> Result<()> {
                             from_onion: own_onion.clone(),
                             presence_type: crate::protocol::message::PresenceType::Heartbeat,
                             timestamp: now,
-                        }
+                        },
                     );
                     let pool = Arc::clone(&pool);
                     tasks.spawn(async move {
@@ -309,7 +313,8 @@ async fn main() -> Result<()> {
     let mut cached_conversation_ttl: Option<i64> = None;
     let mut cached_channel_subs: Vec<db::queries::ChannelSubscription> = Vec::new();
     let mut cached_channel_posts: Vec<db::queries::ChannelPost> = Vec::new();
-    let mut cached_read_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut cached_read_counts: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
     let mut cached_friend_count: usize = 0;
 
     // Main event loop
@@ -321,7 +326,10 @@ async fn main() -> Result<()> {
         }
 
         // Expire status flash
-        if status_flash.as_ref().is_some_and(|(t, _)| t.elapsed() >= std::time::Duration::from_secs(2)) {
+        if status_flash
+            .as_ref()
+            .is_some_and(|(t, _)| t.elapsed() >= std::time::Duration::from_secs(2))
+        {
             status_flash = None;
             dirty = true;
         }
@@ -331,11 +339,12 @@ async fn main() -> Result<()> {
             let app_lock = app.lock().await;
 
             cached_friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
-            cached_pending_count = db::queries::get_pending_request_count(&app_lock.db).unwrap_or(0);
+            cached_pending_count =
+                db::queries::get_pending_request_count(&app_lock.db).unwrap_or(0);
             cached_own_onion = app_lock.onion_address.clone();
-            cached_friend_code = cached_own_onion.as_deref().and_then(|o| {
-                crate::tor::address::onion_to_friend_code(o).ok()
-            });
+            cached_friend_code = cached_own_onion
+                .as_deref()
+                .and_then(|o| crate::tor::address::onion_to_friend_code(o).ok());
             cached_tor_connected = app_lock.tor_client.is_some();
 
             // Throttle cleanup to every 30s instead of every 100ms
@@ -345,9 +354,15 @@ async fn main() -> Result<()> {
             }
 
             // Load messages and ephemeral TTL for selected conversation
-            let (messages, conversation_ephemeral_ttl) = if let AppState::Normal { conversation_id: Some(conv_id), .. } = &app_state {
-                let msgs = db::queries::get_messages(&app_lock.db, *conv_id, 100, 0).unwrap_or_default();
-                let ttl = db::queries::get_conversation_ephemeral_ttl(&app_lock.db, *conv_id).unwrap_or(None);
+            let (messages, conversation_ephemeral_ttl) = if let AppState::Normal {
+                conversation_id: Some(conv_id),
+                ..
+            } = &app_state
+            {
+                let msgs =
+                    db::queries::get_messages(&app_lock.db, *conv_id, 100, 0).unwrap_or_default();
+                let ttl = db::queries::get_conversation_ephemeral_ttl(&app_lock.db, *conv_id)
+                    .unwrap_or(None);
                 (msgs, ttl)
             } else {
                 (Vec::new(), None)
@@ -356,22 +371,32 @@ async fn main() -> Result<()> {
             cached_conversation_ttl = conversation_ephemeral_ttl;
 
             // Load channel data
-            cached_channel_subs = db::queries::get_channel_subscriptions(&app_lock.db).unwrap_or_default();
+            cached_channel_subs =
+                db::queries::get_channel_subscriptions(&app_lock.db).unwrap_or_default();
 
             let (channel_posts, channel_post_read_counts) = if let AppState::ViewingChannel {
-                ref channel_type, is_own, ..
-            } = &app_state {
+                ref channel_type,
+                is_own,
+                ..
+            } = &app_state
+            {
                 let channel_id = if *is_own {
-                    if channel_type == "public" { 1 } else { 2 }
+                    if channel_type == "public" {
+                        1
+                    } else {
+                        2
+                    }
                 } else {
                     0 // remote posts stored with channel_id 0
                 };
-                let posts = db::queries::get_channel_posts(&app_lock.db, channel_id, 100).unwrap_or_default();
+                let posts = db::queries::get_channel_posts(&app_lock.db, channel_id, 100)
+                    .unwrap_or_default();
                 let mut counts = std::collections::HashMap::new();
                 if *is_own && !posts.is_empty() {
                     let post_ids: Vec<&str> = posts.iter().map(|p| p.post_id.as_str()).collect();
-                    counts = db::queries::get_channel_post_read_counts_batch(&app_lock.db, &post_ids)
-                        .unwrap_or_default();
+                    counts =
+                        db::queries::get_channel_post_read_counts_batch(&app_lock.db, &post_ids)
+                            .unwrap_or_default();
                 }
                 (posts, counts)
             } else {
@@ -406,6 +431,7 @@ async fn main() -> Result<()> {
                 .as_ref()
                 .filter(|(t, _)| t.elapsed() < std::time::Duration::from_secs(2))
                 .map(|(_, msg)| msg.clone()),
+            continued_offline,
         };
 
         // Render current state
@@ -443,25 +469,36 @@ async fn main() -> Result<()> {
                             drop(app_lock);
                         }
                         Some(AppAction::AcceptFriendRequest(id)) => {
-                            let return_to_list = matches!(app_state, AppState::ViewingFriendRequests { .. });
+                            let return_to_list =
+                                matches!(app_state, AppState::ViewingFriendRequests { .. });
                             let app_lock = app.lock().await;
 
                             match handle_accept_friend_request(&app_lock, id) {
                                 Ok(_) => {
-                                    status_flash = Some((std::time::Instant::now(), "Friend request accepted".to_string()));
+                                    status_flash = Some((
+                                        std::time::Instant::now(),
+                                        "Friend request accepted".to_string(),
+                                    ));
                                 }
                                 Err(e) => {
-                                    status_flash = Some((std::time::Instant::now(),
-                                        crate::ui::error::format_error_for_user(&e)));
+                                    status_flash = Some((
+                                        std::time::Instant::now(),
+                                        crate::ui::error::format_error_for_user(&e),
+                                    ));
                                 }
                             }
 
                             if return_to_list {
-                                let requests = db::queries::get_pending_friend_requests(&app_lock.db).unwrap_or_default();
+                                let requests =
+                                    db::queries::get_pending_friend_requests(&app_lock.db)
+                                        .unwrap_or_default();
                                 if requests.is_empty() {
                                     app_state = AppState::default();
                                 } else {
-                                    app_state = AppState::ViewingFriendRequests { requests, selected_idx: 0 };
+                                    app_state = AppState::ViewingFriendRequests {
+                                        requests,
+                                        selected_idx: 0,
+                                    };
                                 }
                             } else {
                                 app_state = AppState::default();
@@ -469,25 +506,36 @@ async fn main() -> Result<()> {
                             drop(app_lock);
                         }
                         Some(AppAction::RejectFriendRequest(id)) => {
-                            let return_to_list = matches!(app_state, AppState::ViewingFriendRequests { .. });
+                            let return_to_list =
+                                matches!(app_state, AppState::ViewingFriendRequests { .. });
                             let app_lock = app.lock().await;
 
                             match handle_reject_friend_request(&app_lock, id) {
                                 Ok(_) => {
-                                    status_flash = Some((std::time::Instant::now(), "Friend request rejected".to_string()));
+                                    status_flash = Some((
+                                        std::time::Instant::now(),
+                                        "Friend request rejected".to_string(),
+                                    ));
                                 }
                                 Err(e) => {
-                                    status_flash = Some((std::time::Instant::now(),
-                                        crate::ui::error::format_error_for_user(&e)));
+                                    status_flash = Some((
+                                        std::time::Instant::now(),
+                                        crate::ui::error::format_error_for_user(&e),
+                                    ));
                                 }
                             }
 
                             if return_to_list {
-                                let requests = db::queries::get_pending_friend_requests(&app_lock.db).unwrap_or_default();
+                                let requests =
+                                    db::queries::get_pending_friend_requests(&app_lock.db)
+                                        .unwrap_or_default();
                                 if requests.is_empty() {
                                     app_state = AppState::default();
                                 } else {
-                                    app_state = AppState::ViewingFriendRequests { requests, selected_idx: 0 };
+                                    app_state = AppState::ViewingFriendRequests {
+                                        requests,
+                                        selected_idx: 0,
+                                    };
                                 }
                             } else {
                                 app_state = AppState::default();
@@ -496,10 +544,14 @@ async fn main() -> Result<()> {
                         }
                         Some(AppAction::ViewFriendRequests) => {
                             let app_lock = app.lock().await;
-                            let requests = db::queries::get_pending_friend_requests(&app_lock.db).unwrap_or_default();
+                            let requests = db::queries::get_pending_friend_requests(&app_lock.db)
+                                .unwrap_or_default();
                             drop(app_lock);
                             if requests.is_empty() {
-                                status_flash = Some((std::time::Instant::now(), "No pending friend requests".to_string()));
+                                status_flash = Some((
+                                    std::time::Instant::now(),
+                                    "No pending friend requests".to_string(),
+                                ));
                             } else {
                                 app_state = AppState::ViewingFriendRequests {
                                     requests,
@@ -529,38 +581,70 @@ async fn main() -> Result<()> {
                         }
                         Some(AppAction::SelectFriend(idx)) => {
                             let app_lock = app.lock().await;
-                            let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+                            let friends = db::queries::get_friends_with_unread(&app_lock.db)
+                                .unwrap_or_default();
                             if let Some(friend) = friends.get(idx) {
                                 let conv_id = db::queries::get_or_create_conversation(
-                                    &app_lock.db, friend.friend_id
-                                ).unwrap_or(0);
+                                    &app_lock.db,
+                                    friend.friend_id,
+                                )
+                                .unwrap_or(0);
 
                                 if conv_id > 0 {
                                     db::queries::mark_conversation_read(&app_lock.db, conv_id).ok();
-                                    db::queries::activate_ephemeral_timers(&app_lock.db, conv_id).ok();
+                                    db::queries::activate_ephemeral_timers(&app_lock.db, conv_id)
+                                        .ok();
 
                                     // Send read receipts for unread messages from peer
-                                    let own_onion = app_lock.onion_address.clone().unwrap_or_default();
-                                    if let Ok(unreceipted) = db::queries::get_unreceipted_message_ids(&app_lock.db, conv_id, &own_onion) {
+                                    let own_onion =
+                                        app_lock.onion_address.clone().unwrap_or_default();
+                                    if let Ok(unreceipted) =
+                                        db::queries::get_unreceipted_message_ids(
+                                            &app_lock.db,
+                                            conv_id,
+                                            &own_onion,
+                                        )
+                                    {
                                         for (msg_id, sender_onion) in &unreceipted {
                                             if let Ok(uuid) = uuid::Uuid::parse_str(msg_id) {
-                                                let receipt = protocol::message::DeliveryReceiptMessage {
-                                                    message_id: uuid,
-                                                    timestamp: std::time::SystemTime::now()
-                                                        .duration_since(std::time::UNIX_EPOCH)
-                                                        .unwrap_or_default()
-                                                        .as_secs() as i64,
-                                                };
-                                                let receipt_msg = protocol::message::Message::ReadReceipt(receipt);
-                                                app_lock.message_queue.enqueue(&app_lock.db, sender_onion, &receipt_msg, "low").ok();
+                                                let receipt =
+                                                    protocol::message::DeliveryReceiptMessage {
+                                                        message_id: uuid,
+                                                        timestamp: std::time::SystemTime::now()
+                                                            .duration_since(std::time::UNIX_EPOCH)
+                                                            .unwrap_or_default()
+                                                            .as_secs()
+                                                            as i64,
+                                                    };
+                                                let receipt_msg =
+                                                    protocol::message::Message::ReadReceipt(
+                                                        receipt,
+                                                    );
+                                                app_lock
+                                                    .message_queue
+                                                    .enqueue(
+                                                        &app_lock.db,
+                                                        sender_onion,
+                                                        &receipt_msg,
+                                                        "low",
+                                                    )
+                                                    .ok();
                                             }
                                             // Mark the message as read locally
-                                            db::queries::update_message_status(&app_lock.db, msg_id, "read").ok();
+                                            db::queries::update_message_status(
+                                                &app_lock.db,
+                                                msg_id,
+                                                "read",
+                                            )
+                                            .ok();
                                         }
                                     }
                                 }
 
-                                if let AppState::Normal { conversation_id, .. } = &mut app_state {
+                                if let AppState::Normal {
+                                    conversation_id, ..
+                                } = &mut app_state
+                                {
                                     *conversation_id = Some(conv_id);
                                 }
                             }
@@ -573,25 +657,37 @@ async fn main() -> Result<()> {
                                 conversation_id: Some(conv_id),
                                 selected_friend_idx: Some(idx),
                                 ..
-                            } = &app_state {
+                            } = &app_state
+                            {
                                 let conv_id = *conv_id;
                                 let idx = *idx;
 
                                 // Get friend info
-                                let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+                                let friends = db::queries::get_friends_with_unread(&app_lock.db)
+                                    .unwrap_or_default();
                                 if let Some(friend) = friends.get(idx) {
                                     let peer_onion = friend.onion_address.clone();
-                                    let own_onion = app_lock.onion_address.clone()
-                                        .unwrap_or_default();
+                                    let own_onion =
+                                        app_lock.onion_address.clone().unwrap_or_default();
                                     let msg_id = uuid::Uuid::new_v4().to_string();
 
                                     // Check ephemeral TTL for this conversation
-                                    let conv_ttl = db::queries::get_conversation_ephemeral_ttl(&app_lock.db, conv_id).unwrap_or(None);
+                                    let conv_ttl = db::queries::get_conversation_ephemeral_ttl(
+                                        &app_lock.db,
+                                        conv_id,
+                                    )
+                                    .unwrap_or(None);
 
                                     // Store locally first
                                     db::queries::store_outgoing_message_with_ttl(
-                                        &app_lock.db, conv_id, &own_onion, &content, &msg_id, conv_ttl
-                                    ).ok();
+                                        &app_lock.db,
+                                        conv_id,
+                                        &own_onion,
+                                        &content,
+                                        &msg_id,
+                                        conv_ttl,
+                                    )
+                                    .ok();
 
                                     // Encrypt the message using Signal session
                                     let encrypted_msg = {
@@ -604,17 +700,17 @@ async fn main() -> Result<()> {
                                                     sent_at: std::time::SystemTime::now()
                                                         .duration_since(std::time::UNIX_EPOCH)
                                                         .unwrap_or_default()
-                                                        .as_secs() as i64,
+                                                        .as_secs()
+                                                        as i64,
                                                     message_type: "text".to_string(),
                                                     ephemeral_ttl: conv_ttl,
                                                 };
                                                 let plaintext = serde_json::to_vec(&payload).ok();
                                                 match plaintext {
-                                                    Some(pt) => {
-                                                        match session.encrypt(&pt) {
-                                                            Ok((header, ciphertext, is_prekey)) => {
-                                                                store.store_session(&session).ok();
-                                                                Some(protocol::message::TextMessage {
+                                                    Some(pt) => match session.encrypt(&pt) {
+                                                        Ok((header, ciphertext, is_prekey)) => {
+                                                            store.store_session(&session).ok();
+                                                            Some(protocol::message::TextMessage {
                                                                     from_onion: own_onion.clone(),
                                                                     to_onion: peer_onion.clone(),
                                                                     signal_header: base64::engine::general_purpose::STANDARD.encode(&header),
@@ -628,33 +724,60 @@ async fn main() -> Result<()> {
                                                                     message_id: uuid::Uuid::parse_str(&msg_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
                                                                     x3dh_init: None,
                                                                 })
-                                                            }
-                                                            Err(_) => None
                                                         }
-                                                    }
-                                                    None => None
+                                                        Err(_) => None,
+                                                    },
+                                                    None => None,
                                                 }
                                             }
-                                            _ => None
+                                            _ => None,
                                         }
                                     };
 
                                     if let Some(text_msg) = encrypted_msg {
-                                        let msg = protocol::message::Message::TextMessage(text_msg.clone());
+                                        let msg = protocol::message::Message::TextMessage(
+                                            text_msg.clone(),
+                                        );
                                         // Try to send directly, queue on failure
                                         match try_send_direct(&app_lock, &peer_onion, &msg).await {
                                             Ok(_) => {
-                                                db::queries::update_message_status(&app_lock.db, &msg_id, "sent").ok();
+                                                db::queries::update_message_status(
+                                                    &app_lock.db,
+                                                    &msg_id,
+                                                    "sent",
+                                                )
+                                                .ok();
                                             }
                                             Err(_) => {
-                                                app_lock.message_queue.enqueue(&app_lock.db, &peer_onion, &msg, "normal").ok();
-                                                db::queries::update_message_status(&app_lock.db, &msg_id, "queued").ok();
+                                                app_lock
+                                                    .message_queue
+                                                    .enqueue(
+                                                        &app_lock.db,
+                                                        &peer_onion,
+                                                        &msg,
+                                                        "normal",
+                                                    )
+                                                    .ok();
+                                                db::queries::update_message_status(
+                                                    &app_lock.db,
+                                                    &msg_id,
+                                                    "queued",
+                                                )
+                                                .ok();
                                             }
                                         }
                                     } else {
-                                        status_flash = Some((std::time::Instant::now(),
-                                            "Message failed \u{2014} no encryption session".to_string()));
-                                        db::queries::update_message_status(&app_lock.db, &msg_id, "failed").ok();
+                                        status_flash = Some((
+                                            std::time::Instant::now(),
+                                            "Message failed \u{2014} no encryption session"
+                                                .to_string(),
+                                        ));
+                                        db::queries::update_message_status(
+                                            &app_lock.db,
+                                            &msg_id,
+                                            "failed",
+                                        )
+                                        .ok();
                                     }
                                 }
                             }
@@ -665,7 +788,8 @@ async fn main() -> Result<()> {
                         }
                         Some(AppAction::SetEphemeralTtl(conv_id, ttl)) => {
                             let app_lock = app.lock().await;
-                            db::queries::set_conversation_ephemeral_ttl(&app_lock.db, conv_id, ttl).ok();
+                            db::queries::set_conversation_ephemeral_ttl(&app_lock.db, conv_id, ttl)
+                                .ok();
                             drop(app_lock);
                         }
                         Some(AppAction::PublishChannelPost(content, channel_type)) => {
@@ -683,17 +807,26 @@ async fn main() -> Result<()> {
                             let identity = match app_lock.identity.as_ref() {
                                 Some(id) => id,
                                 None => {
-                                    eprintln!("Cannot publish channel post: identity not initialized");
+                                    eprintln!(
+                                        "Cannot publish channel post: identity not initialized"
+                                    );
                                     drop(app_lock);
                                     continue;
                                 }
                             };
-                            let signature = base64::engine::general_purpose::STANDARD.encode(identity.sign(sign_data.as_bytes()).to_bytes());
+                            let signature = base64::engine::general_purpose::STANDARD
+                                .encode(identity.sign(sign_data.as_bytes()).to_bytes());
 
                             // Store locally
                             db::queries::store_channel_post(
-                                &app_lock.db, channel_id, &content, &post_id, now, &signature
-                            ).ok();
+                                &app_lock.db,
+                                channel_id,
+                                &content,
+                                &post_id,
+                                now,
+                                &signature,
+                            )
+                            .ok();
 
                             // Enforce retention
                             db::queries::enforce_channel_retention(&app_lock.db, channel_id).ok();
@@ -709,16 +842,22 @@ async fn main() -> Result<()> {
                                 protocol::message::ChannelPostMessage {
                                     publisher_onion: own_onion,
                                     channel_type: channel_type_enum,
-                                    post_id: uuid::Uuid::parse_str(&post_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                                    post_id: uuid::Uuid::parse_str(&post_id)
+                                        .unwrap_or_else(|_| uuid::Uuid::new_v4()),
                                     content,
                                     created_at: now,
                                     signature,
-                                }
+                                },
                             );
 
-                            let subscribers = db::queries::get_channel_subscribers(&app_lock.db, &channel_type).unwrap_or_default();
+                            let subscribers =
+                                db::queries::get_channel_subscribers(&app_lock.db, &channel_type)
+                                    .unwrap_or_default();
                             for sub_onion in subscribers {
-                                app_lock.message_queue.enqueue(&app_lock.db, &sub_onion, &post_msg, "normal").ok();
+                                app_lock
+                                    .message_queue
+                                    .enqueue(&app_lock.db, &sub_onion, &post_msg, "normal")
+                                    .ok();
                             }
 
                             drop(app_lock);
@@ -728,7 +867,12 @@ async fn main() -> Result<()> {
                             let own_onion = app_lock.onion_address.clone().unwrap_or_default();
 
                             // Store subscription locally
-                            db::queries::add_channel_subscription(&app_lock.db, &publisher_onion, "public").ok();
+                            db::queries::add_channel_subscription(
+                                &app_lock.db,
+                                &publisher_onion,
+                                "public",
+                            )
+                            .ok();
 
                             // Send subscribe message to publisher
                             let sub_msg = protocol::message::Message::ChannelSubscribe(
@@ -738,10 +882,14 @@ async fn main() -> Result<()> {
                                     timestamp: std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap_or_default()
-                                        .as_secs() as i64,
-                                }
+                                        .as_secs()
+                                        as i64,
+                                },
                             );
-                            app_lock.message_queue.enqueue(&app_lock.db, &publisher_onion, &sub_msg, "normal").ok();
+                            app_lock
+                                .message_queue
+                                .enqueue(&app_lock.db, &publisher_onion, &sub_msg, "normal")
+                                .ok();
 
                             drop(app_lock);
                             app_state = AppState::default();
@@ -775,7 +923,11 @@ async fn main() -> Result<()> {
                             drop(app_lock);
                             status_flash = Some((
                                 std::time::Instant::now(),
-                                if new_state { "Notifications: ON".to_string() } else { "Notifications: OFF".to_string() },
+                                if new_state {
+                                    "Notifications: ON".to_string()
+                                } else {
+                                    "Notifications: OFF".to_string()
+                                },
                             ));
                         }
                         Some(AppAction::SendPresence(_)) => {} // Reserved for future use
@@ -784,14 +936,24 @@ async fn main() -> Result<()> {
                     }
 
                     // Typing indicator detection
-                    if let AppState::Normal { input_focused: true, ref input, selected_friend_idx: Some(idx), .. } = &app_state {
+                    if let AppState::Normal {
+                        input_focused: true,
+                        ref input,
+                        selected_friend_idx: Some(idx),
+                        ..
+                    } = &app_state
+                    {
                         let is_typing_now = !input.is_empty();
-                        let should_send_started = is_typing_now && (!was_typing || last_typing_sent.map_or(true, |t| t.elapsed() >= presence::TYPING_DEBOUNCE));
+                        let should_send_started = is_typing_now
+                            && (!was_typing
+                                || last_typing_sent
+                                    .map_or(true, |t| t.elapsed() >= presence::TYPING_DEBOUNCE));
                         let should_send_stopped = !is_typing_now && was_typing;
 
                         if should_send_started || should_send_stopped {
                             let app_lock = app.lock().await;
-                            let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+                            let friends = db::queries::get_friends_with_unread(&app_lock.db)
+                                .unwrap_or_default();
                             if let Some(friend) = friends.get(*idx) {
                                 let own_onion = app_lock.onion_address.clone().unwrap_or_default();
                                 let now = std::time::SystemTime::now()
@@ -810,7 +972,7 @@ async fn main() -> Result<()> {
                                         from_onion: own_onion,
                                         presence_type,
                                         timestamp: now,
-                                    }
+                                    },
                                 );
 
                                 // Best-effort send (don't queue typing indicators)
@@ -828,7 +990,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::Mouse(_) => {} // Reserved for future mouse interactions
-                _ => {} // Resize and other events
+                _ => {}               // Resize and other events
             }
         }
 
@@ -902,15 +1064,20 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
         // Try to decode as a friend code (reversible word encoding of .onion)
         match crate::protocol::friend_code::friend_code_to_onion(trimmed) {
             Ok(onion) => onion,
-            Err(_) => return Err(error::ChattorError::Tor(
-                "Enter a .onion address or friend code (word sequence from their Identity)".into()
-            )),
+            Err(_) => {
+                return Err(error::ChattorError::Tor(
+                    "Enter a .onion address or friend code (word sequence from their Identity)"
+                        .into(),
+                ))
+            }
         }
     };
     let peer_onion = peer_onion.as_str();
 
     // Get our .onion address
-    let own_onion = app.onion_address.as_ref()
+    let own_onion = app
+        .onion_address
+        .as_ref()
         .ok_or_else(|| error::ChattorError::Tor("Tor not initialized yet".into()))?;
 
     // Generate our own friend code to include in the request
@@ -918,13 +1085,11 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
         .unwrap_or_else(|_| "unknown".to_string());
 
     // Create friend request message
-    let identity = app.identity.as_ref()
+    let identity = app
+        .identity
+        .as_ref()
         .ok_or_else(|| error::ChattorError::Crypto("Identity not initialized".into()))?;
-    let request_msg = FriendRequestHandler::create_request(
-        identity,
-        own_onion,
-        &own_friend_code,
-    )?;
+    let request_msg = FriendRequestHandler::create_request(identity, own_onion, &own_friend_code)?;
 
     // Wrap in Message enum
     let message = protocol::message::Message::FriendRequest(request_msg);
@@ -934,7 +1099,8 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
         Ok(_) => Ok(SendResult::SentImmediately),
         Err(_) => {
             // Queue for background delivery
-            app.message_queue.enqueue(&app.db, peer_onion, &message, "high")?;
+            app.message_queue
+                .enqueue(&app.db, peer_onion, &message, "high")?;
             Ok(SendResult::Queued)
         }
     }
@@ -945,26 +1111,35 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     use crate::crypto::PreKeyBundle;
 
     // Get our .onion address
-    let own_onion = app.onion_address.as_ref()
+    let own_onion = app
+        .onion_address
+        .as_ref()
         .ok_or_else(|| error::ChattorError::Tor("Tor not initialized yet".into()))?;
 
     // Get the friend request from database
     let conn = app.db.connection();
-    let (from_onion, _friend_code): (String, String) = conn.query_row(
-        "SELECT from_onion, friend_code FROM friend_requests WHERE id = ?1",
-        [request_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    ).map_err(|e| error::ChattorError::Database(format!("Failed to load request: {}", e)))?;
+    let (from_onion, _friend_code): (String, String) = conn
+        .query_row(
+            "SELECT from_onion, friend_code FROM friend_requests WHERE id = ?1",
+            [request_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| error::ChattorError::Database(format!("Failed to load request: {}", e)))?;
 
     // Generate PreKey bundle for the accept message.
     // Generate a dedicated X25519 Signal identity keypair for X3DH.
     // This is separate from the Ed25519 identity used for friend request signing.
-    let identity = app.identity.as_ref()
+    let identity = app
+        .identity
+        .as_ref()
         .ok_or_else(|| error::ChattorError::Crypto("Identity not initialized".into()))?;
     let signal_identity = libsignal_protocol::vxeddsa::gen_keypair();
-    let signal_identity_public_raw = libsignal_protocol::utils::decode_public_key(&signal_identity.public)
-        .map_err(|_| error::ChattorError::Crypto("Failed to decode signal identity public key".into()))?;
-    let (bundle, private_keys) = PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
+    let signal_identity_public_raw =
+        libsignal_protocol::utils::decode_public_key(&signal_identity.public).map_err(|_| {
+            error::ChattorError::Crypto("Failed to decode signal identity public key".into())
+        })?;
+    let (bundle, private_keys) =
+        PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
 
     // Create accept message (inline to avoid Database clone issue)
     let timestamp = std::time::SystemTime::now()
@@ -992,38 +1167,48 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     // when the peer sends their first PreKey message. We do NOT create the
     // session here — the shared secret requires the peer's ephemeral key,
     // which is embedded in their first encrypted message.
-    let identity_b64 = base64::engine::general_purpose::STANDARD.encode(private_keys.identity_secret);
-    let spk_b64 = base64::engine::general_purpose::STANDARD.encode(private_keys.signed_prekey_secret);
+    let identity_b64 =
+        base64::engine::general_purpose::STANDARD.encode(private_keys.identity_secret);
+    let spk_b64 =
+        base64::engine::general_purpose::STANDARD.encode(private_keys.signed_prekey_secret);
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
         (&format!("prekey_identity:{}", from_onion), &identity_b64),
-    ).map_err(|e| error::ChattorError::Database(
-        format!("Failed to store PreKey identity material: {}", e)
-    ))?;
+    )
+    .map_err(|e| {
+        error::ChattorError::Database(format!("Failed to store PreKey identity material: {}", e))
+    })?;
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
         (&format!("prekey_spk:{}", from_onion), &spk_b64),
-    ).map_err(|e| error::ChattorError::Database(
-        format!("Failed to store PreKey SPK material: {}", e)
-    ))?;
+    )
+    .map_err(|e| {
+        error::ChattorError::Database(format!("Failed to store PreKey SPK material: {}", e))
+    })?;
     if let Some(opk_secret) = private_keys.prekey_secret {
         let opk_b64 = base64::engine::general_purpose::STANDARD.encode(opk_secret);
         conn.execute(
             "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
             (&format!("prekey_opk:{}", from_onion), &opk_b64),
-        ).map_err(|e| error::ChattorError::Database(
-            format!("Failed to store PreKey OPK material: {}", e)
-        ))?;
+        )
+        .map_err(|e| {
+            error::ChattorError::Database(format!("Failed to store PreKey OPK material: {}", e))
+        })?;
     }
     // Also store the Signal identity secret for the initiator side
     // (needed when handle_incoming_accept creates the session)
-    let signal_secret_b64 = base64::engine::general_purpose::STANDARD.encode(signal_identity.secret);
+    let signal_secret_b64 =
+        base64::engine::general_purpose::STANDARD.encode(signal_identity.secret);
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
-        (&format!("signal_identity_secret:{}", from_onion), &signal_secret_b64),
-    ).map_err(|e| error::ChattorError::Database(
-        format!("Failed to store Signal identity secret: {}", e)
-    ))?;
+        (
+            &format!("signal_identity_secret:{}", from_onion),
+            &signal_secret_b64,
+        ),
+    )
+    .map_err(|e| {
+        error::ChattorError::Database(format!("Failed to store Signal identity secret: {}", e))
+    })?;
 
     // Add friend to database
     let timestamp = std::time::SystemTime::now()
@@ -1035,7 +1220,8 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     conn.execute(
         "UPDATE friend_requests SET status = 'accepted' WHERE id = ?1",
         [request_id],
-    ).map_err(|e| error::ChattorError::Database(format!("Failed to update request: {}", e)))?;
+    )
+    .map_err(|e| error::ChattorError::Database(format!("Failed to update request: {}", e)))?;
 
     // Use a truncated display name that's more readable
     let display_name = crate::ui::input::truncate_display(&from_onion, 16);
@@ -1043,12 +1229,9 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO friends (onion_address, display_name, added_at, status)
          VALUES (?1, ?2, ?3, 'active')",
-        (
-            &from_onion,
-            &display_name,
-            timestamp,
-        ),
-    ).map_err(|e| error::ChattorError::Database(format!("Failed to add friend: {}", e)))?;
+        (&from_onion, &display_name, timestamp),
+    )
+    .map_err(|e| error::ChattorError::Database(format!("Failed to add friend: {}", e)))?;
 
     // Auto-subscribe to their channels
     db::queries::add_channel_subscription(&app.db, &from_onion, "public")?;
@@ -1057,8 +1240,12 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     // Queue the accept message for background delivery (don't try direct send —
     // it can block the UI for up to 30s waiting for a Tor circuit)
     let message = protocol::message::Message::FriendRequestAccept(accept_msg);
-    app.message_queue.enqueue(&app.db, &from_onion, &message, "high")?;
-    eprintln!("Friend request #{} accepted (queued for delivery)", request_id);
+    app.message_queue
+        .enqueue(&app.db, &from_onion, &message, "high")?;
+    eprintln!(
+        "Friend request #{} accepted (queued for delivery)",
+        request_id
+    );
 
     Ok(())
 }
@@ -1068,10 +1255,9 @@ fn handle_reject_friend_request(app: &App, request_id: i64) -> Result<()> {
     // Simply delete the request from the database
     let conn = app.db.connection();
 
-    let rows_affected = conn.execute(
-        "DELETE FROM friend_requests WHERE id = ?1",
-        [request_id],
-    ).map_err(|e| error::ChattorError::Database(format!("Failed to delete request: {}", e)))?;
+    let rows_affected = conn
+        .execute("DELETE FROM friend_requests WHERE id = ?1", [request_id])
+        .map_err(|e| error::ChattorError::Database(format!("Failed to delete request: {}", e)))?;
 
     if rows_affected == 0 {
         eprintln!("Friend request #{} not found", request_id);
@@ -1094,14 +1280,20 @@ async fn try_send_direct(
     peer_onion: &str,
     message: &protocol::message::Message,
 ) -> Result<()> {
-    let pool = app.connection_pool.as_ref()
+    let pool = app
+        .connection_pool
+        .as_ref()
         .ok_or_else(|| error::ChattorError::Tor("Connection pool not initialized".into()))?;
 
     pool.send(peer_onion, message).await
 }
 
 /// Handle an incoming message from the listener
-async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage, presence: &presence::PresenceMap) -> Result<()> {
+async fn handle_incoming_message(
+    app: &App,
+    incoming: net::listener::IncomingMessage,
+    presence: &presence::PresenceMap,
+) -> Result<()> {
     match &incoming.message {
         protocol::message::Message::FriendRequest(req) => {
             // Store incoming friend request in database
@@ -1115,9 +1307,10 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 "INSERT INTO friend_requests (from_onion, friend_code, received_at, status)
                  VALUES (?1, ?2, ?3, 'pending')",
                 (&req.from_onion, &req.from_friendcode, now),
-            ).map_err(|e| error::ChattorError::Database(
-                format!("Failed to save friend request: {}", e)
-            ))?;
+            )
+            .map_err(|e| {
+                error::ChattorError::Database(format!("Failed to save friend request: {}", e))
+            })?;
 
             eprintln!("Received friend request from {}", req.from_onion);
         }
@@ -1130,27 +1323,30 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
         protocol::message::Message::TextMessage(text_msg) => {
             let from_onion = &text_msg.from_onion;
             let msg_id = text_msg.message_id.to_string();
-            let is_prekey = text_msg.signal_type == protocol::message::SignalMessageType::PrekeyMessage;
+            let is_prekey =
+                text_msg.signal_type == protocol::message::SignalMessageType::PrekeyMessage;
 
             // Decode header and ciphertext from wire format
             let store = crypto::SessionStore::new(&app.db);
-            let header = base64::engine::general_purpose::STANDARD.decode(&text_msg.signal_header)
-                .map_err(|e| error::ChattorError::Crypto(
-                    format!("Failed to decode header: {}", e)
-                ))?;
-            let ciphertext = base64::engine::general_purpose::STANDARD.decode(&text_msg.signal_ciphertext)
-                .map_err(|e| error::ChattorError::Crypto(
-                    format!("Failed to decode ciphertext: {}", e)
-                ))?;
+            let header = base64::engine::general_purpose::STANDARD
+                .decode(&text_msg.signal_header)
+                .map_err(|e| {
+                    error::ChattorError::Crypto(format!("Failed to decode header: {}", e))
+                })?;
+            let ciphertext = base64::engine::general_purpose::STANDARD
+                .decode(&text_msg.signal_ciphertext)
+                .map_err(|e| {
+                    error::ChattorError::Crypto(format!("Failed to decode ciphertext: {}", e))
+                })?;
 
             let payload = match store.load_session(from_onion)? {
                 Some(mut session) => {
                     let plaintext = session.decrypt(&header, &ciphertext)?;
                     store.store_session(&session)?;
                     serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
-                        .map_err(|e| error::ChattorError::Crypto(
-                            format!("Failed to parse payload: {}", e)
-                        ))?
+                        .map_err(|e| {
+                            error::ChattorError::Crypto(format!("Failed to parse payload: {}", e))
+                        })?
                 }
                 None if is_prekey => {
                     // No session yet — create one from stored PreKey private material.
@@ -1158,80 +1354,118 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                     // keys) and the peer sends their first message as a PreKey message.
 
                     // Extract X3DH init data from the message
-                    let x3dh_init = text_msg.x3dh_init.as_ref()
-                        .ok_or_else(|| error::ChattorError::Crypto(
-                            format!("PreKey message from {} missing X3DH init data", from_onion)
-                        ))?;
+                    let x3dh_init = text_msg.x3dh_init.as_ref().ok_or_else(|| {
+                        error::ChattorError::Crypto(format!(
+                            "PreKey message from {} missing X3DH init data",
+                            from_onion
+                        ))
+                    })?;
 
                     let alice_identity_bytes = base64::engine::general_purpose::STANDARD
                         .decode(&x3dh_init.sender_identity_key)
-                        .map_err(|e| error::ChattorError::Crypto(
-                            format!("Failed to decode sender identity key: {}", e)
-                        ))?;
-                    let alice_identity_public: [u8; 33] = alice_identity_bytes.try_into()
-                        .map_err(|_| error::ChattorError::Crypto(
-                            "Sender identity key has wrong length (expected 33)".into()
-                        ))?;
+                        .map_err(|e| {
+                            error::ChattorError::Crypto(format!(
+                                "Failed to decode sender identity key: {}",
+                                e
+                            ))
+                        })?;
+                    let alice_identity_public: [u8; 33] =
+                        alice_identity_bytes.try_into().map_err(|_| {
+                            error::ChattorError::Crypto(
+                                "Sender identity key has wrong length (expected 33)".into(),
+                            )
+                        })?;
 
                     let alice_ephemeral_bytes = base64::engine::general_purpose::STANDARD
                         .decode(&x3dh_init.sender_ephemeral_key)
-                        .map_err(|e| error::ChattorError::Crypto(
-                            format!("Failed to decode sender ephemeral key: {}", e)
-                        ))?;
-                    let alice_ephemeral_public: [u8; 33] = alice_ephemeral_bytes.try_into()
-                        .map_err(|_| error::ChattorError::Crypto(
-                            "Sender ephemeral key has wrong length (expected 33)".into()
-                        ))?;
+                        .map_err(|e| {
+                            error::ChattorError::Crypto(format!(
+                                "Failed to decode sender ephemeral key: {}",
+                                e
+                            ))
+                        })?;
+                    let alice_ephemeral_public: [u8; 33] =
+                        alice_ephemeral_bytes.try_into().map_err(|_| {
+                            error::ChattorError::Crypto(
+                                "Sender ephemeral key has wrong length (expected 33)".into(),
+                            )
+                        })?;
 
                     // Load all stored PreKey private material
                     let conn = app.db.connection();
-                    let identity_b64: String = conn.query_row(
-                        "SELECT value FROM app_settings WHERE key = ?1",
-                        [&format!("prekey_identity:{}", from_onion)],
-                        |row| row.get(0),
-                    ).map_err(|_| error::ChattorError::Crypto(
-                        format!("No stored PreKey identity material for {}", from_onion)
-                    ))?;
-                    let spk_b64: String = conn.query_row(
-                        "SELECT value FROM app_settings WHERE key = ?1",
-                        [&format!("prekey_spk:{}", from_onion)],
-                        |row| row.get(0),
-                    ).map_err(|_| error::ChattorError::Crypto(
-                        format!("No stored PreKey SPK material for {}", from_onion)
-                    ))?;
-                    let opk_b64: Option<String> = conn.query_row(
-                        "SELECT value FROM app_settings WHERE key = ?1",
-                        [&format!("prekey_opk:{}", from_onion)],
-                        |row| row.get(0),
-                    ).ok();
+                    let identity_b64: String = conn
+                        .query_row(
+                            "SELECT value FROM app_settings WHERE key = ?1",
+                            [&format!("prekey_identity:{}", from_onion)],
+                            |row| row.get(0),
+                        )
+                        .map_err(|_| {
+                            error::ChattorError::Crypto(format!(
+                                "No stored PreKey identity material for {}",
+                                from_onion
+                            ))
+                        })?;
+                    let spk_b64: String = conn
+                        .query_row(
+                            "SELECT value FROM app_settings WHERE key = ?1",
+                            [&format!("prekey_spk:{}", from_onion)],
+                            |row| row.get(0),
+                        )
+                        .map_err(|_| {
+                            error::ChattorError::Crypto(format!(
+                                "No stored PreKey SPK material for {}",
+                                from_onion
+                            ))
+                        })?;
+                    let opk_b64: Option<String> = conn
+                        .query_row(
+                            "SELECT value FROM app_settings WHERE key = ?1",
+                            [&format!("prekey_opk:{}", from_onion)],
+                            |row| row.get(0),
+                        )
+                        .ok();
 
                     let identity_secret: [u8; 32] = base64::engine::general_purpose::STANDARD
                         .decode(&identity_b64)
-                        .map_err(|e| error::ChattorError::Crypto(
-                            format!("Failed to decode PreKey identity: {}", e)
-                        ))?
+                        .map_err(|e| {
+                            error::ChattorError::Crypto(format!(
+                                "Failed to decode PreKey identity: {}",
+                                e
+                            ))
+                        })?
                         .try_into()
-                        .map_err(|_| error::ChattorError::Crypto(
-                            "PreKey identity secret has wrong length".into()
-                        ))?;
+                        .map_err(|_| {
+                            error::ChattorError::Crypto(
+                                "PreKey identity secret has wrong length".into(),
+                            )
+                        })?;
                     let signed_prekey_secret: [u8; 32] = base64::engine::general_purpose::STANDARD
                         .decode(&spk_b64)
-                        .map_err(|e| error::ChattorError::Crypto(
-                            format!("Failed to decode PreKey SPK: {}", e)
-                        ))?
+                        .map_err(|e| {
+                            error::ChattorError::Crypto(format!(
+                                "Failed to decode PreKey SPK: {}",
+                                e
+                            ))
+                        })?
                         .try_into()
-                        .map_err(|_| error::ChattorError::Crypto(
-                            "PreKey SPK secret has wrong length".into()
-                        ))?;
-                    let prekey_secret: Option<[u8; 32]> = opk_b64.map(|b64| {
-                        let bytes = base64::engine::general_purpose::STANDARD.decode(&b64)
-                            .map_err(|e| error::ChattorError::Crypto(
-                                format!("Failed to decode PreKey OPK: {}", e)
-                            ))?;
-                        bytes.try_into().map_err(|_| error::ChattorError::Crypto(
-                            "PreKey OPK has wrong length".into()
-                        ))
-                    }).transpose()?;
+                        .map_err(|_| {
+                            error::ChattorError::Crypto("PreKey SPK secret has wrong length".into())
+                        })?;
+                    let prekey_secret: Option<[u8; 32]> = opk_b64
+                        .map(|b64| {
+                            let bytes = base64::engine::general_purpose::STANDARD
+                                .decode(&b64)
+                                .map_err(|e| {
+                                    error::ChattorError::Crypto(format!(
+                                        "Failed to decode PreKey OPK: {}",
+                                        e
+                                    ))
+                                })?;
+                            bytes.try_into().map_err(|_| {
+                                error::ChattorError::Crypto("PreKey OPK has wrong length".into())
+                            })
+                        })
+                        .transpose()?;
 
                     let private_material = crypto::PreKeyPrivateMaterial {
                         identity_secret,
@@ -1253,19 +1487,24 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                     conn.execute(
                         "DELETE FROM app_settings WHERE key LIKE ?1",
                         [&format!("prekey_%:{}", from_onion)],
-                    ).ok();
+                    )
+                    .ok();
                     conn.execute(
                         "DELETE FROM app_settings WHERE key = ?1",
                         [&format!("signal_identity_secret:{}", from_onion)],
-                    ).ok();
+                    )
+                    .ok();
 
                     serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
-                        .map_err(|e| error::ChattorError::Crypto(
-                            format!("Failed to parse payload: {}", e)
-                        ))?
+                        .map_err(|e| {
+                            error::ChattorError::Crypto(format!("Failed to parse payload: {}", e))
+                        })?
                 }
                 None => {
-                    eprintln!("No session for {} and not a PreKey message, cannot decrypt", from_onion);
+                    eprintln!(
+                        "No session for {} and not a PreKey message, cannot decrypt",
+                        from_onion
+                    );
                     return Ok(());
                 }
             };
@@ -1279,7 +1518,14 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             // Find friend and conversation
             if let Some(friend_id) = db::queries::find_friend_by_onion(&app.db, from_onion)? {
                 let conv_id = db::queries::get_or_create_conversation(&app.db, friend_id)?;
-                db::queries::store_incoming_message_with_ttl(&app.db, conv_id, from_onion, &payload.content, &msg_id, payload.ephemeral_ttl)?;
+                db::queries::store_incoming_message_with_ttl(
+                    &app.db,
+                    conv_id,
+                    from_onion,
+                    &payload.content,
+                    &msg_id,
+                    payload.ephemeral_ttl,
+                )?;
 
                 // Desktop notification (best-effort)
                 if notifications::is_enabled(&app.db) {
@@ -1297,22 +1543,35 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                         .as_secs() as i64,
                 };
                 let receipt_msg = protocol::message::Message::DeliveryReceipt(receipt);
-                app.message_queue.enqueue(&app.db, from_onion, &receipt_msg, "high").ok();
+                app.message_queue
+                    .enqueue(&app.db, from_onion, &receipt_msg, "high")
+                    .ok();
             }
         }
         protocol::message::Message::DeliveryReceipt(receipt) => {
-            db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "delivered").ok();
+            db::queries::update_message_status(
+                &app.db,
+                &receipt.message_id.to_string(),
+                "delivered",
+            )
+            .ok();
         }
         protocol::message::Message::ReadReceipt(receipt) => {
-            db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "read").ok();
+            db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "read")
+                .ok();
         }
         protocol::message::Message::ChannelSubscribe(sub) => {
             // Check if subscriber is blocked
-            let blocked: bool = app.db.connection().query_row(
-                "SELECT COUNT(*) FROM blocked_onions WHERE onion_address = ?1",
-                [&sub.subscriber_onion],
-                |row| row.get::<_, i64>(0),
-            ).map(|c| c > 0).unwrap_or(false);
+            let blocked: bool = app
+                .db
+                .connection()
+                .query_row(
+                    "SELECT COUNT(*) FROM blocked_onions WHERE onion_address = ?1",
+                    [&sub.subscriber_onion],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap_or(false);
 
             if !blocked {
                 let channel_type = match sub.channel_type {
@@ -1324,12 +1583,18 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 if channel_type == "friends_only"
                     && db::queries::find_friend_by_onion(&app.db, &sub.subscriber_onion)?.is_none()
                 {
-                    eprintln!("Rejected friends_only subscription from non-friend {}", sub.subscriber_onion);
+                    eprintln!(
+                        "Rejected friends_only subscription from non-friend {}",
+                        sub.subscriber_onion
+                    );
                     return Ok(());
                 }
 
                 db::queries::add_channel_subscriber(&app.db, &sub.subscriber_onion, channel_type)?;
-                eprintln!("New {} channel subscriber: {}", channel_type, sub.subscriber_onion);
+                eprintln!(
+                    "New {} channel subscriber: {}",
+                    channel_type, sub.subscriber_onion
+                );
             }
         }
         protocol::message::Message::ChannelUnsubscribe(unsub) => {
@@ -1338,13 +1603,20 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 protocol::message::ChannelType::FriendsOnly => "friends_only",
             };
             db::queries::remove_channel_subscriber(&app.db, &unsub.subscriber_onion, channel_type)?;
-            eprintln!("Unsubscribed: {} from {} channel", unsub.subscriber_onion, channel_type);
+            eprintln!(
+                "Unsubscribed: {} from {} channel",
+                unsub.subscriber_onion, channel_type
+            );
         }
         protocol::message::Message::ChannelPost(post) => {
             // Store remote post (channel_id 0 for remote posts)
             db::queries::store_channel_post(
-                &app.db, 0, &post.content, &post.post_id.to_string(),
-                post.created_at, &post.signature,
+                &app.db,
+                0,
+                &post.content,
+                &post.post_id.to_string(),
+                post.created_at,
+                &post.signature,
             )?;
 
             // Send read receipt back to publisher
@@ -1357,7 +1629,9 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                     .as_secs() as i64,
             };
             let receipt_msg = protocol::message::Message::ChannelPostReceipt(receipt);
-            app.message_queue.enqueue(&app.db, &post.publisher_onion, &receipt_msg, "low").ok();
+            app.message_queue
+                .enqueue(&app.db, &post.publisher_onion, &receipt_msg, "low")
+                .ok();
         }
         protocol::message::Message::ChannelSyncRequest(req) => {
             let channel_type_str = match req.channel_type {
@@ -1373,18 +1647,21 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             }
 
             let channel_id = if channel_type_str == "public" { 1 } else { 2 };
-            let posts = db::queries::get_channel_posts_since(&app.db, channel_id, req.since_timestamp)?;
+            let posts =
+                db::queries::get_channel_posts_since(&app.db, channel_id, req.since_timestamp)?;
 
-            let post_messages: Vec<protocol::message::ChannelPostMessage> = posts.into_iter().map(|p| {
-                protocol::message::ChannelPostMessage {
+            let post_messages: Vec<protocol::message::ChannelPostMessage> = posts
+                .into_iter()
+                .map(|p| protocol::message::ChannelPostMessage {
                     publisher_onion: app.onion_address.clone().unwrap_or_default(),
                     channel_type: req.channel_type.clone(),
-                    post_id: uuid::Uuid::parse_str(&p.post_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                    post_id: uuid::Uuid::parse_str(&p.post_id)
+                        .unwrap_or_else(|_| uuid::Uuid::new_v4()),
                     content: p.content,
                     created_at: p.created_at,
                     signature: p.signature,
-                }
-            }).collect();
+                })
+                .collect();
 
             if !post_messages.is_empty() {
                 let response = protocol::message::Message::ChannelSyncResponse(
@@ -1392,16 +1669,22 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                         publisher_onion: app.onion_address.clone().unwrap_or_default(),
                         channel_type: req.channel_type.clone(),
                         posts: post_messages,
-                    }
+                    },
                 );
-                app.message_queue.enqueue(&app.db, &req.subscriber_onion, &response, "normal").ok();
+                app.message_queue
+                    .enqueue(&app.db, &req.subscriber_onion, &response, "normal")
+                    .ok();
             }
         }
         protocol::message::Message::ChannelSyncResponse(resp) => {
             for post in &resp.posts {
                 db::queries::store_channel_post(
-                    &app.db, 0, &post.content, &post.post_id.to_string(),
-                    post.created_at, &post.signature,
+                    &app.db,
+                    0,
+                    &post.content,
+                    &post.post_id.to_string(),
+                    post.created_at,
+                    &post.signature,
                 )?;
             }
             // Update sync time
@@ -1412,28 +1695,32 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             let max_time = resp.posts.iter().map(|p| p.created_at).max().unwrap_or(0);
             if max_time > 0 {
                 db::queries::update_subscription_sync_time(
-                    &app.db, &resp.publisher_onion, channel_type_str, max_time
+                    &app.db,
+                    &resp.publisher_onion,
+                    channel_type_str,
+                    max_time,
                 )?;
             }
         }
         protocol::message::Message::ChannelPostReceipt(receipt) => {
             db::queries::store_channel_post_receipt(
-                &app.db, &receipt.post_id.to_string(), &receipt.reader_onion, receipt.timestamp
+                &app.db,
+                &receipt.post_id.to_string(),
+                &receipt.reader_onion,
+                receipt.timestamp,
             )?;
         }
-        protocol::message::Message::Presence(pres) => {
-            match pres.presence_type {
-                protocol::message::PresenceType::Heartbeat => {
-                    presence::record_heartbeat(presence, &pres.from_onion).await;
-                }
-                protocol::message::PresenceType::TypingStarted => {
-                    presence::record_typing_started(presence, &pres.from_onion).await;
-                }
-                protocol::message::PresenceType::TypingStopped => {
-                    presence::record_typing_stopped(presence, &pres.from_onion).await;
-                }
+        protocol::message::Message::Presence(pres) => match pres.presence_type {
+            protocol::message::PresenceType::Heartbeat => {
+                presence::record_heartbeat(presence, &pres.from_onion).await;
             }
-        }
+            protocol::message::PresenceType::TypingStarted => {
+                presence::record_typing_started(presence, &pres.from_onion).await;
+            }
+            protocol::message::PresenceType::TypingStopped => {
+                presence::record_typing_stopped(presence, &pres.from_onion).await;
+            }
+        },
     }
 
     Ok(())
@@ -1461,7 +1748,9 @@ async fn process_message_queue(app: &App) -> Result<()> {
         by_peer.entry(msg.peer_onion.clone()).or_default().push(msg);
     }
 
-    let pool = app.connection_pool.as_ref()
+    let pool = app
+        .connection_pool
+        .as_ref()
         .ok_or_else(|| error::ChattorError::Tor("Connection pool not initialized".into()))?;
     let pool = Arc::clone(pool);
 
@@ -1522,13 +1811,12 @@ fn handle_incoming_accept(
     app: &App,
     accept: &protocol::message::FriendRequestAcceptMessage,
 ) -> Result<()> {
-    use crate::crypto::{PreKeyBundle, PreKeyPrivateMaterial, SignalSession, SessionStore};
+    use crate::crypto::{PreKeyBundle, PreKeyPrivateMaterial, SessionStore, SignalSession};
 
     // Deserialize the remote peer's PreKey bundle from the accept message
-    let bundle: PreKeyBundle = serde_json::from_str(&accept.signal_prekey_bundle)
-        .map_err(|e| error::ChattorError::Crypto(
-            format!("Failed to parse PreKey bundle: {}", e)
-        ))?;
+    let bundle: PreKeyBundle = serde_json::from_str(&accept.signal_prekey_bundle).map_err(|e| {
+        error::ChattorError::Crypto(format!("Failed to parse PreKey bundle: {}", e))
+    })?;
 
     // Load our Signal identity secret that was stored when we sent the friend request.
     // We are the original requester; the acceptor sent us their PreKey bundle.
@@ -1548,13 +1836,19 @@ fn handle_incoming_accept(
             |row| row.get::<_, String>(0),
         ) {
             Ok(b64) => {
-                let bytes = base64::engine::general_purpose::STANDARD.decode(&b64)
-                    .map_err(|e| error::ChattorError::Crypto(
-                        format!("Failed to decode stored Signal identity secret: {}", e)
-                    ))?;
-                bytes.try_into().map_err(|_| error::ChattorError::Crypto(
-                    "Stored Signal identity secret has wrong length".into()
-                ))?
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&b64)
+                    .map_err(|e| {
+                        error::ChattorError::Crypto(format!(
+                            "Failed to decode stored Signal identity secret: {}",
+                            e
+                        ))
+                    })?;
+                bytes.try_into().map_err(|_| {
+                    error::ChattorError::Crypto(
+                        "Stored Signal identity secret has wrong length".into(),
+                    )
+                })?
             }
             Err(_) => {
                 // Generate a fresh Signal identity for this X3DH exchange
@@ -1564,7 +1858,9 @@ fn handle_incoming_accept(
         }
     };
 
-    let _identity = app.identity.as_ref()
+    let _identity = app
+        .identity
+        .as_ref()
         .ok_or_else(|| error::ChattorError::Crypto("Identity not initialized".into()))?;
     let dummy_private = PreKeyPrivateMaterial {
         identity_secret: [0u8; 32],
@@ -1588,11 +1884,14 @@ fn handle_incoming_accept(
     // Queue a handshake PreKey message to trigger the peer's session creation.
     // Without this, the acceptor can't send messages because they deferred
     // session creation until our first PreKey message arrives.
-    let own_onion = app.onion_address.as_ref()
+    let own_onion = app
+        .onion_address
+        .as_ref()
         .ok_or_else(|| error::ChattorError::Tor("Tor not initialized".into()))?;
     {
-        let mut session = store.load_session(&accept.from_onion)?
-            .ok_or_else(|| error::ChattorError::Crypto("Session just stored but not found".into()))?;
+        let mut session = store.load_session(&accept.from_onion)?.ok_or_else(|| {
+            error::ChattorError::Crypto("Session just stored but not found".into())
+        })?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1614,29 +1913,33 @@ fn handle_incoming_accept(
         // Build X3DH init data for the PreKey message so Bob can run x3dh_responder
         let x3dh_init = if is_prekey {
             Some(protocol::message::X3DHInitData {
-                sender_identity_key: base64::engine::general_purpose::STANDARD.encode(our_identity_encoded),
-                sender_ephemeral_key: base64::engine::general_purpose::STANDARD.encode(ephemeral_public),
+                sender_identity_key: base64::engine::general_purpose::STANDARD
+                    .encode(our_identity_encoded),
+                sender_ephemeral_key: base64::engine::general_purpose::STANDARD
+                    .encode(ephemeral_public),
             })
         } else {
             None
         };
 
-        let handshake_msg = protocol::message::Message::TextMessage(protocol::message::TextMessage {
-            from_onion: own_onion.clone(),
-            to_onion: accept.from_onion.clone(),
-            signal_header: base64::engine::general_purpose::STANDARD.encode(&header),
-            signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
-            signal_type: if is_prekey {
-                protocol::message::SignalMessageType::PrekeyMessage
-            } else {
-                protocol::message::SignalMessageType::Message
-            },
-            timestamp: now,
-            message_id: uuid::Uuid::new_v4(),
-            x3dh_init,
-        });
+        let handshake_msg =
+            protocol::message::Message::TextMessage(protocol::message::TextMessage {
+                from_onion: own_onion.clone(),
+                to_onion: accept.from_onion.clone(),
+                signal_header: base64::engine::general_purpose::STANDARD.encode(&header),
+                signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
+                signal_type: if is_prekey {
+                    protocol::message::SignalMessageType::PrekeyMessage
+                } else {
+                    protocol::message::SignalMessageType::Message
+                },
+                timestamp: now,
+                message_id: uuid::Uuid::new_v4(),
+                x3dh_init,
+            });
 
-        app.message_queue.enqueue(&app.db, &accept.from_onion, &handshake_msg, "high")?;
+        app.message_queue
+            .enqueue(&app.db, &accept.from_onion, &handshake_msg, "high")?;
         eprintln!("Queued handshake PreKey message to {}", accept.from_onion);
     }
 
@@ -1650,9 +1953,8 @@ fn handle_incoming_accept(
             &crate::ui::input::truncate_display(&accept.from_onion, 16),
             accept.timestamp,
         ),
-    ).map_err(|e| error::ChattorError::Database(
-        format!("Failed to add friend: {}", e)
-    ))?;
+    )
+    .map_err(|e| error::ChattorError::Database(format!("Failed to add friend: {}", e)))?;
 
     // Auto-subscribe to their channels
     db::queries::add_channel_subscription(&app.db, &accept.from_onion, "public")?;
@@ -1685,7 +1987,7 @@ fn collect_sync_requests(app: &App) -> Result<Vec<(String, protocol::message::Me
                 subscriber_onion: own_onion.clone(),
                 channel_type,
                 since_timestamp: since,
-            }
+            },
         );
 
         requests.push((sub.publisher_onion, sync_req));
@@ -1693,4 +1995,3 @@ fn collect_sync_requests(app: &App) -> Result<Vec<(String, protocol::message::Me
 
     Ok(requests)
 }
-
