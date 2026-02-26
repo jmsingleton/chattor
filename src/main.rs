@@ -49,6 +49,9 @@ async fn main() -> Result<()> {
         Arc::new(Mutex::new(App::new_with_settings(settings)?))
     };
 
+    // Watch channel to broadcast connection pool to background tasks
+    let (pool_tx, pool_rx) = tokio::sync::watch::channel::<Option<Arc<crate::net::pool::ConnectionPool>>>(None);
+
     // Load theme
     let theme = {
         let app_lock = app.lock().await;
@@ -86,10 +89,15 @@ async fn main() -> Result<()> {
 
     // Spawn Tor init in background, communicating via watch channel
     let app_tor = Arc::clone(&app);
+    let pool_tx_init = pool_tx.clone();
     tokio::spawn(async move {
         let mut app_lock = app_tor.lock().await;
         match app_lock.init_tor().await {
             Ok(()) => {
+                // Broadcast pool to background tasks
+                if let Some(ref pool) = app_lock.connection_pool {
+                    let _ = pool_tx_init.send(Some(Arc::clone(pool)));
+                }
                 let _ = bootstrap_tx.send(ui::BootstrapUpdate::Connected);
             }
             Err(e) => {
@@ -176,10 +184,15 @@ async fn main() -> Result<()> {
                             );
                             bootstrap_rx = new_rx;
                             let app_retry = Arc::clone(&app);
+                            let pool_tx_retry = pool_tx.clone();
                             tokio::spawn(async move {
                                 let mut app_lock = app_retry.lock().await;
                                 match app_lock.init_tor().await {
                                     Ok(()) => {
+                                        // Broadcast pool to background tasks
+                                        if let Some(ref pool) = app_lock.connection_pool {
+                                            let _ = pool_tx_retry.send(Some(Arc::clone(pool)));
+                                        }
                                         let _ = new_tx.send(ui::BootstrapUpdate::Connected);
                                     }
                                     Err(e) => {
@@ -220,40 +233,53 @@ async fn main() -> Result<()> {
     });
 
     // Spawn heartbeat task — sends presence updates to connected peers
+    // Uses watch channel for pool access (no app lock needed during sends)
+    let pool_rx_heartbeat = pool_rx.clone();
     let app_heartbeat = Arc::clone(&app);
     tokio::spawn(async move {
         // Wait for Tor to initialize before starting heartbeats
         tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+
+        // Capture own_onion once (static after Tor init)
+        let own_onion = {
+            let app_lock = app_heartbeat.lock().await;
+            app_lock.onion_address.clone().unwrap_or_default()
+        };
+
         loop {
-            {
-                let app_lock = app_heartbeat.lock().await;
-                if let Some(ref pool) = app_lock.connection_pool {
-                    let own_onion = app_lock.onion_address.clone().unwrap_or_default();
-                    let peers = pool.connected_peers();
-                    drop(app_lock);
+            // Get pool from watch channel (no app lock needed)
+            let pool = {
+                let rx = pool_rx_heartbeat.borrow();
+                rx.clone()
+            };
 
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64;
+            if let Some(pool) = pool {
+                let peers = pool.connected_peers();
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
 
-                    for peer in peers {
-                        let msg = protocol::message::Message::Presence(
-                            protocol::message::PresenceMessage {
-                                from_onion: own_onion.clone(),
-                                presence_type: protocol::message::PresenceType::Heartbeat,
-                                timestamp: now,
-                            }
-                        );
-                        // Best-effort: don't retry or queue heartbeats
-                        let app_lock = app_heartbeat.lock().await;
-                        if let Some(ref pool) = app_lock.connection_pool {
-                            let _ = pool.send(&peer, &msg).await;
+                // Send heartbeats concurrently via JoinSet (no app lock held)
+                let mut tasks = tokio::task::JoinSet::new();
+                for peer in peers {
+                    let msg = crate::protocol::message::Message::Presence(
+                        crate::protocol::message::PresenceMessage {
+                            from_onion: own_onion.clone(),
+                            presence_type: crate::protocol::message::PresenceType::Heartbeat,
+                            timestamp: now,
                         }
-                    }
+                    );
+                    let pool = Arc::clone(&pool);
+                    tasks.spawn(async move {
+                        let _ = pool.send(&peer, &msg).await;
+                    });
                 }
+                // Wait for all sends to complete
+                while tasks.join_next().await.is_some() {}
             }
-            tokio::time::sleep(presence::HEARTBEAT_INTERVAL).await;
+
+            tokio::time::sleep(crate::presence::HEARTBEAT_INTERVAL).await;
         }
     });
 
