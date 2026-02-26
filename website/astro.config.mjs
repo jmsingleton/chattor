@@ -32,6 +32,7 @@ export default defineConfig({
           items: [
             'guides/theming',
             'guides/friend-codes',
+            'guides/daemon-cli',
           ],
         },
         {

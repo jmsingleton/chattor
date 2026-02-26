@@ -13,7 +13,9 @@ description: How chattor's components fit together
 ## High-Level Data Flow
 
 ```
-User → TUI (ratatui) → Signal Protocol (E2E) → Tor Hidden Service → Peer
+User → TUI (ratatui)  ─┐
+CLI  → Unix socket ─────┤→ Signal Protocol (E2E) → Tor Hidden Service → Peer
+MCP  → Unix socket ─────┘
 ```
 
 When you send a message:
@@ -52,6 +54,27 @@ Migrations run automatically from v2 through v9 on startup.
 
 All messages are wrapped in a versioned `MessageEnvelope` and JSON-serialized. Encrypted messages include a Double Ratchet header, base64-encoded ciphertext, and a type flag (PreKeyMessage or Message).
 
+### Message Handlers (`src/handlers/`)
+
+Extracted handler functions for friend requests, messaging, and channel sync. These are shared by both the TUI and daemon — ensuring consistent behavior regardless of how you interact with chattor.
+
+### Daemon Mode (`src/daemon/`)
+
+A headless background process for scripting and automation. The daemon owns the same `App` state as the TUI but exposes it over a JSON-RPC 2.0 Unix socket instead of a terminal UI. Components:
+
+- **Event Loop** (`event_loop.rs`): `tokio::select!` loop handling incoming Tor messages, queue commands, presence ticks, and shutdown signals. Broadcasts message events to streaming `listen` clients.
+- **RPC Server** (`rpc.rs`, `socket.rs`): 15 JSON-RPC methods covering friends, messaging, channels, settings, and status. Unix socket with 0600 permissions (owner-only access).
+- **PID File** (`pid.rs`): Mutual exclusion — only one daemon per data directory.
+- **Background Tasks** (`tasks.rs`): Channel sync (every 5 min) and heartbeat presence.
+
+### CLI Client (`src/client.rs`)
+
+Thin client that connects to the daemon's Unix socket and issues JSON-RPC calls. Each CLI subcommand maps to one RPC method, formats the response, and exits. The `listen` subcommand streams incoming messages in real time.
+
+### MCP Server (`src/mcp/`)
+
+Model Context Protocol server over stdio for AI agent integration. Exposes 9 tools (send_message, receive_messages, list_friends, etc.) that delegate to the daemon via the same Unix socket as the CLI. Protocol version `2024-11-05`.
+
 ### UI (`src/ui/`)
 
 Built with ratatui. Layout: friends sidebar (left) + conversation/channel view (right). Modals for add friend, friend requests, identity, settings, and channel subscribe. Theme engine with 7 presets and TOML config override.
@@ -61,10 +84,24 @@ Built with ratatui. Layout: friends sidebar (left) + conversation/channel view (
 ```
 src/
 ├── app.rs              # Application state
-├── cli.rs              # CLI parsing (clap)
-├── main.rs             # Entry point, event loop
+├── cli.rs              # CLI parsing (clap, 12 subcommands)
+├── client.rs           # JSON-RPC client for daemon IPC
+├── main.rs             # Entry point, subcommand routing
 ├── crypto/             # Ed25519 identity, Signal Protocol
+├── daemon/             # Headless daemon mode
+│   ├── event_loop.rs   # tokio::select! main loop
+│   ├── pid.rs          # PID file mutual exclusion
+│   ├── rpc.rs          # JSON-RPC 2.0 dispatch (15 methods)
+│   ├── socket.rs       # Unix socket server
+│   └── tasks.rs        # Background tasks (sync, heartbeat)
 ├── db/                 # SQLCipher database, queries, schema
+├── handlers/           # Shared message handlers (TUI + daemon)
+│   ├── channels.rs     # Channel sync requests
+│   ├── friend_request.rs # Friend request lifecycle
+│   └── messaging.rs    # Message send/receive/queue
+├── mcp/                # Model Context Protocol server
+│   ├── server.rs       # MCP stdio transport
+│   └── tools.rs        # 9 tool definitions + RPC mapping
 ├── net/                # Connection pool, message queue, framing
 ├── protocol/           # Friend codes, messages, friend requests
 ├── tor/                # Arti client, onion service, connections
