@@ -74,6 +74,56 @@ pub fn split_at_char(s: &str, char_idx: usize) -> (&str, &str) {
     s.split_at(byte_pos)
 }
 
+/// Move cursor to start of input.
+pub fn move_to_start(cursor: &mut usize) {
+    *cursor = 0;
+}
+
+/// Move cursor to end of input.
+pub fn move_to_end(input: &str, cursor: &mut usize) {
+    *cursor = input.chars().count();
+}
+
+/// Delete character under the cursor (forward delete).
+pub fn delete_forward(input: &mut String, cursor: &usize) {
+    let char_count = input.chars().count();
+    if *cursor < char_count {
+        let byte_pos = char_to_byte(input, *cursor);
+        input.remove(byte_pos);
+    }
+}
+
+/// Delete from cursor to start of line (Ctrl+U).
+pub fn delete_to_start(input: &mut String, cursor: &mut usize) {
+    if *cursor > 0 {
+        let byte_pos = char_to_byte(input, *cursor);
+        input.drain(..byte_pos);
+        *cursor = 0;
+    }
+}
+
+/// Delete word backward (Ctrl+W).
+pub fn delete_word_backward(input: &mut String, cursor: &mut usize) {
+    if *cursor == 0 { return; }
+
+    let chars: Vec<char> = input.chars().collect();
+    let mut new_cursor = *cursor;
+
+    // Skip trailing spaces
+    while new_cursor > 0 && chars[new_cursor - 1] == ' ' {
+        new_cursor -= 1;
+    }
+    // Skip word characters
+    while new_cursor > 0 && chars[new_cursor - 1] != ' ' {
+        new_cursor -= 1;
+    }
+
+    let start_byte = char_to_byte(input, new_cursor);
+    let end_byte = char_to_byte(input, *cursor);
+    input.drain(start_byte..end_byte);
+    *cursor = new_cursor;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,5 +525,101 @@ mod tests {
     fn truncate_dots_ascii() {
         assert_eq!(truncate_display_dots("abcdefghij", 5), "abcde...");
         assert_eq!(truncate_display_dots("abc", 5), "abc");
+    }
+
+    // ── move_to_start / move_to_end ───────────────────────────────
+
+    #[test]
+    fn move_to_start_and_end() {
+        let s = "hello world";
+        let mut c = 5;
+        move_to_start(&mut c);
+        assert_eq!(c, 0);
+        move_to_end(s, &mut c);
+        assert_eq!(c, 11);
+    }
+
+    // ── delete_forward ────────────────────────────────────────────
+
+    #[test]
+    fn delete_forward_ascii() {
+        let mut s = "hello".to_string();
+        let c = 0;
+        delete_forward(&mut s, &c);
+        assert_eq!(s, "ello");
+    }
+
+    #[test]
+    fn delete_forward_at_end() {
+        let mut s = "hello".to_string();
+        let c = 5;
+        delete_forward(&mut s, &c);
+        assert_eq!(s, "hello"); // no-op at end
+    }
+
+    #[test]
+    fn delete_forward_emoji() {
+        let mut s = "\u{1F600}hello".to_string();
+        let c = 0;
+        delete_forward(&mut s, &c);
+        assert_eq!(s, "hello");
+    }
+
+    // ── delete_to_start ───────────────────────────────────────────
+
+    #[test]
+    fn delete_to_start_mid_string() {
+        let mut s = "hello world".to_string();
+        let mut c = 6;
+        delete_to_start(&mut s, &mut c);
+        assert_eq!(s, "world");
+        assert_eq!(c, 0);
+    }
+
+    #[test]
+    fn delete_to_start_at_beginning() {
+        let mut s = "hello".to_string();
+        let mut c = 0;
+        delete_to_start(&mut s, &mut c);
+        assert_eq!(s, "hello"); // no-op
+        assert_eq!(c, 0);
+    }
+
+    // ── delete_word_backward ──────────────────────────────────────
+
+    #[test]
+    fn delete_word_backward_single_word() {
+        let mut s = "hello".to_string();
+        let mut c = 5;
+        delete_word_backward(&mut s, &mut c);
+        assert_eq!(s, "");
+        assert_eq!(c, 0);
+    }
+
+    #[test]
+    fn delete_word_backward_with_spaces() {
+        let mut s = "hello world".to_string();
+        let mut c = 11;
+        delete_word_backward(&mut s, &mut c);
+        assert_eq!(s, "hello ");
+        assert_eq!(c, 6);
+    }
+
+    #[test]
+    fn delete_word_backward_multiple_spaces() {
+        let mut s = "hello   world".to_string();
+        let mut c = 13;
+        delete_word_backward(&mut s, &mut c);
+        assert_eq!(s, "hello   ");
+        assert_eq!(c, 8);
+    }
+
+    #[test]
+    fn delete_word_backward_at_start() {
+        let mut s = "hello".to_string();
+        let mut c = 0;
+        delete_word_backward(&mut s, &mut c);
+        assert_eq!(s, "hello"); // no-op
+        assert_eq!(c, 0);
     }
 }

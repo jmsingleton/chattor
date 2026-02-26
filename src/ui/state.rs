@@ -1337,4 +1337,134 @@ mod tests {
         }
     }
 
+    // ── Text editing keybinding tests ─────────────────────────────
+
+    #[test]
+    fn ctrl_a_moves_to_start() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: "hello".to_string(),
+            cursor: 5,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL), 10).unwrap();
+        match &state {
+            AppState::Normal { cursor, .. } => assert_eq!(*cursor, 0),
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn ctrl_e_moves_to_end() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: "hello".to_string(),
+            cursor: 0,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL), 10).unwrap();
+        match &state {
+            AppState::Normal { cursor, .. } => assert_eq!(*cursor, 5),
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn ctrl_w_deletes_word_backward() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: "hello world".to_string(),
+            cursor: 11,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL), 10).unwrap();
+        match &state {
+            AppState::Normal { input, cursor, .. } => {
+                assert_eq!(input, "hello ");
+                assert_eq!(*cursor, 6);
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn ctrl_u_deletes_to_start() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: "hello world".to_string(),
+            cursor: 6,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), 10).unwrap();
+        match &state {
+            AppState::Normal { input, cursor, .. } => {
+                assert_eq!(input, "world");
+                assert_eq!(*cursor, 0);
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn delete_key_forward_deletes() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: "hello".to_string(),
+            cursor: 0,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE), 10).unwrap();
+        match &state {
+            AppState::Normal { input, cursor, .. } => {
+                assert_eq!(input, "ello");
+                assert_eq!(*cursor, 0);
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn home_key_moves_to_start() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: "hello".to_string(),
+            cursor: 5,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), 10).unwrap();
+        match &state {
+            AppState::Normal { cursor, .. } => assert_eq!(*cursor, 0),
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn end_key_moves_to_end() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: "hello".to_string(),
+            cursor: 0,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE), 10).unwrap();
+        match &state {
+            AppState::Normal { cursor, .. } => assert_eq!(*cursor, 5),
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
 }
