@@ -293,72 +293,113 @@ async fn main() -> Result<()> {
     let mut was_typing = false;
     let mut status_flash: Option<(std::time::Instant, String)> = None;
 
+    let mut dirty = true; // Start dirty to force initial render
+    let mut last_cleanup = std::time::Instant::now();
+    let cleanup_interval = std::time::Duration::from_secs(30);
+    let mut presence_tick = std::time::Instant::now();
+    let presence_tick_interval = std::time::Duration::from_secs(1);
+
+    // Cached render data (persists across non-dirty frames)
+    let mut cached_friends: Vec<db::queries::FriendEntry> = Vec::new();
+    let mut cached_pending_count: i64 = 0;
+    let mut cached_own_onion: Option<String> = None;
+    let mut cached_friend_code: Option<String> = None;
+    let mut cached_tor_connected: bool = false;
+    let mut cached_messages: Vec<db::queries::ChatMessage> = Vec::new();
+    let mut cached_conversation_ttl: Option<i64> = None;
+    let mut cached_channel_subs: Vec<db::queries::ChannelSubscription> = Vec::new();
+    let mut cached_channel_posts: Vec<db::queries::ChannelPost> = Vec::new();
+    let mut cached_read_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut cached_friend_count: usize = 0;
+
     // Main event loop
     let result = loop {
-        // Lock app to build render context
-        let app_lock = app.lock().await;
+        // Periodic presence tick (1s) for typing indicator expiry
+        if presence_tick.elapsed() > presence_tick_interval {
+            dirty = true;
+            presence_tick = std::time::Instant::now();
+        }
 
-        let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
-        let pending_request_count = db::queries::get_pending_request_count(&app_lock.db).unwrap_or(0);
-        let own_onion = app_lock.onion_address.clone();
-        let friend_code = own_onion.as_deref().and_then(|o| {
-            crate::tor::address::onion_to_friend_code(o).ok()
-        });
-        let tor_connected = app_lock.tor_client.is_some();
+        // Expire status flash
+        if status_flash.as_ref().is_some_and(|(t, _)| t.elapsed() >= std::time::Duration::from_secs(2)) {
+            status_flash = None;
+            dirty = true;
+        }
 
-        // Cleanup expired ephemeral messages
-        db::queries::cleanup_expired_messages(&app_lock.db).ok();
+        // Only re-query DB when state has changed
+        if dirty {
+            let app_lock = app.lock().await;
 
-        // Load messages and ephemeral TTL for selected conversation
-        let (messages, conversation_ephemeral_ttl) = if let AppState::Normal { conversation_id: Some(conv_id), .. } = &app_state {
-            let msgs = db::queries::get_messages(&app_lock.db, *conv_id, 100, 0).unwrap_or_default();
-            let ttl = db::queries::get_conversation_ephemeral_ttl(&app_lock.db, *conv_id).unwrap_or(None);
-            (msgs, ttl)
-        } else {
-            (Vec::new(), None)
-        };
+            cached_friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+            cached_pending_count = db::queries::get_pending_request_count(&app_lock.db).unwrap_or(0);
+            cached_own_onion = app_lock.onion_address.clone();
+            cached_friend_code = cached_own_onion.as_deref().and_then(|o| {
+                crate::tor::address::onion_to_friend_code(o).ok()
+            });
+            cached_tor_connected = app_lock.tor_client.is_some();
 
-        // Load channel data
-        let channel_subscriptions = db::queries::get_channel_subscriptions(&app_lock.db).unwrap_or_default();
-
-        let (channel_posts, channel_post_read_counts) = if let AppState::ViewingChannel {
-            ref channel_type, is_own, ..
-        } = &app_state {
-            let channel_id = if *is_own {
-                if channel_type == "public" { 1 } else { 2 }
-            } else {
-                0 // remote posts stored with channel_id 0
-            };
-            let posts = db::queries::get_channel_posts(&app_lock.db, channel_id, 100).unwrap_or_default();
-            let mut counts = std::collections::HashMap::new();
-            if *is_own && !posts.is_empty() {
-                let post_ids: Vec<&str> = posts.iter().map(|p| p.post_id.as_str()).collect();
-                counts = db::queries::get_channel_post_read_counts_batch(&app_lock.db, &post_ids)
-                    .unwrap_or_default();
+            // Throttle cleanup to every 30s instead of every 100ms
+            if last_cleanup.elapsed() > cleanup_interval {
+                db::queries::cleanup_expired_messages(&app_lock.db).ok();
+                last_cleanup = std::time::Instant::now();
             }
-            (posts, counts)
-        } else {
-            (Vec::new(), std::collections::HashMap::new())
-        };
 
-        let friend_count = friends.len();
+            // Load messages and ephemeral TTL for selected conversation
+            let (messages, conversation_ephemeral_ttl) = if let AppState::Normal { conversation_id: Some(conv_id), .. } = &app_state {
+                let msgs = db::queries::get_messages(&app_lock.db, *conv_id, 100, 0).unwrap_or_default();
+                let ttl = db::queries::get_conversation_ephemeral_ttl(&app_lock.db, *conv_id).unwrap_or(None);
+                (msgs, ttl)
+            } else {
+                (Vec::new(), None)
+            };
+            cached_messages = messages;
+            cached_conversation_ttl = conversation_ephemeral_ttl;
 
-        // Release lock before rendering
-        drop(app_lock);
+            // Load channel data
+            cached_channel_subs = db::queries::get_channel_subscriptions(&app_lock.db).unwrap_or_default();
+
+            let (channel_posts, channel_post_read_counts) = if let AppState::ViewingChannel {
+                ref channel_type, is_own, ..
+            } = &app_state {
+                let channel_id = if *is_own {
+                    if channel_type == "public" { 1 } else { 2 }
+                } else {
+                    0 // remote posts stored with channel_id 0
+                };
+                let posts = db::queries::get_channel_posts(&app_lock.db, channel_id, 100).unwrap_or_default();
+                let mut counts = std::collections::HashMap::new();
+                if *is_own && !posts.is_empty() {
+                    let post_ids: Vec<&str> = posts.iter().map(|p| p.post_id.as_str()).collect();
+                    counts = db::queries::get_channel_post_read_counts_batch(&app_lock.db, &post_ids)
+                        .unwrap_or_default();
+                }
+                (posts, counts)
+            } else {
+                (Vec::new(), std::collections::HashMap::new())
+            };
+            cached_channel_posts = channel_posts;
+            cached_read_counts = channel_post_read_counts;
+
+            cached_friend_count = cached_friends.len();
+
+            // Release lock before rendering
+            drop(app_lock);
+            dirty = false;
+        }
 
         let presence_snapshot = presence::get_presence_snapshot(&presence_map).await;
 
         let ctx = RenderContext {
-            friends,
-            messages,
-            own_onion,
-            friend_code,
-            tor_connected,
-            pending_request_count,
-            conversation_ephemeral_ttl,
-            channel_subscriptions,
-            channel_posts,
-            channel_post_read_counts,
+            friends: cached_friends.clone(),
+            messages: cached_messages.clone(),
+            own_onion: cached_own_onion.clone(),
+            friend_code: cached_friend_code.clone(),
+            tor_connected: cached_tor_connected,
+            pending_request_count: cached_pending_count,
+            conversation_ephemeral_ttl: cached_conversation_ttl,
+            channel_subscriptions: cached_channel_subs.clone(),
+            channel_posts: cached_channel_posts.clone(),
+            channel_post_read_counts: cached_read_counts.clone(),
             theme: theme.clone(),
             presence: presence_snapshot,
             status_flash: status_flash
@@ -366,11 +407,6 @@ async fn main() -> Result<()> {
                 .filter(|(t, _)| t.elapsed() < std::time::Duration::from_secs(2))
                 .map(|(_, msg)| msg.clone()),
         };
-
-        // Expire status flash
-        if status_flash.as_ref().is_some_and(|(t, _)| t.elapsed() >= std::time::Duration::from_secs(2)) {
-            status_flash = None;
-        }
 
         // Render current state
         if let Err(e) = terminal.draw(|f| {
@@ -383,7 +419,8 @@ async fn main() -> Result<()> {
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => {
-                    match app_state.handle_key(key, friend_count)? {
+                    dirty = true; // Any key press invalidates cached state
+                    match app_state.handle_key(key, cached_friend_count)? {
                         Some(AppAction::SendFriendRequest(code)) => {
                             let app_lock = app.lock().await;
 
@@ -805,11 +842,17 @@ async fn main() -> Result<()> {
                 }
             }
 
+            let had_incoming = !incoming_messages.is_empty();
+
             // Process collected messages
             for incoming in incoming_messages {
                 if let Err(e) = handle_incoming_message(&app_lock, incoming, &presence_map).await {
                     eprintln!("Failed to handle incoming message: {}", e);
                 }
+            }
+
+            if had_incoming {
+                dirty = true; // Incoming messages invalidate cached state
             }
         }
 
@@ -828,6 +871,7 @@ async fn main() -> Result<()> {
             if let Err(e) = process_message_queue(&app_lock).await {
                 eprintln!("Queue processing error: {}", e);
             }
+            dirty = true; // Queue processing may change state
         }
     };
 
