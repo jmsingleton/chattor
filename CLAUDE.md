@@ -18,7 +18,7 @@ The plan files contain the source of truth for what needs to be built and how. A
 
 **chattor** is a privacy-first TUI (Terminal User Interface) chat application built in Rust. The architecture is pure peer-to-peer over Tor hidden services with no central servers. Each user runs their own hidden service (.onion address) for receiving messages, with end-to-end encryption via Signal Protocol (Double Ratchet).
 
-**Current Status:** All phases complete plus architectural hardening. Real arti Tor transport, Signal Protocol X3DH + Double Ratchet via libsignal-dezire, DashMap connection pooling with rate limiting, presence system (typing indicators + online status), desktop notifications, and comprehensive e2e test coverage. Distribution packaging available (deb, rpm, AUR, Homebrew).
+**Current Status:** All phases complete plus architectural hardening. Real arti Tor transport, Signal Protocol X3DH + Double Ratchet via libsignal-dezire, DashMap connection pooling with rate limiting, presence system (typing indicators + online status), desktop notifications, and comprehensive e2e test coverage. Distribution packaging available (deb, rpm, AUR, Homebrew). Headless daemon mode with CLI client and MCP server for agent integration.
 
 **Core Design Principles:**
 - Privacy-first: No central servers, no telemetry, no metadata leakage
@@ -40,7 +40,7 @@ cargo run -- --theme cyberpunk  # Run with a specific theme
 
 ### Testing
 ```bash
-cargo test                            # Run all tests (~252 currently)
+cargo test                            # Run all tests (~406 currently)
 cargo test protocol::message          # Run specific module tests
 cargo test --test integration         # Integration tests only
 cargo test --test e2e_messaging       # E2E crypto/messaging tests (no Tor needed)
@@ -72,6 +72,19 @@ cargo fmt                # Format code
 cargo fmt -- --check     # Check formatting without changing
 cargo clippy             # Run linter
 cargo clippy -- -D warnings  # Lint with warnings as errors
+```
+
+### Daemon & CLI
+```bash
+chattor daemon                   # Run headless daemon
+chattor status                   # Check daemon status
+chattor identity                 # Show friend code + .onion
+chattor friends list             # List friends (JSON)
+chattor friends add <code>       # Send friend request
+chattor send <peer> <message>    # Send encrypted message
+chattor recv                     # Poll unread messages
+chattor listen                   # Stream incoming messages
+chattor mcp                      # Start MCP server (stdio)
 ```
 
 ## Architecture Overview
@@ -178,6 +191,28 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - Global toggle via `[n]` keybinding, persisted in `app_settings` table
 - 2-second flash feedback in footer when toggled
 
+**12. Daemon Mode (`src/daemon/`)**
+- `mod.rs` — Daemon entry point and lifecycle
+- `event_loop.rs` — tokio::select! event loop (no TUI)
+- `tasks.rs` — Background task spawning (heartbeat, channel sync)
+- `rpc.rs` — JSON-RPC 2.0 request dispatch (15 methods)
+- `socket.rs` — Unix domain socket server
+- `pid.rs` — PID file management for mutual exclusion
+
+**13. CLI Client**
+- `src/cli.rs` — Clap subcommand definitions (12 top-level commands)
+- `src/client.rs` — Unix socket client for daemon communication
+
+**14. MCP Server (`src/mcp/`)**
+- `server.rs` — stdio JSON-RPC server for agent frameworks
+- `tools.rs` — MCP tool definitions (9 tools) and daemon RPC mapping
+
+**15. Message Handlers (`src/handlers/`)**
+- `messaging.rs` — Incoming text message, delivery/read receipt handling
+- `friend_request.rs` — Friend request, accept, reject handling
+- `channels.rs` — Channel subscribe, unsubscribe, post, sync, receipt handling
+- Extracted from `main.rs` for reuse by both TUI and daemon modes
+
 ### Platform-Specific Paths
 
 | Platform | Config Directory | Data Directory |
@@ -280,6 +315,15 @@ Database path: `{data_dir}/messages.db`
 - TorrentChatError renamed to ChattorError
 - Removed unused dependencies (anyhow, chacha20poly1305, hkdf, sha2)
 
+### CLI, Daemon & MCP Server ✅
+- Headless daemon mode with tokio::select! event loop
+- JSON-RPC 2.0 over Unix domain socket (15 methods)
+- PID file mutual exclusion between TUI and daemon
+- Clap CLI with 12 subcommands (plus nested friend/channel subcommands)
+- Streaming `listen` method for real-time message events
+- MCP server over stdio (9 tools) for agent framework integration
+- Message handlers extracted from main.rs into reusable `src/handlers/` module
+
 ### Future Work
 - Backup/restore functionality
 - File transfer support
@@ -322,9 +366,10 @@ Database path: `{data_dir}/messages.db`
 8. Stores in `messages` table; FTS triggers auto-update `messages_fts` for search
 
 ### Testing Strategy
-- **Unit tests:** Per-module in `#[cfg(test)]` blocks (~230 tests)
+- **Unit tests:** Per-module in `#[cfg(test)]` blocks (~352 tests)
 - **Integration tests:** `tests/integration/` (cross-module interaction, 16 tests including presence)
 - **E2E tests:** `tests/e2e_messaging.rs` (full Signal Protocol pipeline via libsignal-dezire, 6 tests)
+- **Daemon/CLI/MCP tests:** `tests/daemon_test.rs` (RPC dispatch, CLI parsing, MCP tools, PID file, 32 tests)
 - **Database tests:** Use tempfile crate for isolated test databases
 - **No stubs:** Tor client, hidden service, Signal crypto, and friend request signatures are all real. TorConnection sends over real arti DataStreams via ConnectionPool.
 
@@ -341,6 +386,16 @@ Database path: `{data_dir}/messages.db`
 - `src/tor/hidden_service.rs` - Real arti onion service hosting
 - `src/presence.rs` - Peer presence tracker (online/typing state, heartbeat constants)
 - `src/notifications.rs` - Desktop notifications with notify-rust and global toggle
+- `src/daemon/mod.rs` - Daemon entry point and lifecycle management
+- `src/daemon/rpc.rs` - JSON-RPC 2.0 method dispatch (15 methods)
+- `src/daemon/socket.rs` - Unix domain socket server with streaming support
+- `src/daemon/pid.rs` - PID file management for mutual exclusion
+- `src/cli.rs` - Clap CLI subcommand definitions
+- `src/client.rs` - Unix socket client for daemon communication
+- `src/mcp/server.rs` - MCP stdio JSON-RPC server
+- `src/mcp/tools.rs` - MCP tool definitions (9 tools) and RPC mapping
+- `src/handlers/mod.rs` - Reusable message handlers for TUI and daemon
+- `tests/daemon_test.rs` - Daemon, RPC, CLI, and MCP integration tests
 - `tests/e2e_messaging.rs` - E2E tests for full X3DH + messaging pipeline
 - `tests/integration/presence_test.rs` - Presence system integration tests
 - `docs/plans/2026-02-06-torrent-chat-design.md` - Complete design vision
