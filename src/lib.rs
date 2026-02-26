@@ -8,6 +8,7 @@ pub mod cli;
 pub mod config;
 pub mod crypto;
 pub mod db;
+pub mod handlers;
 pub mod tor;
 pub mod protocol;
 pub mod net;
