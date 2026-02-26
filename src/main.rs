@@ -498,7 +498,9 @@ async fn main() -> Result<()> {
                             let app_lock = app.lock().await;
                             let requests = db::queries::get_pending_friend_requests(&app_lock.db).unwrap_or_default();
                             drop(app_lock);
-                            if !requests.is_empty() {
+                            if requests.is_empty() {
+                                status_flash = Some((std::time::Instant::now(), "No pending friend requests".to_string()));
+                            } else {
                                 app_state = AppState::ViewingFriendRequests {
                                     requests,
                                     selected_idx: 0,
