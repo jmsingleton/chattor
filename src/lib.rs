@@ -11,6 +11,7 @@ pub mod daemon;
 pub mod db;
 pub mod error;
 pub mod handlers;
+pub mod mcp;
 pub mod net;
 pub mod notifications;
 pub mod presence;

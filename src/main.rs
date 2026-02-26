@@ -7,6 +7,7 @@ mod daemon;
 mod db;
 mod error;
 mod handlers;
+mod mcp;
 mod net;
 mod notifications;
 mod presence;
@@ -159,9 +160,7 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
             Ok(())
         }
-        Some(Command::Mcp) => {
-            todo!("MCP server")
-        }
+        Some(Command::Mcp) => mcp::server::run(settings.data_dir).await,
     }
 }
 
