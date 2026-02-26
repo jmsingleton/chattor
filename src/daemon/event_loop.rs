@@ -8,9 +8,10 @@ use tokio::sync::Mutex;
 
 /// Run the daemon event loop. Processes incoming messages and queue commands.
 /// Blocks until SIGTERM/SIGINT.
-pub async fn run(app: Arc<Mutex<App>>) -> Result<()> {
-    let presence_map = presence::new_presence_map();
-
+///
+/// The `presence_map` is shared with the Unix socket server so that RPC
+/// clients can query peer presence state.
+pub async fn run(app: Arc<Mutex<App>>, presence_map: presence::PresenceMap) -> Result<()> {
     // Take ownership of channels from app
     let mut incoming_rx = {
         let mut app_lock = app.lock().await;

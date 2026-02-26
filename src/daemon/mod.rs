@@ -1,5 +1,7 @@
 pub mod event_loop;
 pub mod pid;
+pub mod rpc;
+pub mod socket;
 pub mod tasks;
 
 use crate::app::App;
@@ -51,10 +53,19 @@ pub async fn run(settings: Settings) -> Result<()> {
     // Spawn background tasks
     tasks::spawn_all(Arc::clone(&app), pool_rx).await;
 
-    // Run event loop (blocks until shutdown signal)
-    let result = event_loop::run(Arc::clone(&app)).await;
+    // Create presence map (shared between socket server and event loop)
+    let presence_map = crate::presence::new_presence_map();
 
-    // Cleanup
+    // Start Unix socket server
+    let socket_path = settings.data_dir.join("chattor.sock");
+    let _socket_handle = socket::start(&socket_path, Arc::clone(&app), presence_map.clone()).await;
+    eprintln!("Listening on {}", socket_path.display());
+
+    // Run event loop (blocks until shutdown signal)
+    let result = event_loop::run(Arc::clone(&app), presence_map).await;
+
+    // Cleanup socket and PID file
+    std::fs::remove_file(&socket_path).ok();
     pid::release(&pid_path);
     result
 }
