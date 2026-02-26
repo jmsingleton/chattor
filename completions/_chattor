@@ -15,21 +15,783 @@ _chattor() {
 
     local context curcontext="$curcontext" state line
     _arguments "${_arguments_options[@]}" : \
-'-c+[Config directory path]:PATH:_default' \
-'--config-dir=[Config directory path]:PATH:_default' \
-'-t+[Theme preset (dark, light, cyberpunk, minimal, rose-pine, rose-pine-moon, rose-pine-dawn)]:NAME:_default' \
-'--theme=[Theme preset (dark, light, cyberpunk, minimal, rose-pine, rose-pine-moon, rose-pine-dawn)]:NAME:_default' \
+'-c+[Override config directory]:PATH:_default' \
+'--config-dir=[Override config directory]:PATH:_default' \
+'--data-dir=[Override data directory]:PATH:_default' \
 '-d[Enable debug logging]' \
 '--debug[Enable debug logging]' \
 '-h[Print help]' \
 '--help[Print help]' \
+":: :_chattor_commands" \
+"*::: :->chattor" \
 && ret=0
+    case $state in
+    (chattor)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:chattor-command-$line[1]:"
+        case $line[1] in
+            (tui)
+_arguments "${_arguments_options[@]}" : \
+'-t+[Theme preset (dark, light, cyberpunk, minimal, rose-pine, rose-pine-moon, rose-pine-dawn)]:NAME:_default' \
+'--theme=[Theme preset (dark, light, cyberpunk, minimal, rose-pine, rose-pine-moon, rose-pine-dawn)]:NAME:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(daemon)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(identity)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(friends)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_chattor__friends_commands" \
+"*::: :->friends" \
+&& ret=0
+
+    case $state in
+    (friends)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:chattor-friends-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(add)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':code:_default' \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':onion:_default' \
+&& ret=0
+;;
+(requests)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(accept)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_chattor__friends__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:chattor-friends-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(requests)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(accept)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(send)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':peer:_default' \
+':message:_default' \
+&& ret=0
+;;
+(recv)
+_arguments "${_arguments_options[@]}" : \
+'--peer=[]:ONION:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(listen)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(channels)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_chattor__channels_commands" \
+"*::: :->channels" \
+&& ret=0
+
+    case $state in
+    (channels)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:chattor-channels-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(publish)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':channel_type:_default' \
+':message:_default' \
+&& ret=0
+;;
+(subscribe)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':onion:_default' \
+&& ret=0
+;;
+(feed)
+_arguments "${_arguments_options[@]}" : \
+'--channel=[]:ID:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_chattor__channels__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:chattor-channels-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(publish)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(subscribe)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(feed)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(ephemeral)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':peer:_default' \
+':ttl:_default' \
+&& ret=0
+;;
+(notifications)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':state:_default' \
+&& ret=0
+;;
+(mcp)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_chattor__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:chattor-help-command-$line[1]:"
+        case $line[1] in
+            (tui)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(daemon)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(identity)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(friends)
+_arguments "${_arguments_options[@]}" : \
+":: :_chattor__help__friends_commands" \
+"*::: :->friends" \
+&& ret=0
+
+    case $state in
+    (friends)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:chattor-help-friends-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(requests)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(accept)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(send)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(recv)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(listen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(channels)
+_arguments "${_arguments_options[@]}" : \
+":: :_chattor__help__channels_commands" \
+"*::: :->channels" \
+&& ret=0
+
+    case $state in
+    (channels)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:chattor-help-channels-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(publish)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(subscribe)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(feed)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(ephemeral)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(notifications)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(mcp)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
 }
 
 (( $+functions[_chattor_commands] )) ||
 _chattor_commands() {
-    local commands; commands=()
+    local commands; commands=(
+'tui:Run interactive TUI (default if no subcommand)' \
+'daemon:Run headless daemon' \
+'status:Show daemon status' \
+'identity:Show own identity' \
+'friends:Friend management' \
+'send:Send a message' \
+'recv:Receive unread messages' \
+'listen:Stream incoming messages (blocking)' \
+'channels:Channel management' \
+'ephemeral:Set ephemeral message TTL' \
+'notifications:Toggle notifications' \
+'mcp:Start MCP server (stdio transport)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
     _describe -t commands 'chattor commands' commands "$@"
+}
+(( $+functions[_chattor__channels_commands] )) ||
+_chattor__channels_commands() {
+    local commands; commands=(
+'list:List channels' \
+'publish:Publish to a channel' \
+'subscribe:Subscribe to a channel' \
+'feed:Read channel feed' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'chattor channels commands' commands "$@"
+}
+(( $+functions[_chattor__channels__feed_commands] )) ||
+_chattor__channels__feed_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor channels feed commands' commands "$@"
+}
+(( $+functions[_chattor__channels__help_commands] )) ||
+_chattor__channels__help_commands() {
+    local commands; commands=(
+'list:List channels' \
+'publish:Publish to a channel' \
+'subscribe:Subscribe to a channel' \
+'feed:Read channel feed' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'chattor channels help commands' commands "$@"
+}
+(( $+functions[_chattor__channels__help__feed_commands] )) ||
+_chattor__channels__help__feed_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor channels help feed commands' commands "$@"
+}
+(( $+functions[_chattor__channels__help__help_commands] )) ||
+_chattor__channels__help__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor channels help help commands' commands "$@"
+}
+(( $+functions[_chattor__channels__help__list_commands] )) ||
+_chattor__channels__help__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor channels help list commands' commands "$@"
+}
+(( $+functions[_chattor__channels__help__publish_commands] )) ||
+_chattor__channels__help__publish_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor channels help publish commands' commands "$@"
+}
+(( $+functions[_chattor__channels__help__subscribe_commands] )) ||
+_chattor__channels__help__subscribe_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor channels help subscribe commands' commands "$@"
+}
+(( $+functions[_chattor__channels__list_commands] )) ||
+_chattor__channels__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor channels list commands' commands "$@"
+}
+(( $+functions[_chattor__channels__publish_commands] )) ||
+_chattor__channels__publish_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor channels publish commands' commands "$@"
+}
+(( $+functions[_chattor__channels__subscribe_commands] )) ||
+_chattor__channels__subscribe_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor channels subscribe commands' commands "$@"
+}
+(( $+functions[_chattor__daemon_commands] )) ||
+_chattor__daemon_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor daemon commands' commands "$@"
+}
+(( $+functions[_chattor__ephemeral_commands] )) ||
+_chattor__ephemeral_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor ephemeral commands' commands "$@"
+}
+(( $+functions[_chattor__friends_commands] )) ||
+_chattor__friends_commands() {
+    local commands; commands=(
+'list:List friends' \
+'add:Add a friend' \
+'remove:Remove a friend' \
+'requests:List pending requests' \
+'accept:Accept a friend request' \
+'reject:Reject a friend request' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'chattor friends commands' commands "$@"
+}
+(( $+functions[_chattor__friends__accept_commands] )) ||
+_chattor__friends__accept_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends accept commands' commands "$@"
+}
+(( $+functions[_chattor__friends__add_commands] )) ||
+_chattor__friends__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends add commands' commands "$@"
+}
+(( $+functions[_chattor__friends__help_commands] )) ||
+_chattor__friends__help_commands() {
+    local commands; commands=(
+'list:List friends' \
+'add:Add a friend' \
+'remove:Remove a friend' \
+'requests:List pending requests' \
+'accept:Accept a friend request' \
+'reject:Reject a friend request' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'chattor friends help commands' commands "$@"
+}
+(( $+functions[_chattor__friends__help__accept_commands] )) ||
+_chattor__friends__help__accept_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends help accept commands' commands "$@"
+}
+(( $+functions[_chattor__friends__help__add_commands] )) ||
+_chattor__friends__help__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends help add commands' commands "$@"
+}
+(( $+functions[_chattor__friends__help__help_commands] )) ||
+_chattor__friends__help__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends help help commands' commands "$@"
+}
+(( $+functions[_chattor__friends__help__list_commands] )) ||
+_chattor__friends__help__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends help list commands' commands "$@"
+}
+(( $+functions[_chattor__friends__help__reject_commands] )) ||
+_chattor__friends__help__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends help reject commands' commands "$@"
+}
+(( $+functions[_chattor__friends__help__remove_commands] )) ||
+_chattor__friends__help__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends help remove commands' commands "$@"
+}
+(( $+functions[_chattor__friends__help__requests_commands] )) ||
+_chattor__friends__help__requests_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends help requests commands' commands "$@"
+}
+(( $+functions[_chattor__friends__list_commands] )) ||
+_chattor__friends__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends list commands' commands "$@"
+}
+(( $+functions[_chattor__friends__reject_commands] )) ||
+_chattor__friends__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends reject commands' commands "$@"
+}
+(( $+functions[_chattor__friends__remove_commands] )) ||
+_chattor__friends__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends remove commands' commands "$@"
+}
+(( $+functions[_chattor__friends__requests_commands] )) ||
+_chattor__friends__requests_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor friends requests commands' commands "$@"
+}
+(( $+functions[_chattor__help_commands] )) ||
+_chattor__help_commands() {
+    local commands; commands=(
+'tui:Run interactive TUI (default if no subcommand)' \
+'daemon:Run headless daemon' \
+'status:Show daemon status' \
+'identity:Show own identity' \
+'friends:Friend management' \
+'send:Send a message' \
+'recv:Receive unread messages' \
+'listen:Stream incoming messages (blocking)' \
+'channels:Channel management' \
+'ephemeral:Set ephemeral message TTL' \
+'notifications:Toggle notifications' \
+'mcp:Start MCP server (stdio transport)' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'chattor help commands' commands "$@"
+}
+(( $+functions[_chattor__help__channels_commands] )) ||
+_chattor__help__channels_commands() {
+    local commands; commands=(
+'list:List channels' \
+'publish:Publish to a channel' \
+'subscribe:Subscribe to a channel' \
+'feed:Read channel feed' \
+    )
+    _describe -t commands 'chattor help channels commands' commands "$@"
+}
+(( $+functions[_chattor__help__channels__feed_commands] )) ||
+_chattor__help__channels__feed_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help channels feed commands' commands "$@"
+}
+(( $+functions[_chattor__help__channels__list_commands] )) ||
+_chattor__help__channels__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help channels list commands' commands "$@"
+}
+(( $+functions[_chattor__help__channels__publish_commands] )) ||
+_chattor__help__channels__publish_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help channels publish commands' commands "$@"
+}
+(( $+functions[_chattor__help__channels__subscribe_commands] )) ||
+_chattor__help__channels__subscribe_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help channels subscribe commands' commands "$@"
+}
+(( $+functions[_chattor__help__daemon_commands] )) ||
+_chattor__help__daemon_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help daemon commands' commands "$@"
+}
+(( $+functions[_chattor__help__ephemeral_commands] )) ||
+_chattor__help__ephemeral_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help ephemeral commands' commands "$@"
+}
+(( $+functions[_chattor__help__friends_commands] )) ||
+_chattor__help__friends_commands() {
+    local commands; commands=(
+'list:List friends' \
+'add:Add a friend' \
+'remove:Remove a friend' \
+'requests:List pending requests' \
+'accept:Accept a friend request' \
+'reject:Reject a friend request' \
+    )
+    _describe -t commands 'chattor help friends commands' commands "$@"
+}
+(( $+functions[_chattor__help__friends__accept_commands] )) ||
+_chattor__help__friends__accept_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help friends accept commands' commands "$@"
+}
+(( $+functions[_chattor__help__friends__add_commands] )) ||
+_chattor__help__friends__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help friends add commands' commands "$@"
+}
+(( $+functions[_chattor__help__friends__list_commands] )) ||
+_chattor__help__friends__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help friends list commands' commands "$@"
+}
+(( $+functions[_chattor__help__friends__reject_commands] )) ||
+_chattor__help__friends__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help friends reject commands' commands "$@"
+}
+(( $+functions[_chattor__help__friends__remove_commands] )) ||
+_chattor__help__friends__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help friends remove commands' commands "$@"
+}
+(( $+functions[_chattor__help__friends__requests_commands] )) ||
+_chattor__help__friends__requests_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help friends requests commands' commands "$@"
+}
+(( $+functions[_chattor__help__help_commands] )) ||
+_chattor__help__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help help commands' commands "$@"
+}
+(( $+functions[_chattor__help__identity_commands] )) ||
+_chattor__help__identity_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help identity commands' commands "$@"
+}
+(( $+functions[_chattor__help__listen_commands] )) ||
+_chattor__help__listen_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help listen commands' commands "$@"
+}
+(( $+functions[_chattor__help__mcp_commands] )) ||
+_chattor__help__mcp_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help mcp commands' commands "$@"
+}
+(( $+functions[_chattor__help__notifications_commands] )) ||
+_chattor__help__notifications_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help notifications commands' commands "$@"
+}
+(( $+functions[_chattor__help__recv_commands] )) ||
+_chattor__help__recv_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help recv commands' commands "$@"
+}
+(( $+functions[_chattor__help__send_commands] )) ||
+_chattor__help__send_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help send commands' commands "$@"
+}
+(( $+functions[_chattor__help__status_commands] )) ||
+_chattor__help__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help status commands' commands "$@"
+}
+(( $+functions[_chattor__help__tui_commands] )) ||
+_chattor__help__tui_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor help tui commands' commands "$@"
+}
+(( $+functions[_chattor__identity_commands] )) ||
+_chattor__identity_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor identity commands' commands "$@"
+}
+(( $+functions[_chattor__listen_commands] )) ||
+_chattor__listen_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor listen commands' commands "$@"
+}
+(( $+functions[_chattor__mcp_commands] )) ||
+_chattor__mcp_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor mcp commands' commands "$@"
+}
+(( $+functions[_chattor__notifications_commands] )) ||
+_chattor__notifications_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor notifications commands' commands "$@"
+}
+(( $+functions[_chattor__recv_commands] )) ||
+_chattor__recv_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor recv commands' commands "$@"
+}
+(( $+functions[_chattor__send_commands] )) ||
+_chattor__send_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor send commands' commands "$@"
+}
+(( $+functions[_chattor__status_commands] )) ||
+_chattor__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor status commands' commands "$@"
+}
+(( $+functions[_chattor__tui_commands] )) ||
+_chattor__tui_commands() {
+    local commands; commands=()
+    _describe -t commands 'chattor tui commands' commands "$@"
 }
 
 if [ "$funcstack[1]" = "_chattor" ]; then

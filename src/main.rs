@@ -1,8 +1,8 @@
 mod app;
 mod cli;
+mod client;
 mod config;
 mod crypto;
-#[allow(dead_code)]
 mod daemon;
 mod db;
 mod error;
@@ -14,46 +14,184 @@ mod protocol;
 mod tor;
 mod ui;
 
-use crate::crypto::IdentityKeypair;
-use app::App;
-use base64::Engine;
 use clap::Parser;
-use cli::Cli;
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use cli::{Cli, Command};
 use error::Result;
-use handlers::channels::collect_sync_requests;
-use handlers::friend_request::{
-    handle_accept_friend_request, handle_reject_friend_request, handle_send_friend_request,
-    SendResult,
-};
-use handlers::messaging::{handle_incoming_message, process_message_queue, try_send_direct};
-use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::Mutex;
-use ui::{AppAction, AppState, RenderContext};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize application with optional CLI directory overrides
-    let app = {
-        let mut settings = config::Settings::default()?;
-        if let Some(ref dir) = cli.config_dir {
-            settings.config_dir = std::path::PathBuf::from(dir);
+    // Build settings with optional directory overrides
+    let mut settings = config::Settings::default()?;
+    if let Some(ref dir) = cli.config_dir {
+        settings.config_dir = std::path::PathBuf::from(dir);
+    }
+    if let Some(ref dir) = cli.data_dir {
+        settings.data_dir = std::path::PathBuf::from(dir);
+        settings.db_path = settings.data_dir.join("messages.db");
+    }
+    settings.debug = cli.debug;
+
+    match cli.command {
+        // No subcommand or explicit `tui` — run the interactive TUI
+        None => run_tui(settings, None).await,
+        Some(Command::Tui { theme }) => run_tui(settings, theme).await,
+
+        // Headless daemon
+        Some(Command::Daemon) => daemon::run(settings).await,
+
+        // CLI client commands — talk to the daemon via Unix socket
+        Some(Command::Status) => {
+            let result =
+                client::rpc_call(&settings.data_dir, "status", serde_json::json!({})).await?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            Ok(())
         }
-        if let Some(ref dir) = cli.data_dir {
-            settings.data_dir = std::path::PathBuf::from(dir);
-            settings.db_path = settings.data_dir.join("messages.db");
+        Some(Command::Identity) => {
+            let result =
+                client::rpc_call(&settings.data_dir, "identity", serde_json::json!({})).await?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            Ok(())
         }
-        Arc::new(Mutex::new(App::new_with_settings(settings)?))
+        Some(Command::Friends { action }) => {
+            use cli::FriendsAction;
+            let (method, params) = match action {
+                FriendsAction::List => ("friends.list", serde_json::json!({})),
+                FriendsAction::Add { code } => ("friends.add", serde_json::json!({ "code": code })),
+                FriendsAction::Remove { onion } => {
+                    ("friends.remove", serde_json::json!({ "onion": onion }))
+                }
+                FriendsAction::Requests => ("friends.requests", serde_json::json!({})),
+                FriendsAction::Accept { id } => ("friends.accept", serde_json::json!({ "id": id })),
+                FriendsAction::Reject { id } => ("friends.reject", serde_json::json!({ "id": id })),
+            };
+            let result = client::rpc_call(&settings.data_dir, method, params).await?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            Ok(())
+        }
+        Some(Command::Send { peer, message }) => {
+            let result = client::rpc_call(
+                &settings.data_dir,
+                "send",
+                serde_json::json!({ "peer": peer, "message": message }),
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            Ok(())
+        }
+        Some(Command::Recv { peer }) => {
+            let result = client::rpc_call(
+                &settings.data_dir,
+                "recv",
+                serde_json::json!({ "peer": peer }),
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            Ok(())
+        }
+        Some(Command::Listen) => {
+            use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+            let socket_path = settings.data_dir.join("chattor.sock");
+            let stream = tokio::net::UnixStream::connect(&socket_path)
+                .await
+                .map_err(|_| {
+                    error::ChattorError::Network(
+                        "Cannot connect to daemon. Is it running? Start with: chattor daemon"
+                            .into(),
+                    )
+                })?;
+            let (reader, mut writer) = stream.into_split();
+            let request = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "listen",
+                "params": {}
+            });
+            let line = format!("{}\n", serde_json::to_string(&request).unwrap());
+            writer.write_all(line.as_bytes()).await?;
+            let mut lines = BufReader::new(reader).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                println!("{}", line);
+            }
+            Ok(())
+        }
+        Some(Command::Channels { action }) => {
+            use cli::ChannelsAction;
+            let (method, params) = match action {
+                ChannelsAction::List => ("channels.list", serde_json::json!({})),
+                ChannelsAction::Publish {
+                    channel_type,
+                    message,
+                } => (
+                    "channels.publish",
+                    serde_json::json!({ "channel_type": channel_type, "message": message }),
+                ),
+                ChannelsAction::Subscribe { onion } => {
+                    ("channels.subscribe", serde_json::json!({ "onion": onion }))
+                }
+                ChannelsAction::Feed { channel } => {
+                    ("channels.feed", serde_json::json!({ "channel": channel }))
+                }
+            };
+            let result = client::rpc_call(&settings.data_dir, method, params).await?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            Ok(())
+        }
+        Some(Command::Ephemeral { peer, ttl }) => {
+            let result = client::rpc_call(
+                &settings.data_dir,
+                "ephemeral",
+                serde_json::json!({ "peer": peer, "ttl": ttl }),
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            Ok(())
+        }
+        Some(Command::Notifications { state }) => {
+            let result = client::rpc_call(
+                &settings.data_dir,
+                "notifications",
+                serde_json::json!({ "state": state }),
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            Ok(())
+        }
+        Some(Command::Mcp) => {
+            todo!("MCP server")
+        }
+    }
+}
+
+/// Run the interactive TUI application.
+///
+/// This contains all the original main() logic: terminal setup, Tor bootstrap
+/// animation, identity generation, background tasks, and the main event loop.
+async fn run_tui(settings: config::Settings, theme_name: Option<String>) -> Result<()> {
+    use crate::crypto::IdentityKeypair;
+    use app::App;
+    use base64::Engine;
+    use crossterm::{
+        event::{self, DisableMouseCapture, EnableMouseCapture, Event},
+        execute,
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     };
+    use handlers::channels::collect_sync_requests;
+    use handlers::friend_request::{
+        handle_accept_friend_request, handle_reject_friend_request, handle_send_friend_request,
+        SendResult,
+    };
+    use handlers::messaging::{handle_incoming_message, process_message_queue, try_send_direct};
+    use ratatui::{backend::CrosstermBackend, Terminal};
+    use std::io;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Mutex;
+    use ui::{AppAction, AppState, RenderContext};
+
+    let app = Arc::new(Mutex::new(App::new_with_settings(settings)?));
 
     // Watch channel to broadcast connection pool to background tasks
     let (pool_tx, pool_rx) =
@@ -64,7 +202,7 @@ async fn main() -> Result<()> {
         let app_lock = app.lock().await;
         let config_path = app_lock.settings.config_dir.join("theme.toml");
         drop(app_lock);
-        ui::theme::load_theme(cli.theme.as_deref(), &config_path)
+        ui::theme::load_theme(theme_name.as_deref(), &config_path)
     };
 
     // Set up terminal FIRST so we can render immediately
@@ -959,12 +1097,12 @@ async fn main() -> Result<()> {
                                     .unwrap_or(None);
                             drop(app_lock);
                             *selected_idx = match current_ttl {
-                                None => 0,            // Off
-                                Some(300) => 1,       // 5 minutes
-                                Some(3600) => 2,      // 1 hour
-                                Some(86400) => 3,     // 24 hours
-                                Some(604800) => 4,    // 7 days
-                                Some(_) => 0,         // Unknown -> Off
+                                None => 0,         // Off
+                                Some(300) => 1,    // 5 minutes
+                                Some(3600) => 2,   // 1 hour
+                                Some(86400) => 3,  // 24 hours
+                                Some(604800) => 4, // 7 days
+                                Some(_) => 0,      // Unknown -> Off
                             };
                         }
                     }
