@@ -305,11 +305,10 @@ async fn main() -> Result<()> {
             };
             let posts = db::queries::get_channel_posts(&app_lock.db, channel_id, 100).unwrap_or_default();
             let mut counts = std::collections::HashMap::new();
-            if *is_own {
-                for post in &posts {
-                    let count = db::queries::get_channel_post_read_count(&app_lock.db, &post.post_id).unwrap_or(0);
-                    counts.insert(post.post_id.clone(), count);
-                }
+            if *is_own && !posts.is_empty() {
+                let post_ids: Vec<&str> = posts.iter().map(|p| p.post_id.as_str()).collect();
+                counts = db::queries::get_channel_post_read_counts_batch(&app_lock.db, &post_ids)
+                    .unwrap_or_default();
             }
             (posts, counts)
         } else {
