@@ -1,5 +1,5 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::error::Result;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Debug, Clone)]
 pub enum AppState {
@@ -39,9 +39,9 @@ pub enum AppState {
     },
     ViewingChannel {
         publisher_onion: String,
-        channel_type: String,     // "public" or "friends_only"
+        channel_type: String, // "public" or "friends_only"
         is_own: bool,
-        input: String,            // for composing (own channels only)
+        input: String, // for composing (own channels only)
         cursor: usize,
         scroll_offset: usize,
     },
@@ -75,10 +75,10 @@ pub enum AppAction {
     SetEphemeralTtl(i64, Option<i64>), // (conversation_id, ttl_seconds or None for off)
     ViewMyIdentity,
     ViewFriendRequests,
-    PublishChannelPost(String, String),     // (content, channel_type)
-    SubscribeToChannel(String),             // publisher .onion address
+    PublishChannelPost(String, String), // (content, channel_type)
+    SubscribeToChannel(String),         // publisher .onion address
     #[allow(dead_code)]
-    SelectChannel(String, String, bool),    // (publisher_onion, channel_type, is_own)
+    SelectChannel(String, String, bool), // (publisher_onion, channel_type, is_own)
     ViewOwnChannel,
     ToggleNotifications,
     #[allow(dead_code)]
@@ -230,6 +230,26 @@ impl AppState {
                             }
                             Ok(None)
                         }
+                        KeyCode::Char('k') => {
+                            // Vim-style up navigation
+                            if let Some(idx) = selected_friend_idx {
+                                if *idx > 0 {
+                                    *idx -= 1;
+                                    *scroll_offset = 0;
+                                }
+                            }
+                            Ok(None)
+                        }
+                        KeyCode::Char('j') => {
+                            // Vim-style down navigation
+                            if let Some(idx) = selected_friend_idx {
+                                if *idx + 1 < friend_count {
+                                    *idx += 1;
+                                    *scroll_offset = 0;
+                                }
+                            }
+                            Ok(None)
+                        }
                         KeyCode::Enter => {
                             if let Some(idx) = *selected_friend_idx {
                                 *input_focused = true;
@@ -252,103 +272,110 @@ impl AppState {
                 }
             }
 
-            AppState::AddingFriend { input, cursor, error } => {
-                match key.code {
-                    KeyCode::Home => {
-                        crate::ui::input::move_to_start(cursor);
-                        Ok(None)
-                    }
-                    KeyCode::End => {
-                        crate::ui::input::move_to_end(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Delete => {
-                        crate::ui::input::delete_forward(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        crate::ui::input::move_to_start(cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        crate::ui::input::move_to_end(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        crate::ui::input::delete_word_backward(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        crate::ui::input::delete_to_start(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Char(c) => {
-                        crate::ui::input::insert_char(input, cursor, c);
-                        Ok(None)
-                    }
-                    KeyCode::Backspace => {
-                        crate::ui::input::backspace(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Left => {
-                        crate::ui::input::move_left(cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Right => {
-                        crate::ui::input::move_right(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Enter => {
-                        if input.is_empty() {
-                            *error = Some("Please enter a .onion address or friend code".to_string());
-                            Ok(None)
-                        } else {
-                            Ok(Some(AppAction::SendFriendRequest(input.clone())))
-                        }
-                    }
-                    KeyCode::Esc => {
-                        *self = AppState::default();
-                        Ok(None)
-                    }
-                    _ => Ok(None),
+            AppState::AddingFriend {
+                input,
+                cursor,
+                error,
+            } => match key.code {
+                KeyCode::Home => {
+                    crate::ui::input::move_to_start(cursor);
+                    Ok(None)
                 }
-            }
-
-            AppState::ViewingFriendRequests { requests, selected_idx } => {
-                match key.code {
-                    KeyCode::Up => {
-                        if *selected_idx > 0 {
-                            *selected_idx -= 1;
-                        }
-                        Ok(None)
-                    }
-                    KeyCode::Down => {
-                        if *selected_idx + 1 < requests.len() {
-                            *selected_idx += 1;
-                        }
-                        Ok(None)
-                    }
-                    KeyCode::Enter => {
-                        if let Some(req) = requests.get(*selected_idx) {
-                            *self = AppState::ViewingFriendRequest {
-                                request_id: req.id,
-                                from_onion: req.from_onion.clone(),
-                                friend_code: req.friend_code.clone(),
-                                timestamp: req.received_at,
-                                return_to_list: true,
-                            };
-                        }
-                        Ok(None)
-                    }
-                    KeyCode::Esc => {
-                        *self = AppState::default();
-                        Ok(None)
-                    }
-                    _ => Ok(None),
+                KeyCode::End => {
+                    crate::ui::input::move_to_end(input, cursor);
+                    Ok(None)
                 }
-            }
+                KeyCode::Delete => {
+                    crate::ui::input::delete_forward(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    crate::ui::input::move_to_start(cursor);
+                    Ok(None)
+                }
+                KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    crate::ui::input::move_to_end(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    crate::ui::input::delete_word_backward(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    crate::ui::input::delete_to_start(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Char(c) => {
+                    crate::ui::input::insert_char(input, cursor, c);
+                    Ok(None)
+                }
+                KeyCode::Backspace => {
+                    crate::ui::input::backspace(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Left => {
+                    crate::ui::input::move_left(cursor);
+                    Ok(None)
+                }
+                KeyCode::Right => {
+                    crate::ui::input::move_right(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Enter => {
+                    if input.is_empty() {
+                        *error = Some("Please enter a .onion address or friend code".to_string());
+                        Ok(None)
+                    } else {
+                        Ok(Some(AppAction::SendFriendRequest(input.clone())))
+                    }
+                }
+                KeyCode::Esc => {
+                    *self = AppState::default();
+                    Ok(None)
+                }
+                _ => Ok(None),
+            },
 
-            AppState::ViewingFriendRequest { request_id, return_to_list, .. } => {
+            AppState::ViewingFriendRequests {
+                requests,
+                selected_idx,
+            } => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if *selected_idx > 0 {
+                        *selected_idx -= 1;
+                    }
+                    Ok(None)
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if *selected_idx + 1 < requests.len() {
+                        *selected_idx += 1;
+                    }
+                    Ok(None)
+                }
+                KeyCode::Enter => {
+                    if let Some(req) = requests.get(*selected_idx) {
+                        *self = AppState::ViewingFriendRequest {
+                            request_id: req.id,
+                            from_onion: req.from_onion.clone(),
+                            friend_code: req.friend_code.clone(),
+                            timestamp: req.received_at,
+                            return_to_list: true,
+                        };
+                    }
+                    Ok(None)
+                }
+                KeyCode::Esc => {
+                    *self = AppState::default();
+                    Ok(None)
+                }
+                _ => Ok(None),
+            },
+
+            AppState::ViewingFriendRequest {
+                request_id,
+                return_to_list,
+                ..
+            } => {
                 match key.code {
                     KeyCode::Char('a') | KeyCode::Char('A') => {
                         let id = *request_id;
@@ -392,68 +419,75 @@ impl AppState {
                 }
             }
 
-            AppState::ViewingMyIdentity { ref onion_address, ref friend_code, ref mut copied_field } => {
-                match key.code {
-                    KeyCode::Char('i') | KeyCode::Esc => {
-                        *self = AppState::default();
-                        Ok(None)
-                    }
-                    KeyCode::Char('o') | KeyCode::Char('1') => {
-                        if !onion_address.starts_with('(')
-                            && crate::ui::copy_to_clipboard(onion_address)
-                        {
-                            *copied_field = Some("onion".into());
-                        }
-                        Ok(None)
-                    }
-                    KeyCode::Char('c') | KeyCode::Char('2') => {
-                        if !friend_code.starts_with('(')
-                            && crate::ui::copy_to_clipboard(friend_code)
-                        {
-                            *copied_field = Some("code".into());
-                        }
-                        Ok(None)
-                    }
-                    _ => Ok(None),
+            AppState::ViewingMyIdentity {
+                ref onion_address,
+                ref friend_code,
+                ref mut copied_field,
+            } => match key.code {
+                KeyCode::Char('i') | KeyCode::Esc => {
+                    *self = AppState::default();
+                    Ok(None)
                 }
-            }
-
-            AppState::SettingEphemeral { conversation_id, selected_idx } => {
-                match key.code {
-                    KeyCode::Up => {
-                        if *selected_idx > 0 {
-                            *selected_idx -= 1;
-                        }
-                        Ok(None)
+                KeyCode::Char('o') | KeyCode::Char('1') => {
+                    if !onion_address.starts_with('(')
+                        && crate::ui::copy_to_clipboard(onion_address)
+                    {
+                        *copied_field = Some("onion".into());
                     }
-                    KeyCode::Down => {
-                        if *selected_idx < 4 {
-                            *selected_idx += 1;
-                        }
-                        Ok(None)
-                    }
-                    KeyCode::Enter => {
-                        let conv_id = *conversation_id;
-                        let ttl = match *selected_idx {
-                            0 => None,
-                            1 => Some(300),
-                            2 => Some(3600),
-                            3 => Some(86400),
-                            4 => Some(604800),
-                            _ => None,
-                        };
-                        *self = AppState::default();
-                        Ok(Some(AppAction::SetEphemeralTtl(conv_id, ttl)))
-                    }
-                    KeyCode::Esc => {
-                        *self = AppState::default();
-                        Ok(None)
-                    }
-                    _ => Ok(None),
+                    Ok(None)
                 }
-            }
+                KeyCode::Char('c') | KeyCode::Char('2') => {
+                    if !friend_code.starts_with('(') && crate::ui::copy_to_clipboard(friend_code) {
+                        *copied_field = Some("code".into());
+                    }
+                    Ok(None)
+                }
+                _ => Ok(None),
+            },
 
-            AppState::ViewingChannel { input, cursor, is_own, channel_type, .. } => {
+            AppState::SettingEphemeral {
+                conversation_id,
+                selected_idx,
+            } => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if *selected_idx > 0 {
+                        *selected_idx -= 1;
+                    }
+                    Ok(None)
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if *selected_idx < 4 {
+                        *selected_idx += 1;
+                    }
+                    Ok(None)
+                }
+                KeyCode::Enter => {
+                    let conv_id = *conversation_id;
+                    let ttl = match *selected_idx {
+                        0 => None,
+                        1 => Some(300),
+                        2 => Some(3600),
+                        3 => Some(86400),
+                        4 => Some(604800),
+                        _ => None,
+                    };
+                    *self = AppState::default();
+                    Ok(Some(AppAction::SetEphemeralTtl(conv_id, ttl)))
+                }
+                KeyCode::Esc => {
+                    *self = AppState::default();
+                    Ok(None)
+                }
+                _ => Ok(None),
+            },
+
+            AppState::ViewingChannel {
+                input,
+                cursor,
+                is_own,
+                channel_type,
+                ..
+            } => {
                 if *is_own {
                     match key.code {
                         KeyCode::Home => {
@@ -520,59 +554,61 @@ impl AppState {
                 }
             }
 
-            AppState::SubscribingToChannel { input, cursor, error } => {
-                match key.code {
-                    KeyCode::Home => {
-                        crate::ui::input::move_to_start(cursor);
-                        Ok(None)
-                    }
-                    KeyCode::End => {
-                        crate::ui::input::move_to_end(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Delete => {
-                        crate::ui::input::delete_forward(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        crate::ui::input::move_to_start(cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        crate::ui::input::move_to_end(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        crate::ui::input::delete_word_backward(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        crate::ui::input::delete_to_start(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Char(c) => {
-                        crate::ui::input::insert_char(input, cursor, c);
-                        Ok(None)
-                    }
-                    KeyCode::Backspace => {
-                        crate::ui::input::backspace(input, cursor);
-                        Ok(None)
-                    }
-                    KeyCode::Enter => {
-                        if input.is_empty() {
-                            *error = Some("Please enter a channel address".to_string());
-                            Ok(None)
-                        } else {
-                            Ok(Some(AppAction::SubscribeToChannel(input.clone())))
-                        }
-                    }
-                    KeyCode::Esc => {
-                        *self = AppState::default();
-                        Ok(None)
-                    }
-                    _ => Ok(None),
+            AppState::SubscribingToChannel {
+                input,
+                cursor,
+                error,
+            } => match key.code {
+                KeyCode::Home => {
+                    crate::ui::input::move_to_start(cursor);
+                    Ok(None)
                 }
-            }
+                KeyCode::End => {
+                    crate::ui::input::move_to_end(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Delete => {
+                    crate::ui::input::delete_forward(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    crate::ui::input::move_to_start(cursor);
+                    Ok(None)
+                }
+                KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    crate::ui::input::move_to_end(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    crate::ui::input::delete_word_backward(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    crate::ui::input::delete_to_start(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Char(c) => {
+                    crate::ui::input::insert_char(input, cursor, c);
+                    Ok(None)
+                }
+                KeyCode::Backspace => {
+                    crate::ui::input::backspace(input, cursor);
+                    Ok(None)
+                }
+                KeyCode::Enter => {
+                    if input.is_empty() {
+                        *error = Some("Please enter a channel address".to_string());
+                        Ok(None)
+                    } else {
+                        Ok(Some(AppAction::SubscribeToChannel(input.clone())))
+                    }
+                }
+                KeyCode::Esc => {
+                    *self = AppState::default();
+                    Ok(None)
+                }
+                _ => Ok(None),
+            },
         }
     }
 }
@@ -643,7 +679,10 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
         state.handle_key(key, 10).unwrap();
         match &state {
-            AppState::Normal { selected_friend_idx, .. } => {
+            AppState::Normal {
+                selected_friend_idx,
+                ..
+            } => {
                 assert_eq!(*selected_friend_idx, Some(0));
             }
             _ => panic!("Expected Normal state"),
@@ -681,8 +720,12 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 10).unwrap();
-        state.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 10)
+            .unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), 10)
+            .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "hi");
@@ -793,7 +836,10 @@ mod tests {
         };
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         let action = state.handle_key(key, 10).unwrap();
-        assert_eq!(action, Some(AppAction::SendFriendRequest("friend.onion".to_string())));
+        assert_eq!(
+            action,
+            Some(AppAction::SendFriendRequest("friend.onion".to_string()))
+        );
     }
 
     #[test]
@@ -841,7 +887,10 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
         state.handle_key(key, 10).unwrap();
         match &state {
-            AppState::Normal { selected_friend_idx, .. } => {
+            AppState::Normal {
+                selected_friend_idx,
+                ..
+            } => {
                 assert_eq!(*selected_friend_idx, Some(0));
             }
             _ => panic!("Expected Normal state"),
@@ -861,44 +910,75 @@ mod tests {
         use crate::db::queries::PendingFriendRequest;
         let mut state = AppState::ViewingFriendRequests {
             requests: vec![
-                PendingFriendRequest { id: 1, from_onion: "a.onion".into(), friend_code: "code-1".into(), received_at: 1000 },
-                PendingFriendRequest { id: 2, from_onion: "b.onion".into(), friend_code: "code-2".into(), received_at: 2000 },
+                PendingFriendRequest {
+                    id: 1,
+                    from_onion: "a.onion".into(),
+                    friend_code: "code-1".into(),
+                    received_at: 1000,
+                },
+                PendingFriendRequest {
+                    id: 2,
+                    from_onion: "b.onion".into(),
+                    friend_code: "code-2".into(),
+                    received_at: 2000,
+                },
             ],
             selected_idx: 0,
         };
 
         // Down
-        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10)
+            .unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 1);
-        } else { panic!("Wrong state"); }
+        } else {
+            panic!("Wrong state");
+        }
 
         // Down at bottom stays at bottom
-        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10)
+            .unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 1);
-        } else { panic!("Wrong state"); }
+        } else {
+            panic!("Wrong state");
+        }
 
         // Up
-        state.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), 10)
+            .unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 0);
-        } else { panic!("Wrong state"); }
+        } else {
+            panic!("Wrong state");
+        }
     }
 
     #[test]
     fn friend_requests_list_enter_opens_modal() {
         use crate::db::queries::PendingFriendRequest;
         let mut state = AppState::ViewingFriendRequests {
-            requests: vec![
-                PendingFriendRequest { id: 42, from_onion: "a.onion".into(), friend_code: "code-1".into(), received_at: 1000 },
-            ],
+            requests: vec![PendingFriendRequest {
+                id: 42,
+                from_onion: "a.onion".into(),
+                friend_code: "code-1".into(),
+                received_at: 1000,
+            }],
             selected_idx: 0,
         };
 
-        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .unwrap();
         match &state {
-            AppState::ViewingFriendRequest { request_id, return_to_list, .. } => {
+            AppState::ViewingFriendRequest {
+                request_id,
+                return_to_list,
+                ..
+            } => {
                 assert_eq!(*request_id, 42);
                 assert!(*return_to_list);
             }
@@ -913,7 +993,9 @@ mod tests {
             selected_idx: 0,
         };
 
-        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 
@@ -927,7 +1009,9 @@ mod tests {
             return_to_list: true,
         };
 
-        let action = state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10).unwrap();
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10)
+            .unwrap();
         assert_eq!(action, Some(AppAction::AcceptFriendRequest(42)));
         assert!(matches!(state, AppState::ViewingFriendRequests { .. }));
     }
@@ -967,7 +1051,10 @@ mod tests {
         let action = state.handle_key(key, 10).unwrap();
         assert!(action.is_none());
         match &state {
-            AppState::SettingEphemeral { conversation_id, selected_idx } => {
+            AppState::SettingEphemeral {
+                conversation_id,
+                selected_idx,
+            } => {
                 assert_eq!(*conversation_id, 1);
                 assert_eq!(*selected_idx, 0);
             }
@@ -998,8 +1085,12 @@ mod tests {
             selected_idx: 0,
         };
         // Down twice to select "1 hour" (index 2)
-        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10).unwrap();
-        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10)
+            .unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10)
+            .unwrap();
         match &state {
             AppState::SettingEphemeral { selected_idx, .. } => {
                 assert_eq!(*selected_idx, 2);
@@ -1007,7 +1098,9 @@ mod tests {
             _ => panic!("Expected SettingEphemeral state"),
         }
         // Enter to confirm
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .unwrap();
         assert_eq!(action, Some(AppAction::SetEphemeralTtl(42, Some(3600))));
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -1048,8 +1141,12 @@ mod tests {
             cursor: 0,
             error: None,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10).unwrap();
-        state.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10)
+            .unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE), 10)
+            .unwrap();
         match &state {
             AppState::SubscribingToChannel { input, cursor, .. } => {
                 assert_eq!(input, "ab");
@@ -1066,8 +1163,13 @@ mod tests {
             cursor: 10,
             error: None,
         };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
-        assert_eq!(action, Some(AppAction::SubscribeToChannel("peer.onion".to_string())));
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .unwrap();
+        assert_eq!(
+            action,
+            Some(AppAction::SubscribeToChannel("peer.onion".to_string()))
+        );
     }
 
     #[test]
@@ -1077,7 +1179,9 @@ mod tests {
             cursor: 0,
             error: None,
         };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .unwrap();
         assert!(action.is_none());
         match &state {
             AppState::SubscribingToChannel { error, .. } => {
@@ -1094,7 +1198,9 @@ mod tests {
             cursor: 5,
             error: None,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 
@@ -1108,8 +1214,16 @@ mod tests {
             cursor: 11,
             scroll_offset: 0,
         };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
-        assert_eq!(action, Some(AppAction::PublishChannelPost("hello world".to_string(), "public".to_string())));
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .unwrap();
+        assert_eq!(
+            action,
+            Some(AppAction::PublishChannelPost(
+                "hello world".to_string(),
+                "public".to_string()
+            ))
+        );
         match &state {
             AppState::ViewingChannel { input, cursor, .. } => {
                 assert_eq!(input, "");
@@ -1129,7 +1243,9 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
         };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10).unwrap();
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .unwrap();
         assert!(action.is_none());
     }
 
@@ -1143,7 +1259,9 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 
@@ -1157,7 +1275,9 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 
@@ -1171,8 +1291,15 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Char('\u{1F600}'), KeyModifiers::NONE), 10).unwrap();
-        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(
+                KeyEvent::new(KeyCode::Char('\u{1F600}'), KeyModifiers::NONE),
+                10,
+            )
+            .unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10)
+            .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "\u{1F600}a");
@@ -1180,7 +1307,9 @@ mod tests {
             }
             _ => panic!("Expected Normal state"),
         }
-        state.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE), 10)
+            .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "\u{1F600}");
@@ -1200,7 +1329,9 @@ mod tests {
             cursor: 0,
             scroll_offset: 0,
         };
-        let action = state.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), 10).unwrap();
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), 10)
+            .unwrap();
         assert!(action.is_none());
         match &state {
             AppState::ViewingChannel { input, .. } => {
@@ -1224,15 +1355,23 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
         state.handle_key(key, 3).unwrap();
         match &state {
-            AppState::Normal { selected_friend_idx, .. } => {
+            AppState::Normal {
+                selected_friend_idx,
+                ..
+            } => {
                 assert_eq!(*selected_friend_idx, Some(2));
             }
             _ => panic!("Expected Normal state"),
         }
         // With 5 friends, down from 2 should go to 3
-        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 5).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 5)
+            .unwrap();
         match &state {
-            AppState::Normal { selected_friend_idx, .. } => {
+            AppState::Normal {
+                selected_friend_idx,
+                ..
+            } => {
                 assert_eq!(*selected_friend_idx, Some(3));
             }
             _ => panic!("Expected Normal state"),
@@ -1249,7 +1388,9 @@ mod tests {
             input_focused: false,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), 1).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), 1)
+            .unwrap();
         match &state {
             AppState::Normal { scroll_offset, .. } => {
                 assert_eq!(*scroll_offset, 10);
@@ -1268,7 +1409,9 @@ mod tests {
             input_focused: false,
             scroll_offset: 20,
         };
-        state.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), 1).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), 1)
+            .unwrap();
         match &state {
             AppState::Normal { scroll_offset, .. } => {
                 assert_eq!(*scroll_offset, 10);
@@ -1287,7 +1430,9 @@ mod tests {
             input_focused: false,
             scroll_offset: 5,
         };
-        state.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), 1).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), 1)
+            .unwrap();
         match &state {
             AppState::Normal { scroll_offset, .. } => {
                 assert_eq!(*scroll_offset, 0); // saturating_sub prevents underflow
@@ -1306,9 +1451,15 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), 1).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), 1)
+            .unwrap();
         match &state {
-            AppState::Normal { scroll_offset, input, .. } => {
+            AppState::Normal {
+                scroll_offset,
+                input,
+                ..
+            } => {
                 assert_eq!(*scroll_offset, 10);
                 assert_eq!(input, "typing..."); // input unchanged
             }
@@ -1327,9 +1478,15 @@ mod tests {
             scroll_offset: 30,
         };
         // Move down to next friend
-        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 5).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 5)
+            .unwrap();
         match &state {
-            AppState::Normal { scroll_offset, selected_friend_idx, .. } => {
+            AppState::Normal {
+                scroll_offset,
+                selected_friend_idx,
+                ..
+            } => {
                 assert_eq!(*selected_friend_idx, Some(1));
                 assert_eq!(*scroll_offset, 0); // reset on conversation change
             }
@@ -1349,7 +1506,9 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL), 10)
+            .unwrap();
         match &state {
             AppState::Normal { cursor, .. } => assert_eq!(*cursor, 0),
             _ => panic!("Expected Normal state"),
@@ -1366,7 +1525,9 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL), 10)
+            .unwrap();
         match &state {
             AppState::Normal { cursor, .. } => assert_eq!(*cursor, 5),
             _ => panic!("Expected Normal state"),
@@ -1383,7 +1544,9 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL), 10)
+            .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "hello ");
@@ -1403,7 +1566,9 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), 10)
+            .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "world");
@@ -1423,7 +1588,9 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE), 10)
+            .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "ello");
@@ -1443,7 +1610,9 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), 10)
+            .unwrap();
         match &state {
             AppState::Normal { cursor, .. } => assert_eq!(*cursor, 0),
             _ => panic!("Expected Normal state"),
@@ -1460,11 +1629,243 @@ mod tests {
             input_focused: true,
             scroll_offset: 0,
         };
-        state.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE), 10).unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE), 10)
+            .unwrap();
         match &state {
             AppState::Normal { cursor, .. } => assert_eq!(*cursor, 5),
             _ => panic!("Expected Normal state"),
         }
     }
 
+    // ── Vim j/k navigation tests ─────────────────────────────
+
+    #[test]
+    fn vim_j_navigates_down() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 5)
+            .unwrap();
+        match &state {
+            AppState::Normal {
+                selected_friend_idx,
+                ..
+            } => {
+                assert_eq!(*selected_friend_idx, Some(1));
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn vim_k_navigates_up() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(2),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 5)
+            .unwrap();
+        match &state {
+            AppState::Normal {
+                selected_friend_idx,
+                ..
+            } => {
+                assert_eq!(*selected_friend_idx, Some(1));
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn vim_j_bounded_by_friend_count() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(2),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 3)
+            .unwrap();
+        match &state {
+            AppState::Normal {
+                selected_friend_idx,
+                ..
+            } => {
+                assert_eq!(*selected_friend_idx, Some(2)); // stays at last
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn vim_k_bounded_at_zero() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 5)
+            .unwrap();
+        match &state {
+            AppState::Normal {
+                selected_friend_idx,
+                ..
+            } => {
+                assert_eq!(*selected_friend_idx, Some(0)); // stays at first
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn vim_j_resets_scroll_offset() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 30,
+        };
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 5)
+            .unwrap();
+        match &state {
+            AppState::Normal {
+                scroll_offset,
+                selected_friend_idx,
+                ..
+            } => {
+                assert_eq!(*selected_friend_idx, Some(1));
+                assert_eq!(*scroll_offset, 0);
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn vim_jk_not_active_when_input_focused() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 5)
+            .unwrap();
+        match &state {
+            AppState::Normal { input, .. } => {
+                assert_eq!(input, "j"); // j is typed as text, not navigation
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn vim_jk_in_friend_requests() {
+        use crate::db::queries::PendingFriendRequest;
+        let mut state = AppState::ViewingFriendRequests {
+            requests: vec![
+                PendingFriendRequest {
+                    id: 1,
+                    from_onion: "a.onion".into(),
+                    friend_code: "code-1".into(),
+                    received_at: 1000,
+                },
+                PendingFriendRequest {
+                    id: 2,
+                    from_onion: "b.onion".into(),
+                    friend_code: "code-2".into(),
+                    received_at: 2000,
+                },
+                PendingFriendRequest {
+                    id: 3,
+                    from_onion: "c.onion".into(),
+                    friend_code: "code-3".into(),
+                    received_at: 3000,
+                },
+            ],
+            selected_idx: 0,
+        };
+
+        // j moves down
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10)
+            .unwrap();
+        if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 1);
+        } else {
+            panic!("Wrong state");
+        }
+
+        // k moves up
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 10)
+            .unwrap();
+        if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 0);
+        } else {
+            panic!("Wrong state");
+        }
+    }
+
+    #[test]
+    fn vim_jk_in_ephemeral_settings() {
+        let mut state = AppState::SettingEphemeral {
+            conversation_id: 42,
+            selected_idx: 0,
+        };
+
+        // j moves down
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10)
+            .unwrap();
+        if let AppState::SettingEphemeral { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 1);
+        } else {
+            panic!("Wrong state");
+        }
+
+        // j again
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10)
+            .unwrap();
+        if let AppState::SettingEphemeral { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 2);
+        } else {
+            panic!("Wrong state");
+        }
+
+        // k moves up
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 10)
+            .unwrap();
+        if let AppState::SettingEphemeral { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 1);
+        } else {
+            panic!("Wrong state");
+        }
+    }
 }
