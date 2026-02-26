@@ -4,14 +4,21 @@ use crate::handlers;
 use crate::presence;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 /// Run the daemon event loop. Processes incoming messages and queue commands.
 /// Blocks until SIGTERM/SIGINT.
 ///
 /// The `presence_map` is shared with the Unix socket server so that RPC
 /// clients can query peer presence state.
-pub async fn run(app: Arc<Mutex<App>>, presence_map: presence::PresenceMap) -> Result<()> {
+///
+/// The `msg_broadcast_tx` is used to notify `listen` RPC clients about
+/// incoming messages in real time.
+pub async fn run(
+    app: Arc<Mutex<App>>,
+    presence_map: presence::PresenceMap,
+    msg_broadcast_tx: broadcast::Sender<String>,
+) -> Result<()> {
     // Take ownership of channels from app
     let mut incoming_rx = {
         let mut app_lock = app.lock().await;
@@ -42,11 +49,29 @@ pub async fn run(app: Arc<Mutex<App>>, presence_map: presence::PresenceMap) -> R
                 }
             } => {
                 if let Some(incoming) = msg {
+                    let remote_addr = incoming.remote_addr.clone();
                     let app_lock = app.lock().await;
                     if let Err(e) = handlers::messaging::handle_incoming_message(
                         &app_lock, incoming, &presence_map,
                     ).await {
                         eprintln!("Incoming message error: {}", e);
+                    } else {
+                        // Broadcast event to all listen clients
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let event = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "method": "message_received",
+                            "params": {
+                                "from": remote_addr,
+                                "timestamp": now,
+                            }
+                        });
+                        let _ = msg_broadcast_tx.send(
+                            serde_json::to_string(&event).unwrap_or_default()
+                        );
                     }
                 }
             }

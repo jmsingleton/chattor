@@ -8,7 +8,7 @@ use crate::app::App;
 use crate::config::Settings;
 use crate::error::Result;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 /// Start the daemon: bootstrap Tor, spawn background tasks, run event loop.
 pub async fn run(settings: Settings) -> Result<()> {
@@ -56,13 +56,22 @@ pub async fn run(settings: Settings) -> Result<()> {
     // Create presence map (shared between socket server and event loop)
     let presence_map = crate::presence::new_presence_map();
 
+    // Broadcast channel for streaming incoming message events to listen clients
+    let (msg_broadcast_tx, _) = broadcast::channel::<String>(100);
+
     // Start Unix socket server
     let socket_path = settings.data_dir.join("chattor.sock");
-    let _socket_handle = socket::start(&socket_path, Arc::clone(&app), presence_map.clone()).await;
+    let _socket_handle = socket::start(
+        &socket_path,
+        Arc::clone(&app),
+        presence_map.clone(),
+        msg_broadcast_tx.clone(),
+    )
+    .await;
     eprintln!("Listening on {}", socket_path.display());
 
     // Run event loop (blocks until shutdown signal)
-    let result = event_loop::run(Arc::clone(&app), presence_map).await;
+    let result = event_loop::run(Arc::clone(&app), presence_map, msg_broadcast_tx).await;
 
     // Cleanup socket and PID file
     std::fs::remove_file(&socket_path).ok();

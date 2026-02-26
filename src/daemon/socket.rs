@@ -5,13 +5,14 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 /// Start the Unix socket server. Returns a JoinHandle for the accept loop.
 pub async fn start(
     socket_path: &Path,
     app: Arc<Mutex<App>>,
     presence: PresenceMap,
+    msg_broadcast_tx: broadcast::Sender<String>,
 ) -> tokio::task::JoinHandle<()> {
     // Remove stale socket file if it exists
     if socket_path.exists() {
@@ -33,8 +34,9 @@ pub async fn start(
                 Ok((stream, _)) => {
                     let app = Arc::clone(&app);
                     let presence = presence.clone();
+                    let broadcast_tx = msg_broadcast_tx.clone();
                     tokio::spawn(async move {
-                        handle_connection(stream, app, presence).await;
+                        handle_connection(stream, app, presence, broadcast_tx).await;
                     });
                 }
                 Err(e) => {
@@ -49,6 +51,7 @@ async fn handle_connection(
     stream: tokio::net::UnixStream,
     app: Arc<Mutex<App>>,
     presence: PresenceMap,
+    msg_broadcast_tx: broadcast::Sender<String>,
 ) {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
@@ -63,6 +66,37 @@ async fn handle_connection(
                 continue;
             }
         };
+
+        // Handle streaming `listen` method: subscribe to broadcast and
+        // stream events until the client disconnects.
+        if request.method == "listen" {
+            let mut rx = msg_broadcast_tx.subscribe();
+
+            // Send initial ACK response
+            let ack = rpc::RpcResponse::success(
+                request.id.clone(),
+                serde_json::json!({"status": "listening"}),
+            );
+            if writer
+                .write_all(format!("{}\n", serde_json::to_string(&ack).unwrap_or_default()).as_bytes())
+                .await
+                .is_err()
+            {
+                return; // Client already disconnected
+            }
+
+            // Stream events until client disconnects or broadcast channel closes
+            while let Ok(event) = rx.recv().await {
+                if writer
+                    .write_all(format!("{}\n", event).as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break; // Client disconnected
+                }
+            }
+            return; // Connection ends after listen
+        }
 
         // dispatch acquires the app lock internally and releases it
         // before any async I/O (e.g. pool.send), avoiding Send issues.
