@@ -100,7 +100,7 @@ impl AppState {
                 input,
                 cursor,
                 input_focused,
-                ..
+                scroll_offset,
             } => {
                 if *input_focused {
                     // Input mode: keystrokes go to message input
@@ -119,6 +119,34 @@ impl AppState {
                                 Ok(Some(AppAction::SendMessage(msg)))
                             }
                         }
+                        KeyCode::Home => {
+                            crate::ui::input::move_to_start(cursor);
+                            Ok(None)
+                        }
+                        KeyCode::End => {
+                            crate::ui::input::move_to_end(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Delete => {
+                            crate::ui::input::delete_forward(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            crate::ui::input::move_to_start(cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            crate::ui::input::move_to_end(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            crate::ui::input::delete_word_backward(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            crate::ui::input::delete_to_start(input, cursor);
+                            Ok(None)
+                        }
                         KeyCode::Char(c) => {
                             crate::ui::input::insert_char(input, cursor, c);
                             Ok(None)
@@ -133,6 +161,14 @@ impl AppState {
                         }
                         KeyCode::Right => {
                             crate::ui::input::move_right(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::PageUp => {
+                            *scroll_offset = scroll_offset.saturating_add(10);
+                            Ok(None)
+                        }
+                        KeyCode::PageDown => {
+                            *scroll_offset = scroll_offset.saturating_sub(10);
                             Ok(None)
                         }
                         _ => Ok(None),
@@ -180,6 +216,7 @@ impl AppState {
                             if let Some(idx) = selected_friend_idx {
                                 if *idx > 0 {
                                     *idx -= 1;
+                                    *scroll_offset = 0;
                                 }
                             }
                             Ok(None)
@@ -188,6 +225,7 @@ impl AppState {
                             if let Some(idx) = selected_friend_idx {
                                 if *idx + 1 < friend_count {
                                     *idx += 1;
+                                    *scroll_offset = 0;
                                 }
                             }
                             Ok(None)
@@ -195,10 +233,19 @@ impl AppState {
                         KeyCode::Enter => {
                             if let Some(idx) = *selected_friend_idx {
                                 *input_focused = true;
+                                *scroll_offset = 0;
                                 Ok(Some(AppAction::SelectFriend(idx)))
                             } else {
                                 Ok(None)
                             }
+                        }
+                        KeyCode::PageUp => {
+                            *scroll_offset = scroll_offset.saturating_add(10);
+                            Ok(None)
+                        }
+                        KeyCode::PageDown => {
+                            *scroll_offset = scroll_offset.saturating_sub(10);
+                            Ok(None)
                         }
                         _ => Ok(None),
                     }
@@ -207,6 +254,34 @@ impl AppState {
 
             AppState::AddingFriend { input, cursor, error } => {
                 match key.code {
+                    KeyCode::Home => {
+                        crate::ui::input::move_to_start(cursor);
+                        Ok(None)
+                    }
+                    KeyCode::End => {
+                        crate::ui::input::move_to_end(input, cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Delete => {
+                        crate::ui::input::delete_forward(input, cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        crate::ui::input::move_to_start(cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        crate::ui::input::move_to_end(input, cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        crate::ui::input::delete_word_backward(input, cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        crate::ui::input::delete_to_start(input, cursor);
+                        Ok(None)
+                    }
                     KeyCode::Char(c) => {
                         crate::ui::input::insert_char(input, cursor, c);
                         Ok(None)
@@ -381,6 +456,34 @@ impl AppState {
             AppState::ViewingChannel { input, cursor, is_own, channel_type, .. } => {
                 if *is_own {
                     match key.code {
+                        KeyCode::Home => {
+                            crate::ui::input::move_to_start(cursor);
+                            Ok(None)
+                        }
+                        KeyCode::End => {
+                            crate::ui::input::move_to_end(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Delete => {
+                            crate::ui::input::delete_forward(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            crate::ui::input::move_to_start(cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            crate::ui::input::move_to_end(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            crate::ui::input::delete_word_backward(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            crate::ui::input::delete_to_start(input, cursor);
+                            Ok(None)
+                        }
                         KeyCode::Char(c) => {
                             crate::ui::input::insert_char(input, cursor, c);
                             Ok(None)
@@ -419,6 +522,34 @@ impl AppState {
 
             AppState::SubscribingToChannel { input, cursor, error } => {
                 match key.code {
+                    KeyCode::Home => {
+                        crate::ui::input::move_to_start(cursor);
+                        Ok(None)
+                    }
+                    KeyCode::End => {
+                        crate::ui::input::move_to_end(input, cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Delete => {
+                        crate::ui::input::delete_forward(input, cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        crate::ui::input::move_to_start(cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        crate::ui::input::move_to_end(input, cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        crate::ui::input::delete_word_backward(input, cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        crate::ui::input::delete_to_start(input, cursor);
+                        Ok(None)
+                    }
                     KeyCode::Char(c) => {
                         crate::ui::input::insert_char(input, cursor, c);
                         Ok(None)
@@ -1103,6 +1234,104 @@ mod tests {
         match &state {
             AppState::Normal { selected_friend_idx, .. } => {
                 assert_eq!(*selected_friend_idx, Some(3));
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn page_up_increases_scroll_offset() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: Some(1),
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), 1).unwrap();
+        match &state {
+            AppState::Normal { scroll_offset, .. } => {
+                assert_eq!(*scroll_offset, 10);
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn page_down_decreases_scroll_offset() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: Some(1),
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 20,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), 1).unwrap();
+        match &state {
+            AppState::Normal { scroll_offset, .. } => {
+                assert_eq!(*scroll_offset, 10);
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn page_down_does_not_underflow() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: Some(1),
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 5,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), 1).unwrap();
+        match &state {
+            AppState::Normal { scroll_offset, .. } => {
+                assert_eq!(*scroll_offset, 0); // saturating_sub prevents underflow
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn page_up_works_while_input_focused() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: Some(1),
+            input: "typing...".to_string(),
+            cursor: 9,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        state.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), 1).unwrap();
+        match &state {
+            AppState::Normal { scroll_offset, input, .. } => {
+                assert_eq!(*scroll_offset, 10);
+                assert_eq!(input, "typing..."); // input unchanged
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn scroll_resets_on_friend_change() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: Some(1),
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 30,
+        };
+        // Move down to next friend
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 5).unwrap();
+        match &state {
+            AppState::Normal { scroll_offset, selected_friend_idx, .. } => {
+                assert_eq!(*selected_friend_idx, Some(1));
+                assert_eq!(*scroll_offset, 0); // reset on conversation change
             }
             _ => panic!("Expected Normal state"),
         }
