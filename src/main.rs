@@ -446,6 +446,8 @@ async fn main() -> Result<()> {
             match event::read()? {
                 Event::Key(key) => {
                     dirty = true; // Any key press invalidates cached state
+                    let was_setting_ephemeral =
+                        matches!(app_state, AppState::SettingEphemeral { .. });
                     match app_state.handle_key(key, cached_friend_count)? {
                         Some(AppAction::SendFriendRequest(code)) => {
                             let app_lock = app.lock().await;
@@ -933,6 +935,29 @@ async fn main() -> Result<()> {
                         Some(AppAction::SendPresence(_)) => {} // Reserved for future use
                         Some(AppAction::Quit) => break Ok(()),
                         None => {} // Just state change
+                    }
+
+                    // When entering the ephemeral modal, highlight the current TTL
+                    if !was_setting_ephemeral {
+                        if let AppState::SettingEphemeral {
+                            conversation_id: conv_id,
+                            ref mut selected_idx,
+                        } = app_state
+                        {
+                            let app_lock = app.lock().await;
+                            let current_ttl =
+                                db::queries::get_conversation_ephemeral_ttl(&app_lock.db, conv_id)
+                                    .unwrap_or(None);
+                            drop(app_lock);
+                            *selected_idx = match current_ttl {
+                                None => 0,            // Off
+                                Some(300) => 1,       // 5 minutes
+                                Some(3600) => 2,      // 1 hour
+                                Some(86400) => 3,     // 24 hours
+                                Some(604800) => 4,    // 7 days
+                                Some(_) => 0,         // Unknown -> Off
+                            };
+                        }
                     }
 
                     // Typing indicator detection
