@@ -13,6 +13,7 @@ pub async fn start(
     app: Arc<Mutex<App>>,
     presence: PresenceMap,
     msg_broadcast_tx: broadcast::Sender<String>,
+    auth_token: String,
 ) -> tokio::task::JoinHandle<()> {
     // Remove stale socket file if it exists
     if socket_path.exists() {
@@ -47,8 +48,9 @@ pub async fn start(
                     let app = Arc::clone(&app);
                     let presence = presence.clone();
                     let broadcast_tx = msg_broadcast_tx.clone();
+                    let auth_token = auth_token.clone();
                     tokio::spawn(async move {
-                        handle_connection(stream, app, presence, broadcast_tx).await;
+                        handle_connection(stream, app, presence, broadcast_tx, auth_token).await;
                     });
                 }
                 Err(e) => {
@@ -64,9 +66,11 @@ async fn handle_connection(
     app: Arc<Mutex<App>>,
     presence: PresenceMap,
     msg_broadcast_tx: broadcast::Sender<String>,
+    auth_token: String,
 ) {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
+    let mut authenticated = false;
 
     while let Ok(Some(line)) = lines.next_line().await {
         let request: rpc::RpcRequest = match serde_json::from_str(&line) {
@@ -78,6 +82,26 @@ async fn handle_connection(
                 continue;
             }
         };
+
+        // Require auth on first request
+        if !authenticated {
+            let provided_token = request.params.get("auth").and_then(|v| v.as_str());
+            match provided_token {
+                Some(t) if t == auth_token => {
+                    authenticated = true;
+                }
+                _ => {
+                    let resp = rpc::RpcResponse::error(
+                        request.id.clone(),
+                        -32001,
+                        "Unauthorized: invalid or missing auth token".into(),
+                    );
+                    let json = serde_json::to_string(&resp).unwrap_or_default();
+                    let _ = writer.write_all(format!("{}\n", json).as_bytes()).await;
+                    return; // Disconnect unauthorized client
+                }
+            }
+        }
 
         // Handle streaming `listen` method: subscribe to broadcast and
         // stream events until the client disconnects.

@@ -7,6 +7,14 @@ use tokio::net::UnixStream;
 /// Send an RPC request to the daemon and return the result.
 pub async fn rpc_call(data_dir: &Path, method: &str, params: Value) -> Result<Value> {
     let socket_path = data_dir.join("chattor.sock");
+    let token_path = data_dir.join("daemon.token");
+
+    // Read auth token
+    let auth_token = std::fs::read_to_string(&token_path).map_err(|_| {
+        ChattorError::Network(
+            "Cannot read daemon token. Is the daemon running? Start with: chattor daemon".into(),
+        )
+    })?;
 
     let stream = UnixStream::connect(&socket_path).await.map_err(|_| {
         ChattorError::Network(
@@ -16,11 +24,21 @@ pub async fn rpc_call(data_dir: &Path, method: &str, params: Value) -> Result<Va
 
     let (reader, mut writer) = stream.into_split();
 
+    // First request includes auth token
+    let mut merged_params = match params {
+        Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    merged_params.insert(
+        "auth".to_string(),
+        Value::String(auth_token.trim().to_string()),
+    );
+
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": method,
-        "params": params,
+        "params": Value::Object(merged_params),
     });
 
     let line = format!("{}\n", serde_json::to_string(&request).unwrap());

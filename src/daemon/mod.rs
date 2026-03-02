@@ -28,6 +28,23 @@ pub async fn run(settings: Settings) -> Result<()> {
     let pid_path = settings.data_dir.join("chattor.pid");
     pid::acquire(&pid_path)?;
 
+    // Generate auth token for RPC authentication
+    let token_path = settings.data_dir.join("daemon.token");
+    let auth_token = {
+        use rand::Rng;
+        let token: [u8; 32] = rand::thread_rng().gen();
+        let token_hex = hex::encode(token);
+        std::fs::write(&token_path, &token_hex)
+            .map_err(|e| crate::error::ChattorError::Io(e))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| crate::error::ChattorError::Io(e))?;
+        }
+        token_hex
+    };
+
     // Bootstrap Tor
     eprintln!("Bootstrapping Tor...");
     {
@@ -66,6 +83,7 @@ pub async fn run(settings: Settings) -> Result<()> {
         Arc::clone(&app),
         presence_map.clone(),
         msg_broadcast_tx.clone(),
+        auth_token,
     )
     .await;
     eprintln!("Listening on {}", socket_path.display());
@@ -73,8 +91,9 @@ pub async fn run(settings: Settings) -> Result<()> {
     // Run event loop (blocks until shutdown signal)
     let result = event_loop::run(Arc::clone(&app), presence_map, msg_broadcast_tx).await;
 
-    // Cleanup socket and PID file
+    // Cleanup socket, token, and PID file
     std::fs::remove_file(&socket_path).ok();
+    std::fs::remove_file(&token_path).ok();
     pid::release(&pid_path);
     result
 }
