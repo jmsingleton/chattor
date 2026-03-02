@@ -63,12 +63,22 @@ pub async fn listen_for_tor_connections(
     rend_requests: impl futures::Stream<Item = RendRequest> + Send + 'static,
     tx: mpsc::Sender<IncomingMessage>,
 ) -> Result<()> {
+    use std::sync::Arc;
+
     let stream_requests = handle_rend_requests(rend_requests);
     futures::pin_mut!(stream_requests);
 
+    // Limit concurrent incoming connection handlers to prevent DoS
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(50));
+
     while let Some(stream_request) = stream_requests.next().await {
         let tx = tx.clone();
+        let permit = match semaphore.clone().acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => break, // Semaphore closed
+        };
         tokio::spawn(async move {
+            let _permit = permit; // Hold until handler completes
             match stream_request.accept(Connected::new_empty()).await {
                 Ok(mut data_stream) => {
                     match crate::net::framing::receive_message(&mut data_stream).await {
