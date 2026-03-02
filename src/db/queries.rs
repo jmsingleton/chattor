@@ -755,6 +755,16 @@ pub fn cleanup_stale_prekey_material(db: &Database, max_age_secs: u64) -> Result
     Ok(count)
 }
 
+/// Store a peer's Ed25519 public key (TOFU binding).
+pub fn store_friend_pubkey(db: &crate::db::Database, onion: &str, pubkey: &[u8]) -> crate::error::Result<()> {
+    let conn = db.connection();
+    conn.execute(
+        "UPDATE friends SET ed25519_pubkey = ?1 WHERE onion_address = ?2",
+        (pubkey, onion),
+    ).map_err(|e| crate::error::ChattorError::Database(format!("Failed to store friend pubkey: {}", e)))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

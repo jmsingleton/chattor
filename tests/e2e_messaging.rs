@@ -496,32 +496,29 @@ fn test_message_queue_with_encrypted_messages() {
 #[test]
 fn test_friend_request_signature_verification() {
     let alice_identity = IdentityKeypair::generate().unwrap();
-    let alice_onion = alice_identity.to_onion_address();
+    let alice_onion = "alice-test.onion"; // Any onion works — TOFU verifies against included pubkey
     let friend_code = "happy-1234-tiger-5678";
 
     // 1. Alice creates a signed friend request
     let request =
-        FriendRequestHandler::create_request(&alice_identity, &alice_onion, friend_code).unwrap();
+        FriendRequestHandler::create_request(&alice_identity, alice_onion, friend_code).unwrap();
 
     assert_eq!(request.from_onion, alice_onion);
     assert_eq!(request.from_friendcode, friend_code);
     assert!(!request.signature.is_empty());
 
-    // 2. Verify signature passes validation
-    let (_tmp, db) = temp_db();
-    let handler = FriendRequestHandler::new(db);
+    // 2. Verify signature passes validation (now a static method)
     assert!(
-        handler.validate_request(&request).unwrap(),
+        FriendRequestHandler::validate_request(&request).unwrap(),
         "Valid signature should pass verification"
     );
 
-    // 3. Tamper with the message (change from_onion to a different identity)
-    let eve_identity = IdentityKeypair::generate().unwrap();
+    // 3. Tamper with the message (change from_onion)
     let mut tampered = request.clone();
-    tampered.from_onion = eve_identity.to_onion_address();
+    tampered.from_onion = "eve-evil.onion".to_string();
 
     assert!(
-        !handler.validate_request(&tampered).unwrap(),
+        !FriendRequestHandler::validate_request(&tampered).unwrap(),
         "Tampered from_onion should fail verification"
     );
 
@@ -529,7 +526,7 @@ fn test_friend_request_signature_verification() {
     let mut tampered_code = request.clone();
     tampered_code.from_friendcode = "evil-9999-hacker-0000".to_string();
     assert!(
-        !handler.validate_request(&tampered_code).unwrap(),
+        !FriendRequestHandler::validate_request(&tampered_code).unwrap(),
         "Tampered friend code should fail verification"
     );
 
@@ -537,7 +534,7 @@ fn test_friend_request_signature_verification() {
     let mut tampered_ts = request.clone();
     tampered_ts.timestamp += 1;
     assert!(
-        !handler.validate_request(&tampered_ts).unwrap(),
+        !FriendRequestHandler::validate_request(&tampered_ts).unwrap(),
         "Tampered timestamp should fail verification"
     );
 
@@ -547,7 +544,7 @@ fn test_friend_request_signature_verification() {
     sig_bytes[0] ^= 0xFF; // flip bits
     tampered_sig.signature = STANDARD.encode(&sig_bytes);
     assert!(
-        !handler.validate_request(&tampered_sig).unwrap(),
+        !FriendRequestHandler::validate_request(&tampered_sig).unwrap(),
         "Corrupted signature should fail verification"
     );
 }

@@ -40,15 +40,26 @@ impl FriendRequestHandler {
             from_friendcode: friend_code.to_string(),
             timestamp,
             signature: signature_base64,
+            ed25519_pubkey: Some(identity.public_key_base64()),
         })
     }
 
-    /// Validate received friend request
-    pub fn validate_request(&self, request: &FriendRequestMessage) -> Result<bool> {
+    /// Validate received friend request using TOFU — verify the Ed25519
+    /// signature against the pubkey included in the message itself.
+    pub fn validate_request(request: &FriendRequestMessage) -> Result<bool> {
+        // Require Ed25519 pubkey for verification
+        let pubkey_b64 = match &request.ed25519_pubkey {
+            Some(pk) => pk,
+            None => {
+                tracing::warn!("Friend request from {} missing Ed25519 pubkey, rejecting", request.from_onion);
+                return Ok(false);
+            }
+        };
+
         // Check timestamp (within 5 minutes)
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs() as i64;
 
         let age = (now - request.timestamp).abs();
@@ -56,9 +67,13 @@ impl FriendRequestHandler {
             return Ok(false);
         }
 
-        // Extract public key from sender's .onion address
-        let pubkey_bytes = match crate::protocol::friend_code::onion_to_pubkey(&request.from_onion) {
+        // Decode public key from base64
+        let pubkey_bytes = match base64::engine::general_purpose::STANDARD.decode(pubkey_b64) {
             Ok(bytes) => bytes,
+            Err(_) => return Ok(false),
+        };
+        let pubkey_array: [u8; 32] = match pubkey_bytes.try_into() {
+            Ok(arr) => arr,
             Err(_) => return Ok(false),
         };
 
@@ -74,7 +89,7 @@ impl FriendRequestHandler {
         // Verify Ed25519 signature
         use ed25519_dalek::{VerifyingKey, Verifier, Signature};
 
-        let verifying_key = match VerifyingKey::from_bytes(&pubkey_bytes) {
+        let verifying_key = match VerifyingKey::from_bytes(&pubkey_array) {
             Ok(key) => key,
             Err(_) => return Ok(false),
         };
@@ -142,6 +157,7 @@ impl FriendRequestHandler {
             signal_prekey_bundle: bundle_json,
             timestamp,
             signature: signature_base64,
+            ed25519_pubkey: Some(identity.public_key_base64()),
         })
     }
 
@@ -228,35 +244,27 @@ mod tests {
     #[test]
     fn test_validate_request_verifies_signature() {
         let identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let onion = identity.to_onion_address();
+        let onion = "test.onion"; // Any onion works — we verify against included pubkey
         let friend_code = "happy-1234-tiger-5678";
 
-        let request = FriendRequestHandler::create_request(&identity, &onion, friend_code).unwrap();
+        let request = FriendRequestHandler::create_request(&identity, onion, friend_code).unwrap();
 
-        let temp_db = tempfile::NamedTempFile::new().unwrap();
-        let db = crate::db::Database::open(temp_db.path()).unwrap();
-        let handler = FriendRequestHandler::new(db);
-
-        assert!(handler.validate_request(&request).unwrap());
+        assert!(FriendRequestHandler::validate_request(&request).unwrap());
     }
 
     #[test]
     fn test_validate_request_rejects_forged_signature() {
         let identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        let onion = identity.to_onion_address();
+        let onion = "test.onion";
         let friend_code = "happy-1234-tiger-5678";
 
-        let mut request = FriendRequestHandler::create_request(&identity, &onion, friend_code).unwrap();
+        let mut request = FriendRequestHandler::create_request(&identity, onion, friend_code).unwrap();
 
-        // Forge: change the from_onion to a different identity's address
+        // Forge: replace with a different identity's pubkey
         let other_identity = crate::crypto::IdentityKeypair::generate().unwrap();
-        request.from_onion = other_identity.to_onion_address();
+        request.ed25519_pubkey = Some(other_identity.public_key_base64());
 
-        let temp_db = tempfile::NamedTempFile::new().unwrap();
-        let db = crate::db::Database::open(temp_db.path()).unwrap();
-        let handler = FriendRequestHandler::new(db);
-
-        assert!(!handler.validate_request(&request).unwrap());
+        assert!(!FriendRequestHandler::validate_request(&request).unwrap());
     }
 
     #[test]

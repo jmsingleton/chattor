@@ -56,23 +56,35 @@ pub async fn handle_incoming_message(
 
     match &incoming.message {
         protocol::message::Message::FriendRequest(req) => {
-            // Store incoming friend request in database
-            let conn = app.db.connection();
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
+            // Verify Ed25519 signature before storing
+            use crate::protocol::friend_request::FriendRequestHandler;
+            match FriendRequestHandler::validate_request(req) {
+                Ok(true) => {
+                    // Signature valid — store the request
+                    let conn = app.db.connection();
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
 
-            conn.execute(
-                "INSERT INTO friend_requests (from_onion, friend_code, received_at, status)
-                 VALUES (?1, ?2, ?3, 'pending')",
-                (&req.from_onion, &req.from_friendcode, now),
-            )
-            .map_err(|e| {
-                error::ChattorError::Database(format!("Failed to save friend request: {}", e))
-            })?;
+                    conn.execute(
+                        "INSERT INTO friend_requests (from_onion, friend_code, received_at, status)
+                         VALUES (?1, ?2, ?3, 'pending')",
+                        (&req.from_onion, &req.from_friendcode, now),
+                    )
+                    .map_err(|e| {
+                        error::ChattorError::Database(format!("Failed to save friend request: {}", e))
+                    })?;
 
-            eprintln!("Received friend request from {}", req.from_onion);
+                    eprintln!("Received verified friend request from {}", req.from_onion);
+                }
+                Ok(false) => {
+                    eprintln!("Rejected friend request from {} (invalid signature)", req.from_onion);
+                }
+                Err(e) => {
+                    eprintln!("Error validating friend request from {}: {}", req.from_onion, e);
+                }
+            }
         }
         protocol::message::Message::FriendRequestAccept(accept) => {
             handle_incoming_accept(app, accept)?;
