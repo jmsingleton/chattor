@@ -691,6 +691,70 @@ pub fn set_app_setting(db: &Database, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Delete stale PreKey private material older than max_age_secs.
+/// Returns the number of peers whose material was cleaned up.
+pub fn cleanup_stale_prekey_material(db: &Database, max_age_secs: u64) -> Result<usize> {
+    let conn = db.connection();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Find stale peers by checking prekey_created_at entries
+    let mut stmt = conn
+        .prepare("SELECT key, value FROM app_settings WHERE key LIKE 'prekey_created_at:%'")
+        .map_err(|e| {
+            ChattorError::Database(format!("Failed to query prekey timestamps: {}", e))
+        })?;
+
+    let stale_peers: Vec<String> = stmt
+        .query_map([], |row| {
+            let key: String = row.get(0)?;
+            let ts_str: String = row.get(1)?;
+            Ok((key, ts_str))
+        })
+        .map_err(|e| {
+            ChattorError::Database(format!("Failed to read prekey timestamps: {}", e))
+        })?
+        .filter_map(|r| r.ok())
+        .filter_map(|(key, ts_str)| {
+            let ts: u64 = ts_str.parse().ok()?;
+            if now.saturating_sub(ts) > max_age_secs {
+                // Extract onion from "prekey_created_at:<onion>"
+                key.strip_prefix("prekey_created_at:")
+                    .map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let count = stale_peers.len();
+    for peer in &stale_peers {
+        conn.execute(
+            "DELETE FROM app_settings WHERE key LIKE ?1",
+            [&format!("prekey_%:{}", peer)],
+        )
+        .ok();
+        conn.execute(
+            "DELETE FROM app_settings WHERE key = ?1",
+            [&format!("signal_identity_secret:{}", peer)],
+        )
+        .ok();
+        conn.execute(
+            "DELETE FROM app_settings WHERE key = ?1",
+            [&format!("prekey_created_at:{}", peer)],
+        )
+        .ok();
+        tracing::warn!(
+            "Cleaned up stale PreKey material for {} (>7 days)",
+            &peer[..8.min(peer.len())]
+        );
+    }
+
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

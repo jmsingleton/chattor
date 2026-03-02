@@ -11,6 +11,7 @@ pub async fn spawn_all(
 ) {
     spawn_channel_sync(Arc::clone(&app));
     spawn_heartbeat(Arc::clone(&app), pool_rx);
+    spawn_prekey_cleanup(Arc::clone(&app));
 }
 
 fn spawn_channel_sync(app: Arc<Mutex<App>>) {
@@ -79,6 +80,20 @@ fn spawn_heartbeat(
             }
 
             tokio::time::sleep(crate::presence::HEARTBEAT_INTERVAL).await;
+        }
+    });
+}
+
+fn spawn_prekey_cleanup(app: Arc<Mutex<App>>) {
+    tokio::spawn(async move {
+        // Run every hour
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            let app_lock = app.lock().await;
+            let _ = crate::db::queries::cleanup_stale_prekey_material(
+                &app_lock.db,
+                7 * 24 * 3600, // 7 days
+            );
         }
     });
 }
