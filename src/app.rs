@@ -6,6 +6,7 @@ use crate::tor::client::TorClient;
 use crate::tor::hidden_service::HiddenService;
 use crate::net::queue::MessageQueue;
 use crate::net::pool::ConnectionPool;
+use crate::net::rate_limit::RateLimiter;
 use std::fs;
 use std::sync::Arc;
 
@@ -25,6 +26,7 @@ pub struct App {
     pub onion_address: Option<String>,
     pub incoming_message_rx: Option<tokio::sync::mpsc::Receiver<crate::net::listener::IncomingMessage>>,
     pub queue_command_rx: Option<tokio::sync::mpsc::Receiver<QueueCommand>>,
+    pub rate_limiter: Arc<RateLimiter>,
 }
 
 impl App {
@@ -54,6 +56,7 @@ impl App {
         let message_queue = MessageQueue::new();
         let tor_client = None; // Will be initialized when Tor is enabled
         let hidden_service = None;
+        let rate_limiter = Arc::new(RateLimiter::default_limiter());
 
         Ok(App {
             settings,
@@ -66,6 +69,7 @@ impl App {
             onion_address,
             incoming_message_rx: None,
             queue_command_rx: None,
+            rate_limiter,
         })
     }
 
@@ -128,6 +132,7 @@ impl App {
         crate::db::queries::initialize_channels(&db)?;
         let identity = IdentityKeypair::load_from_db(&db);
         let message_queue = MessageQueue::new();
+        let rate_limiter = Arc::new(RateLimiter::default_limiter());
 
         // Load previously-persisted .onion address (set during Tor init)
         let onion_address = crate::db::queries::get_app_setting(&db, "onion_address")
@@ -144,6 +149,7 @@ impl App {
             onion_address,
             incoming_message_rx: None,
             queue_command_rx: None,
+            rate_limiter,
         })
     }
 }

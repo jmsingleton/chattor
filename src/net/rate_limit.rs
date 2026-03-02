@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -54,8 +52,6 @@ impl RateLimiter {
         }
     }
 }
-
-// TODO: wire into message dispatch in listener.rs or main.rs incoming message handler
 
 #[cfg(test)]
 mod tests {

@@ -32,6 +32,28 @@ pub async fn handle_incoming_message(
     incoming: net::listener::IncomingMessage,
     presence: &presence::PresenceMap,
 ) -> Result<()> {
+    // Extract sender onion for rate limiting
+    let sender_onion = match &incoming.message {
+        protocol::message::Message::FriendRequest(req) => Some(req.from_onion.as_str()),
+        protocol::message::Message::FriendRequestAccept(accept) => Some(accept.from_onion.as_str()),
+        protocol::message::Message::TextMessage(msg) => Some(msg.from_onion.as_str()),
+        protocol::message::Message::Presence(pres) => Some(pres.from_onion.as_str()),
+        protocol::message::Message::ChannelSubscribe(sub) => Some(sub.subscriber_onion.as_str()),
+        protocol::message::Message::ChannelUnsubscribe(unsub) => Some(unsub.subscriber_onion.as_str()),
+        protocol::message::Message::ChannelPost(post) => Some(post.publisher_onion.as_str()),
+        protocol::message::Message::ChannelSyncRequest(req) => Some(req.subscriber_onion.as_str()),
+        protocol::message::Message::ChannelSyncResponse(resp) => Some(resp.publisher_onion.as_str()),
+        protocol::message::Message::ChannelPostReceipt(receipt) => Some(receipt.reader_onion.as_str()),
+        _ => None,
+    };
+
+    if let Some(peer) = sender_onion {
+        if !app.rate_limiter.check(peer) {
+            tracing::warn!("Rate limited message from {}", &peer[..8.min(peer.len())]);
+            return Ok(());
+        }
+    }
+
     match &incoming.message {
         protocol::message::Message::FriendRequest(req) => {
             // Store incoming friend request in database
