@@ -19,13 +19,25 @@ pub async fn start(
         std::fs::remove_file(socket_path).ok();
     }
 
+    // Set restrictive umask BEFORE binding so the socket is created with 0600
+    // from the start, eliminating the race window between bind and chmod.
+    #[cfg(unix)]
+    let old_umask = unsafe { libc::umask(0o077) };
+
     let listener = UnixListener::bind(socket_path).expect("Failed to bind Unix socket");
 
-    // Restrict permissions to owner only (0600)
+    // Restore original umask
+    #[cfg(unix)]
+    unsafe {
+        libc::umask(old_umask);
+    }
+
+    // Explicitly set permissions as defense-in-depth (fail hard on error)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600)).ok();
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))
+            .expect("Failed to set socket permissions to 0600");
     }
 
     tokio::spawn(async move {
