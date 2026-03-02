@@ -172,6 +172,24 @@ pub fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
         error::ChattorError::Database(format!("Failed to store Signal identity secret: {}", e))
     })?;
 
+    // Store creation timestamp for TTL cleanup
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+        (
+            &format!("prekey_created_at:{}", from_onion),
+            &format!(
+                "{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            ),
+        ),
+    )
+    .map_err(|e| {
+        error::ChattorError::Database(format!("Failed to store PreKey timestamp: {}", e))
+    })?;
+
     // Add friend to database
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
