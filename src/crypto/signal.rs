@@ -1,6 +1,7 @@
 use crate::error::{Result, ChattorError};
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// PreKey bundle for Signal Protocol session initialization.
 ///
@@ -19,11 +20,21 @@ pub struct PreKeyBundle {
 /// Contains the private keys needed to complete Signal Protocol's X3DH
 /// key agreement when receiving messages encrypted to this PreKey bundle.
 /// All secrets are raw 32-byte X25519 private key scalars.
-#[derive(Debug)]
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct PreKeyPrivateMaterial {
     pub identity_secret: [u8; 32],      // X25519 private key bytes
     pub signed_prekey_secret: [u8; 32], // X25519 private key bytes
     pub prekey_secret: Option<[u8; 32]>, // X25519 private key bytes
+}
+
+impl std::fmt::Debug for PreKeyPrivateMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreKeyPrivateMaterial")
+            .field("identity_secret", &"[REDACTED]")
+            .field("signed_prekey_secret", &"[REDACTED]")
+            .field("prekey_secret", &self.prekey_secret.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 /// A signed prekey with a VXEdDSA signature (96 bytes).
