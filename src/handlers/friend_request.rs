@@ -123,6 +123,7 @@ pub fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
         signal_prekey_bundle: bundle_json,
         timestamp,
         signature: base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
+        ed25519_pubkey: Some(identity.public_key_base64()),
     };
 
     // Store PreKey private material so we can create the Signal session later
@@ -259,6 +260,43 @@ pub fn handle_incoming_accept(
     let bundle: PreKeyBundle = serde_json::from_str(&accept.signal_prekey_bundle).map_err(|e| {
         error::ChattorError::Crypto(format!("Failed to parse PreKey bundle: {}", e))
     })?;
+
+    // Verify Ed25519 signature on accept message (TOFU)
+    if let Some(ref pubkey_b64) = accept.ed25519_pubkey {
+        let data = format!("{}{}{}", accept.from_onion, accept.to_onion, accept.timestamp);
+        let pubkey_bytes = base64::engine::general_purpose::STANDARD
+            .decode(pubkey_b64)
+            .map_err(|e| error::ChattorError::Crypto(format!("Failed to decode accept pubkey: {}", e)))?;
+        let pubkey_array: [u8; 32] = pubkey_bytes.try_into().map_err(|_| {
+            error::ChattorError::Crypto("Accept pubkey has wrong length".into())
+        })?;
+        let sig_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&accept.signature)
+            .map_err(|e| error::ChattorError::Crypto(format!("Failed to decode accept signature: {}", e)))?;
+        let sig_array: [u8; 64] = sig_bytes.try_into().map_err(|_| {
+            error::ChattorError::Crypto("Accept signature has wrong length".into())
+        })?;
+
+        use ed25519_dalek::{VerifyingKey, Verifier, Signature};
+        let verifying_key = VerifyingKey::from_bytes(&pubkey_array)
+            .map_err(|_| error::ChattorError::Crypto("Invalid Ed25519 pubkey in accept".into()))?;
+        let signature = Signature::from_bytes(&sig_array);
+        verifying_key.verify(data.as_bytes(), &signature)
+            .map_err(|_| error::ChattorError::Crypto(
+                format!("Accept message from {} has invalid Ed25519 signature", accept.from_onion)
+            ))?;
+    } else {
+        return Err(error::ChattorError::Crypto(
+            format!("Accept message from {} missing Ed25519 pubkey, rejecting", accept.from_onion)
+        ));
+    }
+
+    // Verify PreKeyBundle VXEdDSA signature (self-consistency check)
+    if !bundle.verify_signature()? {
+        return Err(error::ChattorError::Crypto(
+            format!("Accept message from {} has invalid PreKeyBundle VXEdDSA signature", accept.from_onion)
+        ));
+    }
 
     // Load our Signal identity secret that was stored when we sent the friend request.
     // We are the original requester; the acceptor sent us their PreKey bundle.
@@ -404,6 +442,13 @@ pub fn handle_incoming_accept(
 
     // Also subscribe them to our friends_only channel
     db::queries::add_channel_subscriber(&app.db, &accept.from_onion, "friends_only")?;
+
+    // Store peer's Ed25519 pubkey for future verification (TOFU)
+    if let Some(ref pubkey_b64) = accept.ed25519_pubkey {
+        if let Ok(pubkey_bytes) = base64::engine::general_purpose::STANDARD.decode(pubkey_b64) {
+            db::queries::store_friend_pubkey(&app.db, &accept.from_onion, &pubkey_bytes)?;
+        }
+    }
 
     eprintln!("Friend request accepted by {}", accept.from_onion);
 
