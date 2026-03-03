@@ -47,27 +47,31 @@ async fn main() -> Result<()> {
             let salt_path = settings.data_dir.join("db.salt");
             let salt = db::encryption::load_or_create_salt(&salt_path)?;
 
-            let passphrase = rpassword::prompt_password_stderr("Database passphrase: ")
-                .map_err(error::ChattorError::Io)?;
-            if passphrase.is_empty() {
+            let passphrase = zeroize::Zeroizing::new(
+                rpassword::prompt_password_stderr("Database passphrase: ")
+                    .map_err(error::ChattorError::Io)?,
+            );
+            if passphrase.trim().is_empty() {
                 return Err(error::ChattorError::Crypto(
                     "Passphrase cannot be empty".into(),
                 ));
             }
 
-            let db_key = if db::encryption::is_unencrypted(&settings.db_path) {
-                let key = db::encryption::derive_key(passphrase.as_bytes(), &salt)?;
-                eprintln!("Migrating existing database to encrypted format...");
-                let tmp_path = settings.db_path.with_extension("db.enc");
-                db::Database::migrate_to_encrypted(&settings.db_path, &tmp_path, &key)?;
-                std::fs::rename(&tmp_path, &settings.db_path)?;
-                eprintln!("Database migration complete.");
-                key
-            } else {
-                db::encryption::derive_key(passphrase.as_bytes(), &salt)?
-            };
+            let db_key = zeroize::Zeroizing::new(
+                if db::encryption::is_unencrypted(&settings.db_path) {
+                    let key = db::encryption::derive_key(passphrase.as_bytes(), &salt)?;
+                    eprintln!("Migrating existing database to encrypted format...");
+                    let tmp_path = settings.db_path.with_extension("db.enc");
+                    db::Database::migrate_to_encrypted(&settings.db_path, &tmp_path, &key)?;
+                    std::fs::rename(&tmp_path, &settings.db_path)?;
+                    eprintln!("Database migration complete.");
+                    key
+                } else {
+                    db::encryption::derive_key(passphrase.as_bytes(), &salt)?
+                },
+            );
 
-            run_tui(settings, theme, Some(db_key)).await
+            run_tui(settings, theme, Some(*db_key)).await
         }
 
         // Headless daemon

@@ -101,11 +101,11 @@ impl Database {
         .map_err(|e| ChattorError::Database(format!("Failed to open database: {}", e)))?;
 
         // Set encryption key FIRST, before any other operations
-        let key_hex = hex::encode(key);
+        let key_hex = zeroize::Zeroizing::new(hex::encode(key));
         conn.execute_batch(&format!(
             "PRAGMA key = \"x'{}'\";\
              PRAGMA cipher_page_size = 4096;",
-            key_hex
+            *key_hex
         ))
         .map_err(|e| ChattorError::Database(format!("Failed to set encryption key: {}", e)))?;
 
@@ -136,7 +136,7 @@ impl Database {
         let old_conn = Connection::open_with_flags(&old_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| ChattorError::Database(format!("Failed to open old database: {}", e)))?;
 
-        let key_hex = hex::encode(key);
+        let key_hex = zeroize::Zeroizing::new(hex::encode(key));
         let new_path_str = new_path.as_ref().to_string_lossy().to_string();
 
         old_conn
@@ -145,7 +145,7 @@ impl Database {
                  SELECT sqlcipher_export('encrypted');\
                  DETACH DATABASE encrypted;",
                 new_path_str.replace('\'', "''"),
-                key_hex
+                *key_hex
             ))
             .map_err(|e| ChattorError::Database(format!("Failed to migrate database: {}", e)))?;
 

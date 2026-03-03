@@ -17,28 +17,31 @@ pub async fn run(settings: Settings, passphrase_fd: Option<i32>) -> Result<()> {
     let salt_path = settings.data_dir.join("db.salt");
     let salt = crate::db::encryption::load_or_create_salt(&salt_path)?;
 
-    let passphrase = match passphrase_fd {
+    let passphrase = zeroize::Zeroizing::new(match passphrase_fd {
         Some(fd) => read_passphrase_from_fd(fd)?,
         None => rpassword::prompt_password_stderr("Database passphrase: ")
             .map_err(crate::error::ChattorError::Io)?,
-    };
-    if passphrase.is_empty() {
+    });
+    if passphrase.trim().is_empty() {
         return Err(crate::error::ChattorError::Crypto(
             "Passphrase cannot be empty".into(),
         ));
     }
 
-    let db_key = if crate::db::encryption::is_unencrypted(&settings.db_path) {
-        let key = crate::db::encryption::derive_key(passphrase.as_bytes(), &salt)?;
-        eprintln!("Migrating existing database to encrypted format...");
-        let tmp_path = settings.db_path.with_extension("db.enc");
-        crate::db::Database::migrate_to_encrypted(&settings.db_path, &tmp_path, &key)?;
-        std::fs::rename(&tmp_path, &settings.db_path).map_err(crate::error::ChattorError::Io)?;
-        eprintln!("Database migration complete.");
-        key
-    } else {
-        crate::db::encryption::derive_key(passphrase.as_bytes(), &salt)?
-    };
+    let db_key = zeroize::Zeroizing::new(
+        if crate::db::encryption::is_unencrypted(&settings.db_path) {
+            let key = crate::db::encryption::derive_key(passphrase.as_bytes(), &salt)?;
+            eprintln!("Migrating existing database to encrypted format...");
+            let tmp_path = settings.db_path.with_extension("db.enc");
+            crate::db::Database::migrate_to_encrypted(&settings.db_path, &tmp_path, &key)?;
+            std::fs::rename(&tmp_path, &settings.db_path)
+                .map_err(crate::error::ChattorError::Io)?;
+            eprintln!("Database migration complete.");
+            key
+        } else {
+            crate::db::encryption::derive_key(passphrase.as_bytes(), &salt)?
+        },
+    );
 
     let app = Arc::new(Mutex::new(App::new_with_settings(
         settings.clone(),
@@ -129,8 +132,14 @@ pub async fn run(settings: Settings, passphrase_fd: Option<i32>) -> Result<()> {
 }
 
 fn read_passphrase_from_fd(fd: i32) -> Result<String> {
+    if fd < 3 {
+        return Err(crate::error::ChattorError::Crypto(
+            "passphrase-fd must be >= 3 (cannot use stdin/stdout/stderr)".into(),
+        ));
+    }
     use std::io::Read;
     use std::os::unix::io::FromRawFd;
+    // SAFETY: caller guarantees fd is a valid, open file descriptor >= 3.
     let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
     let mut passphrase = String::new();
     file.read_to_string(&mut passphrase)
