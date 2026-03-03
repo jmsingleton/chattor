@@ -219,6 +219,7 @@ mod tests {
             from_friendcode: "test-code".to_string(),
             timestamp: 123456,
             signature: "sig".to_string(),
+            ed25519_pubkey: None,
         })
     }
 

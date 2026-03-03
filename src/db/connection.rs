@@ -54,6 +54,7 @@ impl Database {
                 self.migrate_to_v7()?;
                 self.migrate_to_v8()?;
                 self.migrate_to_v9()?;
+                self.migrate_to_v10()?;
             },
             Err(_) => {
                 // Fresh database - will set version after creating tables
@@ -307,6 +308,34 @@ impl Database {
             warn!("  Sessions will be re-established automatically on next message exchange.");
 
             info!("Migration to schema v9 complete");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate database from v9 to v10 (TOFU Ed25519 pubkey on friends)
+    fn migrate_to_v10(&self) -> Result<()> {
+        let version = self.get_schema_version()?;
+
+        if version < 10 {
+            info!("Migrating database to schema v10 (TOFU Ed25519 pubkey)");
+
+            let conn = self.connection();
+
+            let has_column: bool = conn
+                .prepare("SELECT ed25519_pubkey FROM friends LIMIT 0")
+                .is_ok();
+
+            if !has_column {
+                conn.execute_batch(
+                    "ALTER TABLE friends ADD COLUMN ed25519_pubkey BLOB;"
+                ).map_err(|e| ChattorError::Database(format!("Failed to add ed25519_pubkey: {}", e)))?;
+            }
+
+            conn.execute("UPDATE schema_version SET version = 10", [])
+                .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
+
+            info!("Migration to schema v10 complete");
         }
 
         Ok(())

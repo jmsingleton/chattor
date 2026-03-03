@@ -1,5 +1,5 @@
 /// SQL schema for chattor database
-pub const SCHEMA_VERSION: i32 = 9;
+pub const SCHEMA_VERSION: i32 = 10;
 
 pub const CREATE_TABLES: &str = r#"
 -- Schema version tracking
@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS friends (
     added_at INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     signal_identity_key BLOB,
-    signal_prekey_bundle BLOB
+    signal_prekey_bundle BLOB,
+    ed25519_pubkey BLOB
 );
 
 -- Conversations
@@ -187,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_schema_version_defined() {
-        assert_eq!(SCHEMA_VERSION, 9);
+        assert_eq!(SCHEMA_VERSION, 10);
     }
 
     #[test]

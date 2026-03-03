@@ -61,6 +61,7 @@ fn test_message_queue_integration() {
         from_friendcode: "ALICE-1234".to_string(),
         timestamp: 1234567890,
         signature: "sig123".to_string(),
+        ed25519_pubkey: None,
     });
 
     let queue_id = queue.enqueue(&db, "alice.onion", &msg, "normal").unwrap();
@@ -153,6 +154,7 @@ fn test_protocol_message_serialization() {
         from_friendcode: "ALICE-1234".to_string(),
         timestamp: 1234567890,
         signature: "sig123".to_string(),
+        ed25519_pubkey: None,
     };
 
     let message = Message::FriendRequest(friend_request);

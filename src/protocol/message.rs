@@ -76,6 +76,9 @@ pub struct FriendRequestMessage {
     pub from_friendcode: String,
     pub timestamp: i64,
     pub signature: String,  // base64 ed25519 signature
+    /// Ed25519 public key (base64) for TOFU identity binding
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ed25519_pubkey: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -85,6 +88,9 @@ pub struct FriendRequestAcceptMessage {
     pub signal_prekey_bundle: String,  // Serialized PreKey bundle
     pub timestamp: i64,
     pub signature: String,
+    /// Ed25519 public key (base64) for TOFU identity binding
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ed25519_pubkey: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -222,6 +228,7 @@ mod tests {
             from_friendcode: "happy-1234-tiger-5678".to_string(),
             timestamp: 1234567890,
             signature: "sig123".to_string(),
+            ed25519_pubkey: None,
         });
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -408,6 +415,7 @@ mod tests {
             from_friendcode: "happy-1234-tiger-5678".to_string(),
             timestamp: 1234567890,
             signature: "sig123".to_string(),
+            ed25519_pubkey: None,
         });
 
         let envelope = MessageEnvelope::new(inner.clone());

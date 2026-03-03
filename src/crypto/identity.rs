@@ -144,6 +144,12 @@ impl IdentityKeypair {
         &self._verifying_key
     }
 
+    /// Get the Ed25519 public key as a base64-encoded string.
+    pub fn public_key_base64(&self) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(self._verifying_key.to_bytes())
+    }
+
     /// Get the secret key bytes
     #[allow(dead_code)]
     pub fn secret_key(&self) -> &SigningKey {
