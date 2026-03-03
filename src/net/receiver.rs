@@ -1,9 +1,9 @@
-use crate::db::Database;
-use crate::error::{Result, ChattorError};
 use crate::crypto::SessionStore;
+use crate::db::Database;
+use crate::error::{ChattorError, Result};
 use crate::protocol::message::*;
-use std::sync::Arc;
 use base64::Engine;
+use std::sync::Arc;
 
 /// Handles receiving and decrypting messages
 #[allow(dead_code)]
@@ -38,9 +38,11 @@ impl MessageReceiver {
         };
 
         // Decrypt
-        let header = base64::engine::general_purpose::STANDARD.decode(&message.signal_header)
+        let header = base64::engine::general_purpose::STANDARD
+            .decode(&message.signal_header)
             .map_err(|e| ChattorError::Crypto(format!("Failed to decode header: {}", e)))?;
-        let ciphertext = base64::engine::general_purpose::STANDARD.decode(&message.signal_ciphertext)
+        let ciphertext = base64::engine::general_purpose::STANDARD
+            .decode(&message.signal_ciphertext)
             .map_err(|e| ChattorError::Crypto(format!("Failed to decode ciphertext: {}", e)))?;
         let plaintext = session.decrypt(&header, &ciphertext)?;
 
@@ -107,14 +109,17 @@ mod tests {
         let (alice_signal_secret, _) = gen_signal_identity();
         let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
         let (bob_bundle, bob_private) =
-            crate::crypto::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+            crate::crypto::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public)
+                .unwrap();
 
-        let (alice_session, _ad, ephemeral_public) = crate::crypto::SignalSession::from_prekey_bundle_real(
-            "bob.onion".into(),
-            &bob_bundle,
-            &bob_private,
-            &alice_signal_secret,
-        ).unwrap();
+        let (alice_session, _ad, ephemeral_public) =
+            crate::crypto::SignalSession::from_prekey_bundle_real(
+                "bob.onion".into(),
+                &bob_bundle,
+                &bob_private,
+                &alice_signal_secret,
+            )
+            .unwrap();
 
         let alice_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(&alice_signal_secret);
         let (bob_session, _bob_ad) = crate::crypto::SignalSession::from_prekey_message_real(
@@ -122,7 +127,8 @@ mod tests {
             &bob_private,
             &alice_identity_encoded,
             &ephemeral_public,
-        ).unwrap();
+        )
+        .unwrap();
 
         (alice_session, bob_session)
     }
@@ -205,7 +211,9 @@ mod tests {
             message_type: "text".to_string(),
             ephemeral_ttl: None,
         };
-        let (h1, c1, is_prekey1) = alice_session.encrypt(&serde_json::to_vec(&payload1).unwrap()).unwrap();
+        let (h1, c1, is_prekey1) = alice_session
+            .encrypt(&serde_json::to_vec(&payload1).unwrap())
+            .unwrap();
         assert!(is_prekey1);
         bob_session.decrypt(&h1, &c1).unwrap(); // Process first message
 
@@ -217,7 +225,9 @@ mod tests {
             message_type: "text".to_string(),
             ephemeral_ttl: None,
         };
-        let (h2, c2, is_prekey2) = alice_session.encrypt(&serde_json::to_vec(&payload2).unwrap()).unwrap();
+        let (h2, c2, is_prekey2) = alice_session
+            .encrypt(&serde_json::to_vec(&payload2).unwrap())
+            .unwrap();
         assert!(!is_prekey2); // Second message should NOT be PreKey type
 
         let decrypted = bob_session.decrypt(&h2, &c2).unwrap();

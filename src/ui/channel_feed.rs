@@ -1,3 +1,5 @@
+use crate::db::queries::ChannelPost;
+use crate::ui::theme::Theme;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
@@ -5,8 +7,6 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
     Frame,
 };
-use crate::db::queries::ChannelPost;
-use crate::ui::theme::Theme;
 
 /// Render the channel feed view
 #[allow(clippy::too_many_arguments)]
@@ -23,7 +23,11 @@ pub fn render_channel_feed(
     read_counts: &std::collections::HashMap<String, i64>,
     theme: &Theme,
 ) {
-    let ch_label = if channel_type == "public" { "Public" } else { "Friends Only" };
+    let ch_label = if channel_type == "public" {
+        "Public"
+    } else {
+        "Friends Only"
+    };
     let owner_label_owned;
     let owner_label = if is_own {
         "My"
@@ -38,12 +42,20 @@ pub fn render_channel_feed(
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(0),     // Posts
-                Constraint::Length(3),  // Input
+                Constraint::Min(0),    // Posts
+                Constraint::Length(3), // Input
             ])
             .split(area);
 
-        render_posts(f, chunks[0], &title, posts, read_counts, scroll_offset, theme);
+        render_posts(
+            f,
+            chunks[0],
+            &title,
+            posts,
+            read_counts,
+            scroll_offset,
+            theme,
+        );
         render_channel_input(f, chunks[1], input, cursor, theme);
     } else {
         render_posts(f, area, &title, posts, read_counts, scroll_offset, theme);
@@ -90,9 +102,7 @@ fn render_posts(
         let time = format_timestamp(post.created_at);
 
         // Header line with timestamp
-        let mut header_spans = vec![
-            Span::styled(time, Style::default().fg(theme.msg_timestamp)),
-        ];
+        let mut header_spans = vec![Span::styled(time, Style::default().fg(theme.msg_timestamp))];
 
         // Show read count for own channel posts
         if let Some(&count) = read_counts.get(&post.post_id) {
@@ -116,25 +126,20 @@ fn render_posts(
 
     // Apply scroll offset
     let skip = if scroll_offset > 0 && lines.len() > inner.height as usize {
-        lines.len().saturating_sub(inner.height as usize + scroll_offset)
+        lines
+            .len()
+            .saturating_sub(inner.height as usize + scroll_offset)
     } else {
         lines.len().saturating_sub(inner.height as usize)
     };
 
     let visible_lines: Vec<Line> = lines.into_iter().skip(skip).collect();
 
-    let paragraph = Paragraph::new(visible_lines)
-        .wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
     f.render_widget(paragraph, inner);
 }
 
-fn render_channel_input(
-    f: &mut Frame,
-    area: Rect,
-    input: &str,
-    cursor: usize,
-    theme: &Theme,
-) {
+fn render_channel_input(f: &mut Frame, area: Rect, input: &str, cursor: usize, theme: &Theme) {
     let display_text = {
         let (before, after) = crate::ui::input::split_at_char(input, cursor);
         if after.is_empty() {

@@ -1,3 +1,4 @@
+use crate::ui::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
@@ -6,7 +7,6 @@ use ratatui::{
     widgets::{Clear, Paragraph},
     Frame,
 };
-use crate::ui::theme::Theme;
 
 /// Status updates sent from the Tor bootstrap process.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,17 +68,13 @@ impl BootstrapPhase {
     /// Advance the animation tick. The frame advances every 3 ticks.
     pub fn advance_tick(&mut self) {
         match self {
-            BootstrapPhase::Connecting {
-                tick, frame, ..
-            } => {
+            BootstrapPhase::Connecting { tick, frame, .. } => {
                 *tick += 1;
                 if *tick % 3 == 0 {
                     *frame += 1;
                 }
             }
-            BootstrapPhase::Failed {
-                tick, frame, ..
-            } => {
+            BootstrapPhase::Failed { tick, frame, .. } => {
                 *tick += 1;
                 if *tick % 3 == 0 {
                     *frame += 1;
@@ -576,30 +572,54 @@ mod tests {
 
     #[test]
     fn failure_screen_r_retries() {
-        let phase = BootstrapPhase::Failed { error: "test".into(), frame: 0, tick: 0 };
+        let phase = BootstrapPhase::Failed {
+            error: "test".into(),
+            frame: 0,
+            tick: 0,
+        };
         let key = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
-        assert_eq!(handle_bootstrap_key(&phase, key), Some(BootstrapAction::Retry));
+        assert_eq!(
+            handle_bootstrap_key(&phase, key),
+            Some(BootstrapAction::Retry)
+        );
     }
 
     #[test]
     fn failure_screen_c_continues() {
-        let phase = BootstrapPhase::Failed { error: "test".into(), frame: 0, tick: 0 };
+        let phase = BootstrapPhase::Failed {
+            error: "test".into(),
+            frame: 0,
+            tick: 0,
+        };
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
-        assert_eq!(handle_bootstrap_key(&phase, key), Some(BootstrapAction::ContinueOffline));
+        assert_eq!(
+            handle_bootstrap_key(&phase, key),
+            Some(BootstrapAction::ContinueOffline)
+        );
     }
 
     #[test]
     fn failure_screen_q_quits() {
-        let phase = BootstrapPhase::Failed { error: "test".into(), frame: 0, tick: 0 };
+        let phase = BootstrapPhase::Failed {
+            error: "test".into(),
+            frame: 0,
+            tick: 0,
+        };
         let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
-        assert_eq!(handle_bootstrap_key(&phase, key), Some(BootstrapAction::Quit));
+        assert_eq!(
+            handle_bootstrap_key(&phase, key),
+            Some(BootstrapAction::Quit)
+        );
     }
 
     #[test]
     fn connecting_screen_ctrl_c_quits() {
         let phase = BootstrapPhase::new();
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(handle_bootstrap_key(&phase, key), Some(BootstrapAction::Quit));
+        assert_eq!(
+            handle_bootstrap_key(&phase, key),
+            Some(BootstrapAction::Quit)
+        );
     }
 
     #[test]

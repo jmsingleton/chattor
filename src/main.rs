@@ -62,8 +62,8 @@ async fn main() -> Result<()> {
                 ));
             }
 
-            let db_key = zeroize::Zeroizing::new(
-                if db::encryption::is_unencrypted(&settings.db_path) {
+            let db_key =
+                zeroize::Zeroizing::new(if db::encryption::is_unencrypted(&settings.db_path) {
                     let key = db::encryption::derive_key(passphrase.as_bytes(), &salt)?;
                     eprintln!("Migrating existing database to encrypted format...");
                     let tmp_path = settings.db_path.with_extension("db.enc");
@@ -73,12 +73,14 @@ async fn main() -> Result<()> {
                     let backup_path = settings.db_path.with_extension("db.bak");
                     std::fs::rename(&settings.db_path, &backup_path)?;
                     std::fs::rename(&tmp_path, &settings.db_path)?;
-                    eprintln!("Database migration complete (backup at {}).", backup_path.display());
+                    eprintln!(
+                        "Database migration complete (backup at {}).",
+                        backup_path.display()
+                    );
                     key
                 } else {
                     db::encryption::derive_key(passphrase.as_bytes(), &salt)?
-                },
-            );
+                });
 
             run_tui(settings, theme, Some(*db_key)).await
         }

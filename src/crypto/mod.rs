@@ -1,7 +1,7 @@
 pub mod identity;
-pub mod signal;
 pub mod session_store;
+pub mod signal;
 
 pub use identity::IdentityKeypair;
-pub use signal::{SignalSession, PreKeyBundle, PreKeyPrivateMaterial};
 pub use session_store::SessionStore;
+pub use signal::{PreKeyBundle, PreKeyPrivateMaterial, SignalSession};

@@ -1,4 +1,4 @@
-use crate::error::{Result, ChattorError};
+use crate::error::{ChattorError, Result};
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -22,8 +22,8 @@ pub struct PreKeyBundle {
 /// All secrets are raw 32-byte X25519 private key scalars.
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct PreKeyPrivateMaterial {
-    pub identity_secret: [u8; 32],      // X25519 private key bytes
-    pub signed_prekey_secret: [u8; 32], // X25519 private key bytes
+    pub identity_secret: [u8; 32],       // X25519 private key bytes
+    pub signed_prekey_secret: [u8; 32],  // X25519 private key bytes
     pub prekey_secret: Option<[u8; 32]>, // X25519 private key bytes
 }
 
@@ -32,7 +32,10 @@ impl std::fmt::Debug for PreKeyPrivateMaterial {
         f.debug_struct("PreKeyPrivateMaterial")
             .field("identity_secret", &"[REDACTED]")
             .field("signed_prekey_secret", &"[REDACTED]")
-            .field("prekey_secret", &self.prekey_secret.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "prekey_secret",
+                &self.prekey_secret.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }
@@ -124,8 +127,10 @@ impl PreKeyBundle {
         let prekey_id = 1u32;
 
         // Decode 33-byte encoded public keys to raw 32-byte keys for internal storage
-        let signed_prekey_raw = libsignal_protocol::utils::decode_public_key(&signed_prekey_pair.public)
-            .map_err(|_| ChattorError::Crypto("Failed to decode signed prekey public key".into()))?;
+        let signed_prekey_raw = libsignal_protocol::utils::decode_public_key(
+            &signed_prekey_pair.public,
+        )
+        .map_err(|_| ChattorError::Crypto("Failed to decode signed prekey public key".into()))?;
         let prekey_raw = libsignal_protocol::utils::decode_public_key(&prekey_pair.public)
             .map_err(|_| ChattorError::Crypto("Failed to decode prekey public key".into()))?;
 
@@ -160,32 +165,40 @@ impl PreKeyBundle {
         use libsignal_protocol::utils::encode_public_key;
 
         // Encode identity key (32 bytes -> 33 bytes with 0x05 prefix)
-        let identity_raw: [u8; 32] = self.identity_key[..].try_into()
-            .map_err(|_| ChattorError::Crypto(
-                format!("Invalid identity key length: expected 32, got {}", self.identity_key.len())
-            ))?;
+        let identity_raw: [u8; 32] = self.identity_key[..].try_into().map_err(|_| {
+            ChattorError::Crypto(format!(
+                "Invalid identity key length: expected 32, got {}",
+                self.identity_key.len()
+            ))
+        })?;
         let identity_encoded = encode_public_key(&identity_raw);
 
         // Encode signed prekey public key
-        let spk_raw: [u8; 32] = self.signed_prekey.public_key[..].try_into()
-            .map_err(|_| ChattorError::Crypto(
-                format!("Invalid signed prekey length: expected 32, got {}", self.signed_prekey.public_key.len())
-            ))?;
+        let spk_raw: [u8; 32] = self.signed_prekey.public_key[..].try_into().map_err(|_| {
+            ChattorError::Crypto(format!(
+                "Invalid signed prekey length: expected 32, got {}",
+                self.signed_prekey.public_key.len()
+            ))
+        })?;
         let spk_encoded = encode_public_key(&spk_raw);
 
         // Convert signature to fixed-size array
-        let signature: [u8; 96] = self.signed_prekey.signature[..].try_into()
-            .map_err(|_| ChattorError::Crypto(
-                format!("Invalid signature length: expected 96, got {}", self.signed_prekey.signature.len())
-            ))?;
+        let signature: [u8; 96] = self.signed_prekey.signature[..].try_into().map_err(|_| {
+            ChattorError::Crypto(format!(
+                "Invalid signature length: expected 96, got {}",
+                self.signed_prekey.signature.len()
+            ))
+        })?;
 
         // Convert one-time prekey if present
         let one_time_prekey = match &self.prekey {
             Some(pk) => {
-                let pk_raw: [u8; 32] = pk.public_key[..].try_into()
-                    .map_err(|_| ChattorError::Crypto(
-                        format!("Invalid prekey length: expected 32, got {}", pk.public_key.len())
-                    ))?;
+                let pk_raw: [u8; 32] = pk.public_key[..].try_into().map_err(|_| {
+                    ChattorError::Crypto(format!(
+                        "Invalid prekey length: expected 32, got {}",
+                        pk.public_key.len()
+                    ))
+                })?;
                 let pk_encoded = encode_public_key(&pk_raw);
                 Some(libsignal_protocol::x3dh::OneTimePreKey {
                     id: pk.key_id,
@@ -212,18 +225,21 @@ impl PreKeyBundle {
     /// identity key in this bundle.
     #[allow(dead_code)]
     pub fn verify_signature(&self) -> Result<bool> {
-        use libsignal_protocol::vxeddsa::vxeddsa_verify;
         use libsignal_protocol::utils::encode_public_key;
+        use libsignal_protocol::vxeddsa::vxeddsa_verify;
 
-        let identity_raw: [u8; 32] = self.identity_key[..].try_into()
+        let identity_raw: [u8; 32] = self.identity_key[..]
+            .try_into()
             .map_err(|_| ChattorError::Crypto("Invalid identity key length".into()))?;
         let identity_encoded = encode_public_key(&identity_raw);
 
-        let spk_raw: [u8; 32] = self.signed_prekey.public_key[..].try_into()
+        let spk_raw: [u8; 32] = self.signed_prekey.public_key[..]
+            .try_into()
             .map_err(|_| ChattorError::Crypto("Invalid signed prekey length".into()))?;
         let spk_encoded = encode_public_key(&spk_raw);
 
-        let signature: [u8; 96] = self.signed_prekey.signature[..].try_into()
+        let signature: [u8; 96] = self.signed_prekey.signature[..]
+            .try_into()
             .map_err(|_| ChattorError::Crypto("Invalid signature length".into()))?;
 
         Ok(vxeddsa_verify(&identity_encoded, &spk_encoded, &signature).is_some())
@@ -298,11 +314,13 @@ impl SignalSession {
         let ls_bundle = bundle.to_libsignal_bundle()?;
 
         // Perform full X3DH as initiator
-        let x3dh_result = libsignal_protocol::x3dh::x3dh_initiator(signal_identity_secret, &ls_bundle)
-            .map_err(|e| ChattorError::Crypto(format!("X3DH initiator failed: {:?}", e)))?;
+        let x3dh_result =
+            libsignal_protocol::x3dh::x3dh_initiator(signal_identity_secret, &ls_bundle)
+                .map_err(|e| ChattorError::Crypto(format!("X3DH initiator failed: {:?}", e)))?;
 
         // Decode Bob's signed prekey public from the bundle (raw 32 bytes)
-        let bob_spk_raw: [u8; 32] = bundle.signed_prekey.public_key[..].try_into()
+        let bob_spk_raw: [u8; 32] = bundle.signed_prekey.public_key[..]
+            .try_into()
             .map_err(|_| ChattorError::Crypto("Invalid signed prekey length".into()))?;
         let bob_spk_pubkey = X25519PublicKey::from(bob_spk_raw);
 
@@ -310,13 +328,16 @@ impl SignalSession {
         let ratchet_state = libsignal_protocol::ratchet::init_sender_state(
             x3dh_result.shared_secret,
             bob_spk_pubkey,
-        ).map_err(|e| ChattorError::Crypto(format!("Ratchet init_sender failed: {:?}", e)))?;
+        )
+        .map_err(|e| ChattorError::Crypto(format!("Ratchet init_sender failed: {:?}", e)))?;
 
         // Build associated data: encode(alice_identity) || encode(bob_identity)
         // Alice's identity public key (derived from our secret)
-        let alice_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(signal_identity_secret);
+        let alice_identity_encoded =
+            libsignal_protocol::vxeddsa::gen_pubkey(signal_identity_secret);
         // Bob's identity key (from bundle, raw 32 bytes -> encode to 33 bytes)
-        let bob_identity_raw: [u8; 32] = bundle.identity_key[..].try_into()
+        let bob_identity_raw: [u8; 32] = bundle.identity_key[..]
+            .try_into()
             .map_err(|_| ChattorError::Crypto("Invalid identity key length".into()))?;
         let bob_identity_encoded = encode_public_key(&bob_identity_raw);
 
@@ -364,7 +385,8 @@ impl SignalSession {
             private_material.prekey_secret.as_ref(),
             alice_identity_public,
             alice_ephemeral_public,
-        ).map_err(|e| ChattorError::Crypto(format!("X3DH responder failed: {:?}", e)))?;
+        )
+        .map_err(|e| ChattorError::Crypto(format!("X3DH responder failed: {:?}", e)))?;
 
         // Build the receiver's DH keypair from the signed prekey
         let spk_secret = StaticSecret::from(private_material.signed_prekey_secret);
@@ -379,7 +401,8 @@ impl SignalSession {
         // Build associated data: encode(alice_identity) || encode(bob_identity)
         // Alice's identity is already encoded (33 bytes)
         // Bob's identity public key (derived from our secret)
-        let bob_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(&private_material.identity_secret);
+        let bob_identity_encoded =
+            libsignal_protocol::vxeddsa::gen_pubkey(&private_material.identity_secret);
 
         let mut associated_data = Vec::with_capacity(66);
         associated_data.extend_from_slice(alice_identity_public);
@@ -417,11 +440,9 @@ impl SignalSession {
     /// - `ciphertext` is the encrypted message
     /// - `is_first_message` indicates this is the first message (PreKey message)
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>, bool)> {
-        let (header, ciphertext) = libsignal_protocol::ratchet::encrypt(
-            &mut self.state,
-            plaintext,
-            &self.associated_data,
-        ).map_err(|e| ChattorError::Crypto(format!("Ratchet encrypt failed: {:?}", e)))?;
+        let (header, ciphertext) =
+            libsignal_protocol::ratchet::encrypt(&mut self.state, plaintext, &self.associated_data)
+                .map_err(|e| ChattorError::Crypto(format!("Ratchet encrypt failed: {:?}", e)))?;
 
         let was_first = self.is_first_message;
         self.is_first_message = false;
@@ -440,7 +461,8 @@ impl SignalSession {
             header,
             ciphertext,
             &self.associated_data,
-        ).map_err(|e| ChattorError::Crypto(format!("Ratchet decrypt failed: {:?}", e)))
+        )
+        .map_err(|e| ChattorError::Crypto(format!("Ratchet decrypt failed: {:?}", e)))
     }
 
     /// Serialize session state for storage (JSON).
@@ -452,8 +474,7 @@ impl SignalSession {
             is_first_message: self.is_first_message,
             ephemeral_public: self.ephemeral_public.map(|ep| ep.to_vec()),
         };
-        serde_json::to_vec(&s)
-            .map_err(|e| ChattorError::Crypto(format!("session serialize: {e}")))
+        serde_json::to_vec(&s).map_err(|e| ChattorError::Crypto(format!("session serialize: {e}")))
     }
 
     /// Deserialize session state from storage (JSON).
@@ -462,7 +483,8 @@ impl SignalSession {
             .map_err(|e| ChattorError::Crypto(format!("session deserialize: {e}")))?;
         let ephemeral_public = match s.ephemeral_public {
             Some(v) => {
-                let arr: [u8; 33] = v.try_into()
+                let arr: [u8; 33] = v
+                    .try_into()
                     .map_err(|_| ChattorError::Crypto("Invalid ephemeral_public length".into()))?;
                 Some(arr)
             }
@@ -496,15 +518,17 @@ mod tests {
         let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
 
         // Bob generates his PreKey bundle
-        let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+        let (bob_bundle, bob_private) =
+            PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
 
         // Alice creates session from Bob's bundle (initiator)
         let (alice_session, _ad, ephemeral_public) = SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),
             &bob_bundle,
-            &bob_private,  // unused but required by signature
+            &bob_private, // unused but required by signature
             &alice_signal_secret,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Bob creates session from Alice's PreKey message (responder)
         // He needs Alice's identity public and ephemeral public (both 33-byte encoded)
@@ -514,7 +538,8 @@ mod tests {
             &bob_private,
             &alice_identity_encoded,
             &ephemeral_public,
-        ).unwrap();
+        )
+        .unwrap();
 
         (alice_session, bob_session)
     }
@@ -533,7 +558,8 @@ mod tests {
     #[test]
     fn test_generate_real_prekey_bundle() {
         let (signal_secret, signal_public) = gen_signal_identity();
-        let (bundle, private_material) = PreKeyBundle::generate_real(&signal_secret, &signal_public).unwrap();
+        let (bundle, private_material) =
+            PreKeyBundle::generate_real(&signal_secret, &signal_public).unwrap();
 
         // Real keys should be 32 bytes (raw X25519 Curve25519)
         assert_eq!(bundle.identity_key.len(), 32);
@@ -554,10 +580,14 @@ mod tests {
     fn test_vxeddsa_signature_roundtrip() {
         // Generate a Signal identity and a PreKey bundle, then verify the signature
         let (signal_secret, signal_public) = gen_signal_identity();
-        let (bundle, _private_material) = PreKeyBundle::generate_real(&signal_secret, &signal_public).unwrap();
+        let (bundle, _private_material) =
+            PreKeyBundle::generate_real(&signal_secret, &signal_public).unwrap();
 
         // Verify the VXEdDSA signature on the signed prekey
-        assert!(bundle.verify_signature().unwrap(), "VXEdDSA signature should verify");
+        assert!(
+            bundle.verify_signature().unwrap(),
+            "VXEdDSA signature should verify"
+        );
     }
 
     #[test]
@@ -571,7 +601,10 @@ mod tests {
         }
 
         // Signature should no longer verify
-        assert!(!bundle.verify_signature().unwrap(), "Tampered bundle should fail verification");
+        assert!(
+            !bundle.verify_signature().unwrap(),
+            "Tampered bundle should fail verification"
+        );
     }
 
     #[test]
@@ -584,7 +617,10 @@ mod tests {
         bundle.identity_key = other_public.to_vec();
 
         // Signature should fail because identity key doesn't match the signer
-        assert!(!bundle.verify_signature().unwrap(), "Wrong identity key should fail verification");
+        assert!(
+            !bundle.verify_signature().unwrap(),
+            "Wrong identity key should fail verification"
+        );
     }
 
     #[test]
@@ -616,7 +652,8 @@ mod tests {
     fn test_libsignal_bundle_x3dh_initiator_accepts() {
         // Generate Bob's Signal identity and PreKey bundle
         let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
-        let (bob_bundle, _bob_private) = PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+        let (bob_bundle, _bob_private) =
+            PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
 
         // Convert to libsignal bundle
         let libsignal_bundle = bob_bundle.to_libsignal_bundle().unwrap();
@@ -624,20 +661,26 @@ mod tests {
         // Alice performs X3DH initiator with Bob's bundle
         let (alice_secret, _alice_public) = gen_signal_identity();
         let result = libsignal_protocol::x3dh::x3dh_initiator(&alice_secret, &libsignal_bundle);
-        assert!(result.is_ok(), "X3DH initiator should succeed with a valid bundle: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "X3DH initiator should succeed with a valid bundle: {:?}",
+            result.err()
+        );
     }
 
     #[test]
     fn test_libsignal_x3dh_shared_secret_matches() {
         // Generate Bob's Signal identity and PreKey bundle
         let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
-        let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+        let (bob_bundle, bob_private) =
+            PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
 
         let libsignal_bundle = bob_bundle.to_libsignal_bundle().unwrap();
 
         // Alice initiates X3DH
         let (alice_secret, _alice_public) = gen_signal_identity();
-        let alice_result = libsignal_protocol::x3dh::x3dh_initiator(&alice_secret, &libsignal_bundle).unwrap();
+        let alice_result =
+            libsignal_protocol::x3dh::x3dh_initiator(&alice_secret, &libsignal_bundle).unwrap();
 
         // Bob responds: derive Alice's encoded public key from her secret
         let alice_pub_encoded = libsignal_protocol::vxeddsa::gen_pubkey(&alice_secret);
@@ -649,7 +692,11 @@ mod tests {
             &alice_pub_encoded,
             &alice_result.ephemeral_public,
         );
-        assert!(bob_result.is_ok(), "X3DH responder should succeed: {:?}", bob_result.err());
+        assert!(
+            bob_result.is_ok(),
+            "X3DH responder should succeed: {:?}",
+            bob_result.err()
+        );
 
         // Shared secrets should match
         assert_eq!(alice_result.shared_secret, bob_result.unwrap());
@@ -668,7 +715,10 @@ mod tests {
         let (header, ciphertext, is_prekey) = alice.encrypt(plaintext).unwrap();
 
         assert!(is_prekey, "First message should be PreKey type");
-        assert_ne!(ciphertext, plaintext, "Ciphertext should differ from plaintext");
+        assert_ne!(
+            ciphertext, plaintext,
+            "Ciphertext should differ from plaintext"
+        );
 
         // Bob decrypts
         let decrypted = bob.decrypt(&header, &ciphertext).unwrap();
@@ -781,7 +831,10 @@ mod tests {
         }
 
         let result = bob.decrypt(&header, &ciphertext);
-        assert!(result.is_err(), "Tampered ciphertext should fail decryption");
+        assert!(
+            result.is_err(),
+            "Tampered ciphertext should fail decryption"
+        );
     }
 
     #[test]
@@ -834,22 +887,27 @@ mod tests {
         assert_eq!(bob.associated_data().len(), 66);
 
         // Both sides should have the same AD (alice_ik || bob_ik)
-        assert_eq!(alice.associated_data(), bob.associated_data(),
-            "Both sides should compute identical associated data");
+        assert_eq!(
+            alice.associated_data(),
+            bob.associated_data(),
+            "Both sides should compute identical associated data"
+        );
     }
 
     #[test]
     fn test_ephemeral_public_available_on_initiator() {
         let (alice_signal_secret, _) = gen_signal_identity();
         let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
-        let (bob_bundle, bob_private) = PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+        let (bob_bundle, bob_private) =
+            PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
 
         let (session, _, eph) = SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),
             &bob_bundle,
             &bob_private,
             &alice_signal_secret,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Ephemeral public should be a 33-byte encoded key
         assert_eq!(eph.len(), 33);

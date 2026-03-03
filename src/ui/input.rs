@@ -104,7 +104,9 @@ pub fn delete_to_start(input: &mut String, cursor: &mut usize) {
 
 /// Delete word backward (Ctrl+W).
 pub fn delete_word_backward(input: &mut String, cursor: &mut usize) {
-    if *cursor == 0 { return; }
+    if *cursor == 0 {
+        return;
+    }
 
     let chars: Vec<char> = input.chars().collect();
     let mut new_cursor = *cursor;

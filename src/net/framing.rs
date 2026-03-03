@@ -1,11 +1,11 @@
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
-use crate::error::{Result, ChattorError};
+use crate::error::{ChattorError, Result};
 use crate::protocol::message::{MessageEnvelope, PROTOCOL_VERSION};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Send a `MessageEnvelope` with a 4-byte big-endian length prefix.
 pub async fn send_message<S>(stream: &mut S, envelope: &MessageEnvelope) -> Result<()>
 where
-    S: AsyncWrite + Unpin
+    S: AsyncWrite + Unpin,
 {
     // Serialize to JSON
     let json = serde_json::to_vec(envelope)
@@ -17,15 +17,21 @@ where
 
     // Write length prefix (4 bytes, big-endian)
     let len = (json.len() as u32).to_be_bytes();
-    stream.write_all(&len).await
+    stream
+        .write_all(&len)
+        .await
         .map_err(|e| ChattorError::Network(format!("Failed to write length: {}", e)))?;
 
     // Write message payload
-    stream.write_all(&json).await
+    stream
+        .write_all(&json)
+        .await
         .map_err(|e| ChattorError::Network(format!("Failed to write payload: {}", e)))?;
 
     // Flush to ensure sent
-    stream.flush().await
+    stream
+        .flush()
+        .await
         .map_err(|e| ChattorError::Network(format!("Failed to flush: {}", e)))?;
 
     Ok(())
@@ -36,11 +42,13 @@ where
 /// Returns an error if the envelope's protocol version is not supported.
 pub async fn receive_message<S>(stream: &mut S) -> Result<MessageEnvelope>
 where
-    S: AsyncRead + Unpin
+    S: AsyncRead + Unpin,
 {
     // Read length prefix (4 bytes, big-endian)
     let mut len_bytes = [0u8; 4];
-    stream.read_exact(&mut len_bytes).await
+    stream
+        .read_exact(&mut len_bytes)
+        .await
         .map_err(|e| ChattorError::Network(format!("Failed to read length: {}", e)))?;
 
     let len = u32::from_be_bytes(len_bytes) as usize;
@@ -51,7 +59,9 @@ where
 
     // Read message payload
     let mut json_bytes = vec![0u8; len];
-    stream.read_exact(&mut json_bytes).await
+    stream
+        .read_exact(&mut json_bytes)
+        .await
         .map_err(|e| ChattorError::Network(format!("Failed to read payload: {}", e)))?;
 
     // Deserialize envelope

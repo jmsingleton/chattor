@@ -166,7 +166,10 @@ fn render_messages(
                 lines.push(Line::from(""));
             }
             lines.push(Line::from(Span::styled(
-                format!("\u{2500}\u{2500}\u{2500} {} \u{2500}\u{2500}\u{2500}", format_date_separator(msg.timestamp)),
+                format!(
+                    "\u{2500}\u{2500}\u{2500} {} \u{2500}\u{2500}\u{2500}",
+                    format_date_separator(msg.timestamp)
+                ),
                 Style::default().fg(theme.fg_dim),
             )));
             lines.push(Line::from(""));

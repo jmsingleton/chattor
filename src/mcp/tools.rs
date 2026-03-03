@@ -148,10 +148,7 @@ mod tests {
             tool_to_rpc("get_identity", &json!({})).unwrap().0,
             "identity"
         );
-        assert_eq!(
-            tool_to_rpc("get_status", &json!({})).unwrap().0,
-            "status"
-        );
+        assert_eq!(tool_to_rpc("get_status", &json!({})).unwrap().0, "status");
         assert_eq!(
             tool_to_rpc("publish_channel_post", &json!({})).unwrap().0,
             "channels_publish"

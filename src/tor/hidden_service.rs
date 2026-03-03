@@ -1,4 +1,4 @@
-use crate::error::{Result, ChattorError};
+use crate::error::{ChattorError, Result};
 use crate::tor::client::TorClient;
 use safelog::DisplayRedacted as _;
 use std::sync::Arc;
@@ -25,9 +25,9 @@ impl HiddenService {
 
         let mut builder = OnionServiceConfigBuilder::default();
         builder.nickname(nickname);
-        let config = builder
-            .build()
-            .map_err(|e| ChattorError::Tor(format!("Failed to build onion service config: {}", e)))?;
+        let config = builder.build().map_err(|e| {
+            ChattorError::Tor(format!("Failed to build onion service config: {}", e))
+        })?;
 
         let (service, rend_requests) = tor_client
             .inner()

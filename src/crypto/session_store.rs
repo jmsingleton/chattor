@@ -1,6 +1,6 @@
-use crate::db::Database;
-use crate::error::{Result, ChattorError};
 use crate::crypto::signal::SignalSession;
+use crate::db::Database;
+use crate::error::{ChattorError, Result};
 
 /// Store for Signal Protocol sessions
 pub struct SessionStore<'a> {
@@ -25,12 +25,9 @@ impl<'a> SessionStore<'a> {
         conn.execute(
             "INSERT OR REPLACE INTO signal_sessions (remote_onion, session_state, updated_at)
              VALUES (?1, ?2, ?3)",
-            (
-                &session.remote_onion,
-                &session_bytes,
-                now,
-            ),
-        ).map_err(|e| ChattorError::Database(format!("Failed to store session: {}", e)))?;
+            (&session.remote_onion, &session_bytes, now),
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to store session: {}", e)))?;
 
         Ok(())
     }
@@ -51,7 +48,10 @@ impl<'a> SessionStore<'a> {
                 Ok(Some(session))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(ChattorError::Database(format!("Failed to load session: {}", e))),
+            Err(e) => Err(ChattorError::Database(format!(
+                "Failed to load session: {}",
+                e
+            ))),
         }
     }
 
@@ -63,7 +63,8 @@ impl<'a> SessionStore<'a> {
         conn.execute(
             "DELETE FROM signal_sessions WHERE remote_onion = ?1",
             [remote_onion],
-        ).map_err(|e| ChattorError::Database(format!("Failed to delete session: {}", e)))?;
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to delete session: {}", e)))?;
 
         Ok(())
     }
@@ -90,15 +91,19 @@ mod tests {
         // Create a real session pair so we have a valid session to store
         let (alice_signal_secret, _) = gen_signal_identity();
         let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
-        let (bob_bundle, bob_private) =
-            crate::crypto::signal::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+        let (bob_bundle, bob_private) = crate::crypto::signal::PreKeyBundle::generate_real(
+            &bob_signal_secret,
+            &bob_signal_public,
+        )
+        .unwrap();
 
         let (session, _ad, _eph) = crate::crypto::signal::SignalSession::from_prekey_bundle_real(
             "test.onion".into(),
             &bob_bundle,
             &bob_private,
             &alice_signal_secret,
-        ).unwrap();
+        )
+        .unwrap();
 
         store.store_session(&session).unwrap();
 
@@ -119,15 +124,19 @@ mod tests {
         // Create real session
         let (alice_signal_secret, _) = gen_signal_identity();
         let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
-        let (bob_bundle, bob_private) =
-            crate::crypto::signal::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+        let (bob_bundle, bob_private) = crate::crypto::signal::PreKeyBundle::generate_real(
+            &bob_signal_secret,
+            &bob_signal_public,
+        )
+        .unwrap();
 
         let (session, _ad, _eph) = crate::crypto::signal::SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),
             &bob_bundle,
             &bob_private,
             &alice_signal_secret,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Store session
         store.store_session(&session).unwrap();

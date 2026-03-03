@@ -26,8 +26,12 @@ mod tests {
         // Build a valid v3 .onion from a known pubkey via the friend_code module
         let _pubkey = [0u8; 32];
         let onion = crate::protocol::friend_code::friend_code_to_onion(
-            &std::iter::repeat("ace").take(32).collect::<Vec<_>>().join(" ")
-        ).unwrap();
+            &std::iter::repeat("ace")
+                .take(32)
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+        .unwrap();
 
         let code = onion_to_friend_code(&onion).unwrap();
         let recovered = friend_code_to_onion(&code).unwrap();
@@ -36,7 +40,10 @@ mod tests {
 
     #[test]
     fn test_deterministic() {
-        let pubkey_words: String = std::iter::repeat("ace").take(32).collect::<Vec<_>>().join(" ");
+        let pubkey_words: String = std::iter::repeat("ace")
+            .take(32)
+            .collect::<Vec<_>>()
+            .join(" ");
         let onion = crate::protocol::friend_code::friend_code_to_onion(&pubkey_words).unwrap();
 
         let code1 = onion_to_friend_code(&onion).unwrap();

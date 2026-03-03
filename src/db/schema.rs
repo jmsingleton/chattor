@@ -206,7 +206,7 @@ mod tests {
         let result = conn.query_row(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='message_queue'",
             [],
-            |row| row.get::<_, String>(0)
+            |row| row.get::<_, String>(0),
         );
 
         assert!(result.is_ok());
@@ -221,7 +221,7 @@ mod tests {
         let result = conn.query_row(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='signal_sessions'",
             [],
-            |row| row.get::<_, String>(0)
+            |row| row.get::<_, String>(0),
         );
 
         assert!(result.is_ok());
@@ -236,7 +236,7 @@ mod tests {
         let result = conn.query_row(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='blocked_onions'",
             [],
-            |row| row.get::<_, String>(0)
+            |row| row.get::<_, String>(0),
         );
 
         assert!(result.is_ok());
@@ -251,7 +251,7 @@ mod tests {
         let result = conn.query_row(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'",
             [],
-            |row| row.get::<_, String>(0)
+            |row| row.get::<_, String>(0),
         );
 
         assert!(result.is_ok());
@@ -264,7 +264,8 @@ mod tests {
         conn.execute_batch(CREATE_TABLES).unwrap();
         let result = conn.query_row(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='channels'",
-            [], |row| row.get::<_, String>(0)
+            [],
+            |row| row.get::<_, String>(0),
         );
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "channels");
@@ -276,7 +277,8 @@ mod tests {
         conn.execute_batch(CREATE_TABLES).unwrap();
         let result = conn.query_row(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='channel_posts'",
-            [], |row| row.get::<_, String>(0)
+            [],
+            |row| row.get::<_, String>(0),
         );
         assert!(result.is_ok());
     }
@@ -287,7 +289,8 @@ mod tests {
         conn.execute_batch(CREATE_TABLES).unwrap();
         let result = conn.query_row(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='channel_subscribers'",
-            [], |row| row.get::<_, String>(0)
+            [],
+            |row| row.get::<_, String>(0),
         );
         assert!(result.is_ok());
     }
@@ -298,7 +301,8 @@ mod tests {
         conn.execute_batch(CREATE_TABLES).unwrap();
         let result = conn.query_row(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='channel_subscriptions'",
-            [], |row| row.get::<_, String>(0)
+            [],
+            |row| row.get::<_, String>(0),
         );
         assert!(result.is_ok());
     }
@@ -309,7 +313,8 @@ mod tests {
         conn.execute_batch(CREATE_TABLES).unwrap();
         let result = conn.query_row(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='channel_post_receipts'",
-            [], |row| row.get::<_, String>(0)
+            [],
+            |row| row.get::<_, String>(0),
         );
         assert!(result.is_ok());
     }

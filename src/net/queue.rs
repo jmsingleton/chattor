@@ -4,7 +4,7 @@
 //! as JSON and persists them in the database for reliable delivery.
 
 use crate::db::Database;
-use crate::error::{Result, ChattorError};
+use crate::error::{ChattorError, Result};
 use crate::protocol::message::Message;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -47,9 +47,8 @@ impl MessageQueue {
             .unwrap()
             .as_secs() as i64;
 
-        let message_json = serde_json::to_string(message).map_err(|e| {
-            ChattorError::Database(format!("Failed to serialize message: {}", e))
-        })?;
+        let message_json = serde_json::to_string(message)
+            .map_err(|e| ChattorError::Database(format!("Failed to serialize message: {}", e)))?;
 
         conn.execute(
             "INSERT INTO message_queue (peer_onion, message_json, priority, retry_count, next_retry_at, created_at, status)
@@ -66,11 +65,7 @@ impl MessageQueue {
     ///
     /// Returns messages where status = 'pending' and next_retry_at <= now,
     /// ordered by priority (high before normal), then created_at ASC (FIFO).
-    pub fn get_pending_messages(
-        &self,
-        db: &Database,
-        now: i64,
-    ) -> Result<Vec<QueuedMessage>> {
+    pub fn get_pending_messages(&self, db: &Database, now: i64) -> Result<Vec<QueuedMessage>> {
         let conn = db.connection();
         let mut stmt = conn
             .prepare(
@@ -79,9 +74,7 @@ impl MessageQueue {
                  WHERE status = 'pending' AND next_retry_at <= ?1
                  ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at ASC",
             )
-            .map_err(|e| {
-                ChattorError::Database(format!("Failed to prepare statement: {}", e))
-            })?;
+            .map_err(|e| ChattorError::Database(format!("Failed to prepare statement: {}", e)))?;
 
         // Collect raw rows first, then deserialize outside of query_map
         // to avoid issues with serde_json errors inside rusqlite callbacks.
@@ -96,13 +89,9 @@ impl MessageQueue {
                     row.get(5)?,
                 ))
             })
-            .map_err(|e| {
-                ChattorError::Database(format!("Failed to query messages: {}", e))
-            })?
+            .map_err(|e| ChattorError::Database(format!("Failed to query messages: {}", e)))?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| {
-                ChattorError::Database(format!("Failed to collect messages: {}", e))
-            })?;
+            .map_err(|e| ChattorError::Database(format!("Failed to collect messages: {}", e)))?;
 
         let mut messages = Vec::with_capacity(raw_rows.len());
         for (id, peer_onion, message_json, retry_count, priority, created_at) in raw_rows {
@@ -132,9 +121,7 @@ impl MessageQueue {
             "UPDATE message_queue SET status = 'delivered' WHERE id = ?1",
             [id],
         )
-        .map_err(|e| {
-            ChattorError::Database(format!("Failed to mark message delivered: {}", e))
-        })?;
+        .map_err(|e| ChattorError::Database(format!("Failed to mark message delivered: {}", e)))?;
         Ok(())
     }
 
@@ -145,21 +132,14 @@ impl MessageQueue {
             "UPDATE message_queue SET status = 'failed' WHERE id = ?1",
             [id],
         )
-        .map_err(|e| {
-            ChattorError::Database(format!("Failed to mark message failed: {}", e))
-        })?;
+        .map_err(|e| ChattorError::Database(format!("Failed to mark message failed: {}", e)))?;
         Ok(())
     }
 
     /// Schedule a retry for a queued message
     ///
     /// Increments the retry_count and sets the next_retry_at timestamp.
-    pub fn schedule_retry(
-        &self,
-        db: &Database,
-        id: i64,
-        next_retry_at: i64,
-    ) -> Result<()> {
+    pub fn schedule_retry(&self, db: &Database, id: i64, next_retry_at: i64) -> Result<()> {
         let conn = db.connection();
         conn.execute(
             "UPDATE message_queue SET retry_count = retry_count + 1, next_retry_at = ?1 WHERE id = ?2",

@@ -39,11 +39,17 @@ pub async fn handle_incoming_message(
         protocol::message::Message::TextMessage(msg) => Some(msg.from_onion.as_str()),
         protocol::message::Message::Presence(pres) => Some(pres.from_onion.as_str()),
         protocol::message::Message::ChannelSubscribe(sub) => Some(sub.subscriber_onion.as_str()),
-        protocol::message::Message::ChannelUnsubscribe(unsub) => Some(unsub.subscriber_onion.as_str()),
+        protocol::message::Message::ChannelUnsubscribe(unsub) => {
+            Some(unsub.subscriber_onion.as_str())
+        }
         protocol::message::Message::ChannelPost(post) => Some(post.publisher_onion.as_str()),
         protocol::message::Message::ChannelSyncRequest(req) => Some(req.subscriber_onion.as_str()),
-        protocol::message::Message::ChannelSyncResponse(resp) => Some(resp.publisher_onion.as_str()),
-        protocol::message::Message::ChannelPostReceipt(receipt) => Some(receipt.reader_onion.as_str()),
+        protocol::message::Message::ChannelSyncResponse(resp) => {
+            Some(resp.publisher_onion.as_str())
+        }
+        protocol::message::Message::ChannelPostReceipt(receipt) => {
+            Some(receipt.reader_onion.as_str())
+        }
         _ => None,
     };
 
@@ -73,16 +79,25 @@ pub async fn handle_incoming_message(
                         (&req.from_onion, &req.from_friendcode, now),
                     )
                     .map_err(|e| {
-                        error::ChattorError::Database(format!("Failed to save friend request: {}", e))
+                        error::ChattorError::Database(format!(
+                            "Failed to save friend request: {}",
+                            e
+                        ))
                     })?;
 
                     eprintln!("Received verified friend request from {}", req.from_onion);
                 }
                 Ok(false) => {
-                    eprintln!("Rejected friend request from {} (invalid signature)", req.from_onion);
+                    eprintln!(
+                        "Rejected friend request from {} (invalid signature)",
+                        req.from_onion
+                    );
                 }
                 Err(e) => {
-                    eprintln!("Error validating friend request from {}: {}", req.from_onion, e);
+                    eprintln!(
+                        "Error validating friend request from {}: {}",
+                        req.from_onion, e
+                    );
                 }
             }
         }

@@ -85,7 +85,15 @@ impl Theme {
     /// List all available preset names.
     #[allow(dead_code)]
     pub fn preset_names() -> &'static [&'static str] {
-        &["dark", "light", "cyberpunk", "minimal", "rose-pine", "rose-pine-moon", "rose-pine-dawn"]
+        &[
+            "dark",
+            "light",
+            "cyberpunk",
+            "minimal",
+            "rose-pine",
+            "rose-pine-moon",
+            "rose-pine-dawn",
+        ]
     }
 
     fn dark() -> Self {
@@ -336,15 +344,37 @@ impl Theme {
     /// Apply TOML color overrides on top of the current theme.
     /// Each field is optional — only specified overrides are applied.
     pub fn apply_overrides(&mut self, overrides: &ThemeOverrides) {
-        if let Some(c) = overrides.bg.as_deref().and_then(parse_hex_color) { self.bg = c; }
-        if let Some(c) = overrides.fg.as_deref().and_then(parse_hex_color) { self.fg = c; }
-        if let Some(c) = overrides.fg_dim.as_deref().and_then(parse_hex_color) { self.fg_dim = c; }
-        if let Some(c) = overrides.accent.as_deref().and_then(parse_hex_color) { self.accent = c; }
-        if let Some(c) = overrides.border.as_deref().and_then(parse_hex_color) { self.border = c; }
-        if let Some(c) = overrides.border_focused.as_deref().and_then(parse_hex_color) { self.border_focused = c; }
-        if let Some(c) = overrides.error.as_deref().and_then(parse_hex_color) { self.error = c; }
-        if let Some(c) = overrides.warning.as_deref().and_then(parse_hex_color) { self.warning = c; }
-        if let Some(c) = overrides.success.as_deref().and_then(parse_hex_color) { self.success = c; }
+        if let Some(c) = overrides.bg.as_deref().and_then(parse_hex_color) {
+            self.bg = c;
+        }
+        if let Some(c) = overrides.fg.as_deref().and_then(parse_hex_color) {
+            self.fg = c;
+        }
+        if let Some(c) = overrides.fg_dim.as_deref().and_then(parse_hex_color) {
+            self.fg_dim = c;
+        }
+        if let Some(c) = overrides.accent.as_deref().and_then(parse_hex_color) {
+            self.accent = c;
+        }
+        if let Some(c) = overrides.border.as_deref().and_then(parse_hex_color) {
+            self.border = c;
+        }
+        if let Some(c) = overrides
+            .border_focused
+            .as_deref()
+            .and_then(parse_hex_color)
+        {
+            self.border_focused = c;
+        }
+        if let Some(c) = overrides.error.as_deref().and_then(parse_hex_color) {
+            self.error = c;
+        }
+        if let Some(c) = overrides.warning.as_deref().and_then(parse_hex_color) {
+            self.warning = c;
+        }
+        if let Some(c) = overrides.success.as_deref().and_then(parse_hex_color) {
+            self.success = c;
+        }
     }
 }
 
@@ -454,7 +484,11 @@ mod tests {
     #[test]
     fn test_load_theme_from_config_file() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "preset = \"minimal\"\n\n[colors]\naccent = \"#abcdef\"").unwrap();
+        std::fs::write(
+            tmp.path(),
+            "preset = \"minimal\"\n\n[colors]\naccent = \"#abcdef\"",
+        )
+        .unwrap();
         let theme = load_theme(None, tmp.path());
         assert_eq!(theme.name, "minimal");
         assert_eq!(theme.accent, Color::Rgb(171, 205, 239));

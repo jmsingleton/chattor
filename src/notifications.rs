@@ -16,7 +16,8 @@ pub fn toggle(db: &Database) -> bool {
         db,
         "notifications_enabled",
         if new_state { "true" } else { "false" },
-    ).ok();
+    )
+    .ok();
     new_state
 }
 

@@ -32,10 +32,12 @@ impl RateLimiter {
     /// Returns true if the message should be allowed, false if rate limited.
     pub fn check(&self, peer: &str) -> bool {
         let mut buckets = self.buckets.lock().unwrap();
-        let bucket = buckets.entry(peer.to_string()).or_insert_with(|| TokenBucket {
-            tokens: self.burst as f64,
-            last_refill: Instant::now(),
-        });
+        let bucket = buckets
+            .entry(peer.to_string())
+            .or_insert_with(|| TokenBucket {
+                tokens: self.burst as f64,
+                last_refill: Instant::now(),
+            });
 
         // Refill tokens based on elapsed time
         let now = Instant::now();

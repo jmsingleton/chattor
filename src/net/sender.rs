@@ -1,12 +1,12 @@
-use crate::db::Database;
-use crate::error::{Result, ChattorError};
 use crate::crypto::SessionStore;
+use crate::db::Database;
+use crate::error::{ChattorError, Result};
 use crate::protocol::message::*;
-use crate::tor::connection::TorConnection;
 use crate::tor::client::TorClient;
-use uuid::Uuid;
-use std::sync::Arc;
+use crate::tor::connection::TorConnection;
 use base64::Engine;
+use std::sync::Arc;
+use uuid::Uuid;
 
 /// Handles sending encrypted messages
 #[allow(dead_code)]
@@ -31,7 +31,8 @@ impl MessageSender {
         let store = SessionStore::new(&self.db);
 
         // Load session
-        let mut session = store.load_session(to_onion)?
+        let mut session = store
+            .load_session(to_onion)?
             .ok_or_else(|| ChattorError::Crypto("No session found".into()))?;
 
         // Create plaintext payload
@@ -100,7 +101,8 @@ impl MessageSender {
         conn.execute(
             "UPDATE messages SET status = 'delivered' WHERE message_id = ?1",
             [receipt.message_id.to_string()],
-        ).map_err(|e| ChattorError::Database(format!("Failed to update status: {}", e)))?;
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to update status: {}", e)))?;
 
         Ok(())
     }
@@ -127,14 +129,16 @@ mod tests {
         let (alice_signal_secret, _) = gen_signal_identity();
         let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
         let (bob_bundle, bob_private) =
-            crate::crypto::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+            crate::crypto::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public)
+                .unwrap();
 
         let (session, _ad, _eph) = crate::crypto::SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),
             &bob_bundle,
             &bob_private,
             &alice_signal_secret,
-        ).unwrap();
+        )
+        .unwrap();
 
         let store = crate::crypto::SessionStore::new(&db);
         store.store_session(&session).unwrap();
@@ -143,11 +147,7 @@ mod tests {
         let sender = MessageSender::new(Arc::new(db));
 
         // Send would fail without real connection, but we can test preparation
-        let result = sender.prepare_message(
-            "alice.onion",
-            "bob.onion",
-            "Hello, Bob!"
-        );
+        let result = sender.prepare_message("alice.onion", "bob.onion", "Hello, Bob!");
 
         assert!(result.is_ok());
     }
@@ -161,14 +161,16 @@ mod tests {
         let (alice_signal_secret, _) = gen_signal_identity();
         let (bob_signal_secret, bob_signal_public) = gen_signal_identity();
         let (bob_bundle, bob_private) =
-            crate::crypto::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public).unwrap();
+            crate::crypto::PreKeyBundle::generate_real(&bob_signal_secret, &bob_signal_public)
+                .unwrap();
 
         let (session, _ad, _eph) = crate::crypto::SignalSession::from_prekey_bundle_real(
             "bob.onion".into(),
             &bob_bundle,
             &bob_private,
             &alice_signal_secret,
-        ).unwrap();
+        )
+        .unwrap();
 
         let store = crate::crypto::SessionStore::new(&db);
         store.store_session(&session).unwrap();
@@ -177,11 +179,7 @@ mod tests {
         let sender = MessageSender::new(db);
 
         // Prepare message
-        let result = sender.prepare_message(
-            "alice.onion",
-            "bob.onion",
-            "Hello Bob!",
-        );
+        let result = sender.prepare_message("alice.onion", "bob.onion", "Hello Bob!");
 
         assert!(result.is_ok());
         let message = result.unwrap();
@@ -191,13 +189,18 @@ mod tests {
         assert!(!message.signal_ciphertext.contains("Hello Bob!"));
 
         // 2. Decode base64 and verify it's not the plaintext bytes
-        let decoded_ciphertext = base64::engine::general_purpose::STANDARD.decode(&message.signal_ciphertext).unwrap();
+        let decoded_ciphertext = base64::engine::general_purpose::STANDARD
+            .decode(&message.signal_ciphertext)
+            .unwrap();
         assert_ne!(decoded_ciphertext, b"Hello Bob!");
 
         // 3. Should be longer than plaintext due to encryption overhead
         assert!(decoded_ciphertext.len() > 12); // "Hello Bob!" is 10 bytes
 
         // 4. Should be PreKey message type for first message
-        assert_eq!(message.signal_type, crate::protocol::message::SignalMessageType::PrekeyMessage);
+        assert_eq!(
+            message.signal_type,
+            crate::protocol::message::SignalMessageType::PrekeyMessage
+        );
     }
 }

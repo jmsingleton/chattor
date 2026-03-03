@@ -1,57 +1,42 @@
-use crate::error::{Result, ChattorError};
+use crate::error::{ChattorError, Result};
 
 /// 256-word list for encoding bytes as human-readable words.
 /// Each word maps to exactly one byte value (0-255), making encoding/decoding trivial.
 /// Words chosen to be short, common, unambiguous, and phonetically distinct.
 pub const WORDS: &[&str] = &[
     // 0x00-0x0F
-    "ace",    "act",    "add",    "age",    "ago",    "aid",    "aim",    "air",
-    "ale",    "all",    "and",    "ant",    "any",    "ape",    "arc",    "are",
-    // 0x10-0x1F
-    "ark",    "arm",    "art",    "ash",    "ask",    "ate",    "awe",    "axe",
-    "bad",    "bag",    "ban",    "bar",    "bat",    "bay",    "bed",    "bee",
-    // 0x20-0x2F
-    "bet",    "big",    "bit",    "bow",    "box",    "bud",    "bug",    "bus",
-    "but",    "buy",    "cab",    "cam",    "can",    "cap",    "car",    "cat",
-    // 0x30-0x3F
-    "cob",    "cod",    "cog",    "cop",    "cow",    "cry",    "cub",    "cup",
-    "cur",    "cut",    "dab",    "dam",    "day",    "den",    "dew",    "did",
-    // 0x40-0x4F
-    "dig",    "dim",    "dip",    "doe",    "dog",    "don",    "dot",    "dry",
-    "dub",    "dud",    "due",    "dug",    "dun",    "duo",    "dye",    "ear",
-    // 0x50-0x5F
-    "eat",    "eel",    "egg",    "ego",    "elk",    "elm",    "emu",    "end",
-    "era",    "eve",    "ewe",    "eye",    "fan",    "far",    "fat",    "fax",
-    // 0x60-0x6F
-    "fed",    "few",    "fig",    "fin",    "fir",    "fit",    "fix",    "fly",
-    "foe",    "fog",    "for",    "fox",    "fry",    "fun",    "fur",    "gag",
-    // 0x70-0x7F
-    "gal",    "gap",    "gas",    "gem",    "get",    "gin",    "gnu",    "god",
-    "got",    "gum",    "gun",    "gut",    "guy",    "gym",    "had",    "ham",
-    // 0x80-0x8F
-    "has",    "hat",    "hay",    "hen",    "her",    "hew",    "hex",    "hid",
-    "him",    "hip",    "his",    "hit",    "hob",    "hog",    "hop",    "hot",
-    // 0x90-0x9F
-    "how",    "hub",    "hue",    "hug",    "hum",    "hut",    "ice",    "icy",
-    "ilk",    "ill",    "imp",    "ink",    "inn",    "ion",    "ire",    "irk",
-    // 0xA0-0xAF
-    "ivy",    "jab",    "jag",    "jam",    "jar",    "jaw",    "jay",    "jet",
-    "jig",    "job",    "jog",    "jot",    "joy",    "jug",    "jut",    "keg",
-    // 0xB0-0xBF
-    "ken",    "key",    "kid",    "kin",    "kit",    "lab",    "lad",    "lag",
-    "lap",    "law",    "lay",    "lea",    "led",    "leg",    "let",    "lid",
-    // 0xC0-0xCF
-    "lie",    "lip",    "lit",    "log",    "lot",    "low",    "lug",    "lye",
-    "mad",    "man",    "map",    "mar",    "mat",    "maw",    "may",    "men",
-    // 0xD0-0xDF
-    "met",    "mid",    "mix",    "mob",    "mod",    "mop",    "mow",    "mud",
-    "mug",    "nab",    "nag",    "nap",    "net",    "new",    "nil",    "nip",
-    // 0xE0-0xEF
-    "nit",    "nod",    "nor",    "not",    "now",    "nun",    "nut",    "oak",
-    "oar",    "oat",    "odd",    "ode",    "off",    "oft",    "ohm",    "oil",
-    // 0xF0-0xFF
-    "old",    "one",    "opt",    "orb",    "ore",    "our",    "out",    "owe",
-    "owl",    "own",    "pad",    "pal",    "pan",    "par",    "paw",    "pea",
+    "ace", "act", "add", "age", "ago", "aid", "aim", "air", "ale", "all", "and", "ant", "any",
+    "ape", "arc", "are", // 0x10-0x1F
+    "ark", "arm", "art", "ash", "ask", "ate", "awe", "axe", "bad", "bag", "ban", "bar", "bat",
+    "bay", "bed", "bee", // 0x20-0x2F
+    "bet", "big", "bit", "bow", "box", "bud", "bug", "bus", "but", "buy", "cab", "cam", "can",
+    "cap", "car", "cat", // 0x30-0x3F
+    "cob", "cod", "cog", "cop", "cow", "cry", "cub", "cup", "cur", "cut", "dab", "dam", "day",
+    "den", "dew", "did", // 0x40-0x4F
+    "dig", "dim", "dip", "doe", "dog", "don", "dot", "dry", "dub", "dud", "due", "dug", "dun",
+    "duo", "dye", "ear", // 0x50-0x5F
+    "eat", "eel", "egg", "ego", "elk", "elm", "emu", "end", "era", "eve", "ewe", "eye", "fan",
+    "far", "fat", "fax", // 0x60-0x6F
+    "fed", "few", "fig", "fin", "fir", "fit", "fix", "fly", "foe", "fog", "for", "fox", "fry",
+    "fun", "fur", "gag", // 0x70-0x7F
+    "gal", "gap", "gas", "gem", "get", "gin", "gnu", "god", "got", "gum", "gun", "gut", "guy",
+    "gym", "had", "ham", // 0x80-0x8F
+    "has", "hat", "hay", "hen", "her", "hew", "hex", "hid", "him", "hip", "his", "hit", "hob",
+    "hog", "hop", "hot", // 0x90-0x9F
+    "how", "hub", "hue", "hug", "hum", "hut", "ice", "icy", "ilk", "ill", "imp", "ink", "inn",
+    "ion", "ire", "irk", // 0xA0-0xAF
+    "ivy", "jab", "jag", "jam", "jar", "jaw", "jay", "jet", "jig", "job", "jog", "jot", "joy",
+    "jug", "jut", "keg", // 0xB0-0xBF
+    "ken", "key", "kid", "kin", "kit", "lab", "lad", "lag", "lap", "law", "lay", "lea", "led",
+    "leg", "let", "lid", // 0xC0-0xCF
+    "lie", "lip", "lit", "log", "lot", "low", "lug", "lye", "mad", "man", "map", "mar", "mat",
+    "maw", "may", "men", // 0xD0-0xDF
+    "met", "mid", "mix", "mob", "mod", "mop", "mow", "mud", "mug", "nab", "nag", "nap", "net",
+    "new", "nil", "nip", // 0xE0-0xEF
+    "nit", "nod", "nor", "not", "now", "nun", "nut", "oak", "oar", "oat", "odd", "ode", "off",
+    "oft", "ohm", "oil", // 0xF0-0xFF
+    "old", "one", "opt", "orb", "ore", "our", "out", "owe", "owl", "own", "pad", "pal", "pan",
+    "par", "paw", "pea",
 ];
 
 /// Encode a .onion address as a human-readable friend code.
@@ -66,9 +51,7 @@ pub fn onion_to_friend_code(onion: &str) -> Result<String> {
     let words: Vec<&str> = pubkey.iter().map(|b| WORDS[*b as usize]).collect();
 
     // Group into 8 blocks of 4 words
-    let groups: Vec<String> = words.chunks(4)
-        .map(|chunk| chunk.join("-"))
-        .collect();
+    let groups: Vec<String> = words.chunks(4).map(|chunk| chunk.join("-")).collect();
 
     Ok(groups.join(" "))
 }
@@ -81,23 +64,24 @@ pub fn friend_code_to_onion(code: &str) -> Result<String> {
     let normalized = code.trim().to_lowercase();
 
     // Split on spaces and dashes to extract individual words
-    let words: Vec<&str> = normalized.split([' ', '-'])
+    let words: Vec<&str> = normalized
+        .split([' ', '-'])
         .filter(|w| !w.is_empty())
         .collect();
 
     if words.len() != 32 {
-        return Err(ChattorError::Crypto(
-            format!("Friend code must be 32 words, got {}", words.len())
-        ));
+        return Err(ChattorError::Crypto(format!(
+            "Friend code must be 32 words, got {}",
+            words.len()
+        )));
     }
 
     // Convert words back to bytes
     let mut pubkey = [0u8; 32];
     for (i, word) in words.iter().enumerate() {
-        let idx = WORDS.iter().position(|w| w == word)
-            .ok_or_else(|| ChattorError::Crypto(
-                format!("Unknown word in friend code: '{}'", word)
-            ))?;
+        let idx = WORDS.iter().position(|w| w == word).ok_or_else(|| {
+            ChattorError::Crypto(format!("Unknown word in friend code: '{}'", word))
+        })?;
         pubkey[i] = idx as u8;
     }
 
@@ -108,21 +92,24 @@ pub fn friend_code_to_onion(code: &str) -> Result<String> {
 #[allow(dead_code)]
 pub fn validate_friend_code(code: &str) -> Result<()> {
     let normalized = code.trim().to_lowercase();
-    let words: Vec<&str> = normalized.split([' ', '-'])
+    let words: Vec<&str> = normalized
+        .split([' ', '-'])
         .filter(|w| !w.is_empty())
         .collect();
 
     if words.len() != 32 {
-        return Err(ChattorError::Crypto(
-            format!("Friend code must be 32 words, got {}", words.len())
-        ));
+        return Err(ChattorError::Crypto(format!(
+            "Friend code must be 32 words, got {}",
+            words.len()
+        )));
     }
 
     for word in &words {
         if !WORDS.contains(word) {
-            return Err(ChattorError::Crypto(
-                format!("Unknown word in friend code: '{}'", word)
-            ));
+            return Err(ChattorError::Crypto(format!(
+                "Unknown word in friend code: '{}'",
+                word
+            )));
         }
     }
 
@@ -131,22 +118,28 @@ pub fn validate_friend_code(code: &str) -> Result<()> {
 
 /// Extract the 32-byte Ed25519 public key from a v3 .onion address.
 pub(crate) fn onion_to_pubkey(onion: &str) -> Result<[u8; 32]> {
-    let addr = onion.strip_suffix(".onion")
+    let addr = onion
+        .strip_suffix(".onion")
         .ok_or_else(|| ChattorError::Crypto("Missing .onion suffix".into()))?;
 
     if addr.len() != 56 {
-        return Err(ChattorError::Crypto(
-            format!("Invalid onion address length: expected 56 chars, got {}", addr.len())
-        ));
+        return Err(ChattorError::Crypto(format!(
+            "Invalid onion address length: expected 56 chars, got {}",
+            addr.len()
+        )));
     }
 
-    let decoded = base32::decode(base32::Alphabet::RFC4648 { padding: false }, &addr.to_uppercase())
-        .ok_or_else(|| ChattorError::Crypto("Invalid base32 in onion address".into()))?;
+    let decoded = base32::decode(
+        base32::Alphabet::RFC4648 { padding: false },
+        &addr.to_uppercase(),
+    )
+    .ok_or_else(|| ChattorError::Crypto("Invalid base32 in onion address".into()))?;
 
     if decoded.len() != 35 {
-        return Err(ChattorError::Crypto(
-            format!("Invalid decoded length: expected 35 bytes, got {}", decoded.len())
-        ));
+        return Err(ChattorError::Crypto(format!(
+            "Invalid decoded length: expected 35 bytes, got {}",
+            decoded.len()
+        )));
     }
 
     // Verify version byte
@@ -161,7 +154,7 @@ pub(crate) fn onion_to_pubkey(onion: &str) -> Result<[u8; 32]> {
 
 /// Reconstruct a v3 .onion address from a 32-byte Ed25519 public key.
 fn pubkey_to_onion(pubkey: &[u8; 32]) -> Result<String> {
-    use sha3::{Sha3_256, Digest};
+    use sha3::{Digest, Sha3_256};
 
     // Compute checksum: SHA3-256(".onion checksum" || pubkey || version)[:2]
     let mut hasher = Sha3_256::new();
@@ -240,7 +233,13 @@ mod tests {
         // Each group should have 4 words separated by dashes
         for group in &groups {
             let words: Vec<&str> = group.split('-').collect();
-            assert_eq!(words.len(), 4, "Expected 4 words in group '{}', got {}", group, words.len());
+            assert_eq!(
+                words.len(),
+                4,
+                "Expected 4 words in group '{}', got {}",
+                group,
+                words.len()
+            );
         }
     }
 
@@ -270,16 +269,22 @@ mod tests {
 
     #[test]
     fn validate_rejects_unknown_words() {
-        let code = std::iter::repeat("ace").take(31).chain(std::iter::once("zzz"))
-            .collect::<Vec<_>>().join(" ");
+        let code = std::iter::repeat("ace")
+            .take(31)
+            .chain(std::iter::once("zzz"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let result = validate_friend_code(&code);
         assert!(result.is_err());
     }
 
     #[test]
     fn decode_rejects_invalid_word() {
-        let code = std::iter::repeat("ace").take(31).chain(std::iter::once("zzz"))
-            .collect::<Vec<_>>().join(" ");
+        let code = std::iter::repeat("ace")
+            .take(31)
+            .chain(std::iter::once("zzz"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let result = friend_code_to_onion(&code);
         assert!(result.is_err());
     }

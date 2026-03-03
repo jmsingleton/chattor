@@ -1,7 +1,7 @@
-use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier, Signature};
-use rand::rngs::OsRng;
-use crate::error::{Result, ChattorError};
 use crate::db::Database;
+use crate::error::{ChattorError, Result};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use rand::rngs::OsRng;
 
 /// User identity keypair (Ed25519)
 pub struct IdentityKeypair {
@@ -15,7 +15,10 @@ impl IdentityKeypair {
         let mut csprng = OsRng;
         let signing_key = SigningKey::generate(&mut csprng);
         let verifying_key = signing_key.verifying_key();
-        Ok(IdentityKeypair { signing_key, _verifying_key: verifying_key })
+        Ok(IdentityKeypair {
+            signing_key,
+            _verifying_key: verifying_key,
+        })
     }
 
     /// Create an IdentityKeypair from an existing signing key.
@@ -23,7 +26,10 @@ impl IdentityKeypair {
     #[allow(dead_code)]
     pub fn from_signing_key(signing_key: SigningKey) -> Self {
         let verifying_key = signing_key.verifying_key();
-        IdentityKeypair { signing_key, _verifying_key: verifying_key }
+        IdentityKeypair {
+            signing_key,
+            _verifying_key: verifying_key,
+        }
     }
 
     /// Load identity from database or generate new one
@@ -35,7 +41,7 @@ impl IdentityKeypair {
         let existing: rusqlite::Result<Vec<u8>> = conn.query_row(
             "SELECT value FROM settings WHERE key = 'identity_keypair'",
             [],
-            |row| row.get(0)
+            |row| row.get(0),
         );
 
         match existing {
@@ -53,7 +59,8 @@ impl IdentityKeypair {
                 conn.execute(
                     "INSERT INTO settings (key, value) VALUES ('identity_keypair', ?1)",
                     [&bytes],
-                ).map_err(|e| ChattorError::Database(format!("Failed to store identity: {}", e)))?;
+                )
+                .map_err(|e| ChattorError::Database(format!("Failed to store identity: {}", e)))?;
 
                 Ok(keypair)
             }
@@ -73,9 +80,8 @@ impl IdentityKeypair {
             return Err(ChattorError::Crypto("Invalid identity key length".into()));
         }
 
-        let signing_key = SigningKey::from_bytes(
-            bytes[..32].try_into().expect("length validated above")
-        );
+        let signing_key =
+            SigningKey::from_bytes(bytes[..32].try_into().expect("length validated above"));
         let verifying_key = signing_key.verifying_key();
 
         Ok(IdentityKeypair {
@@ -93,7 +99,8 @@ impl IdentityKeypair {
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES ('identity_keypair', ?1)",
             [&bytes],
-        ).map_err(|e| ChattorError::Database(format!("Failed to store identity: {}", e)))?;
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to store identity: {}", e)))?;
 
         Ok(())
     }
@@ -103,19 +110,21 @@ impl IdentityKeypair {
     /// handled by the first-run flow in main.rs.
     pub fn load_from_db(db: &Database) -> Option<Self> {
         let conn = db.connection();
-        let bytes: Vec<u8> = conn.query_row(
-            "SELECT value FROM settings WHERE key = 'identity_keypair'",
-            [],
-            |row| row.get(0),
-        ).ok()?;
+        let bytes: Vec<u8> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'identity_keypair'",
+                [],
+                |row| row.get(0),
+            )
+            .ok()?;
         Self::from_bytes(&bytes).ok()
     }
 
     /// Derive .onion address from identity key (v3 format)
     #[allow(dead_code)]
     pub fn to_onion_address(&self) -> String {
-        use sha3::{Sha3_256, Digest};
         use base32::Alphabet;
+        use sha3::{Digest, Sha3_256};
 
         let public_key_bytes = self._verifying_key.to_bytes();
 
@@ -132,8 +141,8 @@ impl IdentityKeypair {
         address_bytes.extend_from_slice(checksum);
         address_bytes.push(version);
 
-        let encoded = base32::encode(Alphabet::RFC4648 { padding: false }, &address_bytes)
-            .to_lowercase();
+        let encoded =
+            base32::encode(Alphabet::RFC4648 { padding: false }, &address_bytes).to_lowercase();
 
         format!("{}.onion", encoded)
     }

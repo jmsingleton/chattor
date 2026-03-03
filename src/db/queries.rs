@@ -1,5 +1,5 @@
 use crate::db::Database;
-use crate::error::{Result, ChattorError};
+use crate::error::{ChattorError, Result};
 use rusqlite::params;
 
 /// A friend entry for the sidebar
@@ -50,8 +50,9 @@ pub struct ChatMessage {
 /// Get active friends with unread counts
 pub fn get_friends_with_unread(db: &Database) -> Result<Vec<FriendEntry>> {
     let conn = db.connection();
-    let mut stmt = conn.prepare(
-        "SELECT f.id, f.onion_address, f.display_name,
+    let mut stmt = conn
+        .prepare(
+            "SELECT f.id, f.onion_address, f.display_name,
                 c.id as conversation_id,
                 (SELECT COUNT(*) FROM messages m
                  WHERE m.conversation_id = c.id
@@ -60,20 +61,23 @@ pub fn get_friends_with_unread(db: &Database) -> Result<Vec<FriendEntry>> {
          FROM friends f
          LEFT JOIN conversations c ON c.friend_id = f.id
          WHERE f.status = 'active'
-         ORDER BY f.display_name, f.onion_address"
-    ).map_err(|e| ChattorError::Database(format!("Failed to prepare friends query: {}", e)))?;
+         ORDER BY f.display_name, f.onion_address",
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to prepare friends query: {}", e)))?;
 
-    let entries = stmt.query_map([], |row| {
-        Ok(FriendEntry {
-            friend_id: row.get(0)?,
-            onion_address: row.get(1)?,
-            display_name: row.get(2)?,
-            conversation_id: row.get(3)?,
-            unread_count: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+    let entries = stmt
+        .query_map([], |row| {
+            Ok(FriendEntry {
+                friend_id: row.get(0)?,
+                onion_address: row.get(1)?,
+                display_name: row.get(2)?,
+                conversation_id: row.get(3)?,
+                unread_count: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            })
         })
-    }).map_err(|e| ChattorError::Database(format!("Failed to query friends: {}", e)))?
-    .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| ChattorError::Database(format!("Failed to collect friends: {}", e)))?;
+        .map_err(|e| ChattorError::Database(format!("Failed to query friends: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| ChattorError::Database(format!("Failed to collect friends: {}", e)))?;
 
     Ok(entries)
 }
@@ -108,32 +112,41 @@ pub fn get_or_create_conversation(db: &Database, friend_id: i64) -> Result<i64> 
 }
 
 /// Load messages for a conversation (most recent first, then reversed for display)
-pub fn get_messages(db: &Database, conversation_id: i64, limit: usize, offset: usize) -> Result<Vec<ChatMessage>> {
+pub fn get_messages(
+    db: &Database,
+    conversation_id: i64,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<ChatMessage>> {
     let conn = db.connection();
-    let mut stmt = conn.prepare(
-        "SELECT id, message_id, sender_onion, content, timestamp, status, ephemeral_ttl
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, message_id, sender_onion, content, timestamp, status, ephemeral_ttl
          FROM messages
          WHERE conversation_id = ?1
          ORDER BY timestamp DESC, id DESC
-         LIMIT ?2 OFFSET ?3"
-    ).map_err(|e| ChattorError::Database(format!("Failed to prepare messages query: {}", e)))?;
+         LIMIT ?2 OFFSET ?3",
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to prepare messages query: {}", e)))?;
 
-    let mut messages: Vec<ChatMessage> = stmt.query_map(
-        params![conversation_id, limit as i64, offset as i64],
-        |row| {
-            Ok(ChatMessage {
-                id: row.get(0)?,
-                message_id: row.get(1)?,
-                sender_onion: row.get(2)?,
-                content: row.get(3)?,
-                timestamp: row.get(4)?,
-                status: row.get(5)?,
-                ephemeral_ttl: row.get(6)?,
-            })
-        },
-    ).map_err(|e| ChattorError::Database(format!("Failed to query messages: {}", e)))?
-    .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| ChattorError::Database(format!("Failed to collect messages: {}", e)))?;
+    let mut messages: Vec<ChatMessage> = stmt
+        .query_map(
+            params![conversation_id, limit as i64, offset as i64],
+            |row| {
+                Ok(ChatMessage {
+                    id: row.get(0)?,
+                    message_id: row.get(1)?,
+                    sender_onion: row.get(2)?,
+                    content: row.get(3)?,
+                    timestamp: row.get(4)?,
+                    status: row.get(5)?,
+                    ephemeral_ttl: row.get(6)?,
+                })
+            },
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to query messages: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| ChattorError::Database(format!("Failed to collect messages: {}", e)))?;
 
     // Reverse so oldest is first (for display top-to-bottom)
     messages.reverse();
@@ -217,20 +230,24 @@ pub fn mark_conversation_read(db: &Database, conversation_id: i64) -> Result<()>
         .unwrap_or_default()
         .as_secs() as i64;
 
-    db.connection().execute(
-        "UPDATE conversations SET last_read_at = ?1 WHERE id = ?2",
-        params![now, conversation_id],
-    ).map_err(|e| ChattorError::Database(format!("Failed to mark conversation read: {}", e)))?;
+    db.connection()
+        .execute(
+            "UPDATE conversations SET last_read_at = ?1 WHERE id = ?2",
+            params![now, conversation_id],
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to mark conversation read: {}", e)))?;
 
     Ok(())
 }
 
 /// Update a message's delivery status
 pub fn update_message_status(db: &Database, message_id: &str, status: &str) -> Result<()> {
-    db.connection().execute(
-        "UPDATE messages SET status = ?1 WHERE message_id = ?2",
-        params![status, message_id],
-    ).map_err(|e| ChattorError::Database(format!("Failed to update message status: {}", e)))?;
+    db.connection()
+        .execute(
+            "UPDATE messages SET status = ?1 WHERE message_id = ?2",
+            params![status, message_id],
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to update message status: {}", e)))?;
 
     Ok(())
 }
@@ -246,17 +263,23 @@ pub fn find_friend_by_onion(db: &Database, onion_address: &str) -> Result<Option
     match result {
         Ok(id) => Ok(Some(id)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(ChattorError::Database(format!("Failed to find friend: {}", e))),
+        Err(e) => Err(ChattorError::Database(format!(
+            "Failed to find friend: {}",
+            e
+        ))),
     }
 }
 
 /// Count pending friend requests
 pub fn get_pending_request_count(db: &Database) -> Result<i64> {
-    let count: i64 = db.connection().query_row(
-        "SELECT COUNT(*) FROM friend_requests WHERE status = 'pending'",
-        [],
-        |row| row.get(0),
-    ).map_err(|e| ChattorError::Database(format!("Failed to count pending requests: {}", e)))?;
+    let count: i64 = db
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM friend_requests WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to count pending requests: {}", e)))?;
 
     Ok(count)
 }
@@ -264,23 +287,29 @@ pub fn get_pending_request_count(db: &Database) -> Result<i64> {
 /// Get all pending friend requests
 pub fn get_pending_friend_requests(db: &Database) -> Result<Vec<PendingFriendRequest>> {
     let conn = db.connection();
-    let mut stmt = conn.prepare(
-        "SELECT id, from_onion, COALESCE(friend_code, ''), received_at
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, from_onion, COALESCE(friend_code, ''), received_at
          FROM friend_requests
          WHERE status = 'pending'
-         ORDER BY received_at ASC"
-    ).map_err(|e| ChattorError::Database(format!("Failed to prepare friend requests query: {}", e)))?;
+         ORDER BY received_at ASC",
+        )
+        .map_err(|e| {
+            ChattorError::Database(format!("Failed to prepare friend requests query: {}", e))
+        })?;
 
-    let entries = stmt.query_map([], |row| {
-        Ok(PendingFriendRequest {
-            id: row.get(0)?,
-            from_onion: row.get(1)?,
-            friend_code: row.get(2)?,
-            received_at: row.get(3)?,
+    let entries = stmt
+        .query_map([], |row| {
+            Ok(PendingFriendRequest {
+                id: row.get(0)?,
+                from_onion: row.get(1)?,
+                friend_code: row.get(2)?,
+                received_at: row.get(3)?,
+            })
         })
-    }).map_err(|e| ChattorError::Database(format!("Failed to query friend requests: {}", e)))?
-    .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| ChattorError::Database(format!("Failed to collect friend requests: {}", e)))?;
+        .map_err(|e| ChattorError::Database(format!("Failed to query friend requests: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| ChattorError::Database(format!("Failed to collect friend requests: {}", e)))?;
 
     Ok(entries)
 }
@@ -292,19 +321,24 @@ pub fn get_unreceipted_message_ids(
     own_onion: &str,
 ) -> Result<Vec<(String, String)>> {
     let conn = db.connection();
-    let mut stmt = conn.prepare(
-        "SELECT message_id, sender_onion FROM messages
+    let mut stmt = conn
+        .prepare(
+            "SELECT message_id, sender_onion FROM messages
          WHERE conversation_id = ?1
          AND status = 'received'
-         AND sender_onion != ?2"
-    ).map_err(|e| ChattorError::Database(format!("Failed to prepare unreceipted query: {}", e)))?;
+         AND sender_onion != ?2",
+        )
+        .map_err(|e| {
+            ChattorError::Database(format!("Failed to prepare unreceipted query: {}", e))
+        })?;
 
-    let entries = stmt.query_map(
-        params![conversation_id, own_onion],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-    ).map_err(|e| ChattorError::Database(format!("Failed to query unreceipted: {}", e)))?
-    .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| ChattorError::Database(format!("Failed to collect unreceipted: {}", e)))?;
+    let entries = stmt
+        .query_map(params![conversation_id, own_onion], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| ChattorError::Database(format!("Failed to query unreceipted: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| ChattorError::Database(format!("Failed to collect unreceipted: {}", e)))?;
 
     Ok(entries)
 }
@@ -320,16 +354,25 @@ pub fn get_conversation_ephemeral_ttl(db: &Database, conversation_id: i64) -> Re
     match result {
         Ok(ttl) => Ok(ttl),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(ChattorError::Database(format!("Failed to get ephemeral TTL: {}", e))),
+        Err(e) => Err(ChattorError::Database(format!(
+            "Failed to get ephemeral TTL: {}",
+            e
+        ))),
     }
 }
 
 /// Set the ephemeral TTL for a conversation (None = disable)
-pub fn set_conversation_ephemeral_ttl(db: &Database, conversation_id: i64, ttl: Option<i64>) -> Result<()> {
-    db.connection().execute(
-        "UPDATE conversations SET ephemeral_ttl = ?1, is_ephemeral = ?2 WHERE id = ?3",
-        params![ttl, ttl.is_some() as i32, conversation_id],
-    ).map_err(|e| ChattorError::Database(format!("Failed to set ephemeral TTL: {}", e)))?;
+pub fn set_conversation_ephemeral_ttl(
+    db: &Database,
+    conversation_id: i64,
+    ttl: Option<i64>,
+) -> Result<()> {
+    db.connection()
+        .execute(
+            "UPDATE conversations SET ephemeral_ttl = ?1, is_ephemeral = ?2 WHERE id = ?3",
+            params![ttl, ttl.is_some() as i32, conversation_id],
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to set ephemeral TTL: {}", e)))?;
 
     Ok(())
 }
@@ -341,13 +384,15 @@ pub fn activate_ephemeral_timers(db: &Database, conversation_id: i64) -> Result<
         .unwrap_or_default()
         .as_secs() as i64;
 
-    db.connection().execute(
-        "UPDATE messages SET expires_at = ?1 + ephemeral_ttl
+    db.connection()
+        .execute(
+            "UPDATE messages SET expires_at = ?1 + ephemeral_ttl
          WHERE conversation_id = ?2
          AND ephemeral_ttl IS NOT NULL
          AND expires_at IS NULL",
-        params![now, conversation_id],
-    ).map_err(|e| ChattorError::Database(format!("Failed to activate timers: {}", e)))?;
+            params![now, conversation_id],
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to activate timers: {}", e)))?;
 
     Ok(())
 }
@@ -390,7 +435,8 @@ pub fn initialize_channels(db: &Database) -> Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO channels (id, channel_type, created_at) VALUES (1, 'public', ?1)",
         rusqlite::params![now],
-    ).map_err(|e| ChattorError::Database(format!("Failed to create public channel: {}", e)))?;
+    )
+    .map_err(|e| ChattorError::Database(format!("Failed to create public channel: {}", e)))?;
 
     conn.execute(
         "INSERT OR IGNORE INTO channels (id, channel_type, created_at) VALUES (2, 'friends_only', ?1)",
@@ -420,44 +466,58 @@ pub fn store_channel_post(
 /// Get posts for a channel, newest first
 pub fn get_channel_posts(db: &Database, channel_id: i64, limit: usize) -> Result<Vec<ChannelPost>> {
     let conn = db.connection();
-    let mut stmt = conn.prepare(
-        "SELECT id, channel_id, content, post_id, created_at, signature
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, channel_id, content, post_id, created_at, signature
          FROM channel_posts
          WHERE channel_id = ?1
          ORDER BY created_at DESC, id DESC
-         LIMIT ?2"
-    ).map_err(|e| ChattorError::Database(format!("Failed to prepare channel posts query: {}", e)))?;
+         LIMIT ?2",
+        )
+        .map_err(|e| {
+            ChattorError::Database(format!("Failed to prepare channel posts query: {}", e))
+        })?;
 
-    let posts = stmt.query_map(params![channel_id, limit as i64], |row| {
-        Ok(ChannelPost {
-            id: row.get(0)?,
-            channel_id: row.get(1)?,
-            content: row.get(2)?,
-            post_id: row.get(3)?,
-            created_at: row.get(4)?,
-            signature: row.get(5)?,
+    let posts = stmt
+        .query_map(params![channel_id, limit as i64], |row| {
+            Ok(ChannelPost {
+                id: row.get(0)?,
+                channel_id: row.get(1)?,
+                content: row.get(2)?,
+                post_id: row.get(3)?,
+                created_at: row.get(4)?,
+                signature: row.get(5)?,
+            })
         })
-    }).map_err(|e| ChattorError::Database(format!("Failed to query channel posts: {}", e)))?
-    .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| ChattorError::Database(format!("Failed to collect channel posts: {}", e)))?;
+        .map_err(|e| ChattorError::Database(format!("Failed to query channel posts: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| ChattorError::Database(format!("Failed to collect channel posts: {}", e)))?;
 
     Ok(posts)
 }
 
 /// Delete oldest posts if count exceeds 100
 pub fn enforce_channel_retention(db: &Database, channel_id: i64) -> Result<i64> {
-    let deleted = db.connection().execute(
-        "DELETE FROM channel_posts WHERE channel_id = ?1 AND id NOT IN (
+    let deleted = db
+        .connection()
+        .execute(
+            "DELETE FROM channel_posts WHERE channel_id = ?1 AND id NOT IN (
             SELECT id FROM channel_posts WHERE channel_id = ?1
             ORDER BY created_at DESC, id DESC LIMIT 100
         )",
-        params![channel_id],
-    ).map_err(|e| ChattorError::Database(format!("Failed to enforce retention: {}", e)))? as i64;
+            params![channel_id],
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to enforce retention: {}", e)))?
+        as i64;
     Ok(deleted)
 }
 
 /// Add a subscriber to one of our channels (publisher side)
-pub fn add_channel_subscriber(db: &Database, subscriber_onion: &str, channel_type: &str) -> Result<()> {
+pub fn add_channel_subscriber(
+    db: &Database,
+    subscriber_onion: &str,
+    channel_type: &str,
+) -> Result<()> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -472,22 +532,31 @@ pub fn add_channel_subscriber(db: &Database, subscriber_onion: &str, channel_typ
 }
 
 /// Remove a subscriber from one of our channels
-pub fn remove_channel_subscriber(db: &Database, subscriber_onion: &str, channel_type: &str) -> Result<()> {
-    db.connection().execute(
-        "DELETE FROM channel_subscribers WHERE subscriber_onion = ?1 AND channel_type = ?2",
-        params![subscriber_onion, channel_type],
-    ).map_err(|e| ChattorError::Database(format!("Failed to remove subscriber: {}", e)))?;
+pub fn remove_channel_subscriber(
+    db: &Database,
+    subscriber_onion: &str,
+    channel_type: &str,
+) -> Result<()> {
+    db.connection()
+        .execute(
+            "DELETE FROM channel_subscribers WHERE subscriber_onion = ?1 AND channel_type = ?2",
+            params![subscriber_onion, channel_type],
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to remove subscriber: {}", e)))?;
     Ok(())
 }
 
 /// Get all subscribers for a channel type (publisher side)
 pub fn get_channel_subscribers(db: &Database, channel_type: &str) -> Result<Vec<String>> {
     let conn = db.connection();
-    let mut stmt = conn.prepare(
-        "SELECT subscriber_onion FROM channel_subscribers WHERE channel_type = ?1"
-    ).map_err(|e| ChattorError::Database(format!("Failed to prepare subscribers query: {}", e)))?;
+    let mut stmt = conn
+        .prepare("SELECT subscriber_onion FROM channel_subscribers WHERE channel_type = ?1")
+        .map_err(|e| {
+            ChattorError::Database(format!("Failed to prepare subscribers query: {}", e))
+        })?;
 
-    let subs = stmt.query_map(params![channel_type], |row| row.get::<_, String>(0))
+    let subs = stmt
+        .query_map(params![channel_type], |row| row.get::<_, String>(0))
         .map_err(|e| ChattorError::Database(format!("Failed to query subscribers: {}", e)))?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| ChattorError::Database(format!("Failed to collect subscribers: {}", e)))?;
@@ -495,7 +564,11 @@ pub fn get_channel_subscribers(db: &Database, channel_type: &str) -> Result<Vec<
 }
 
 /// Subscribe to a remote user's channel (subscriber side)
-pub fn add_channel_subscription(db: &Database, publisher_onion: &str, channel_type: &str) -> Result<()> {
+pub fn add_channel_subscription(
+    db: &Database,
+    publisher_onion: &str,
+    channel_type: &str,
+) -> Result<()> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -511,38 +584,55 @@ pub fn add_channel_subscription(db: &Database, publisher_onion: &str, channel_ty
 
 /// Remove a channel subscription
 #[allow(dead_code)]
-pub fn remove_channel_subscription(db: &Database, publisher_onion: &str, channel_type: &str) -> Result<()> {
-    db.connection().execute(
-        "DELETE FROM channel_subscriptions WHERE publisher_onion = ?1 AND channel_type = ?2",
-        params![publisher_onion, channel_type],
-    ).map_err(|e| ChattorError::Database(format!("Failed to remove subscription: {}", e)))?;
+pub fn remove_channel_subscription(
+    db: &Database,
+    publisher_onion: &str,
+    channel_type: &str,
+) -> Result<()> {
+    db.connection()
+        .execute(
+            "DELETE FROM channel_subscriptions WHERE publisher_onion = ?1 AND channel_type = ?2",
+            params![publisher_onion, channel_type],
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to remove subscription: {}", e)))?;
     Ok(())
 }
 
 /// Get all channel subscriptions (subscriber side)
 pub fn get_channel_subscriptions(db: &Database) -> Result<Vec<ChannelSubscription>> {
     let conn = db.connection();
-    let mut stmt = conn.prepare(
-        "SELECT id, publisher_onion, channel_type, subscribed_at, last_sync_at
-         FROM channel_subscriptions ORDER BY subscribed_at ASC"
-    ).map_err(|e| ChattorError::Database(format!("Failed to prepare subscriptions query: {}", e)))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, publisher_onion, channel_type, subscribed_at, last_sync_at
+         FROM channel_subscriptions ORDER BY subscribed_at ASC",
+        )
+        .map_err(|e| {
+            ChattorError::Database(format!("Failed to prepare subscriptions query: {}", e))
+        })?;
 
-    let subs = stmt.query_map([], |row| {
-        Ok(ChannelSubscription {
-            id: row.get(0)?,
-            publisher_onion: row.get(1)?,
-            channel_type: row.get(2)?,
-            subscribed_at: row.get(3)?,
-            last_sync_at: row.get(4)?,
+    let subs = stmt
+        .query_map([], |row| {
+            Ok(ChannelSubscription {
+                id: row.get(0)?,
+                publisher_onion: row.get(1)?,
+                channel_type: row.get(2)?,
+                subscribed_at: row.get(3)?,
+                last_sync_at: row.get(4)?,
+            })
         })
-    }).map_err(|e| ChattorError::Database(format!("Failed to query subscriptions: {}", e)))?
-    .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| ChattorError::Database(format!("Failed to collect subscriptions: {}", e)))?;
+        .map_err(|e| ChattorError::Database(format!("Failed to query subscriptions: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| ChattorError::Database(format!("Failed to collect subscriptions: {}", e)))?;
     Ok(subs)
 }
 
 /// Update the last sync timestamp for a subscription
-pub fn update_subscription_sync_time(db: &Database, publisher_onion: &str, channel_type: &str, sync_at: i64) -> Result<()> {
+pub fn update_subscription_sync_time(
+    db: &Database,
+    publisher_onion: &str,
+    channel_type: &str,
+    sync_at: i64,
+) -> Result<()> {
     db.connection().execute(
         "UPDATE channel_subscriptions SET last_sync_at = ?1 WHERE publisher_onion = ?2 AND channel_type = ?3",
         params![sync_at, publisher_onion, channel_type],
@@ -551,23 +641,33 @@ pub fn update_subscription_sync_time(db: &Database, publisher_onion: &str, chann
 }
 
 /// Store a read receipt for a post (publisher side)
-pub fn store_channel_post_receipt(db: &Database, post_id: &str, reader_onion: &str, read_at: i64) -> Result<()> {
-    db.connection().execute(
-        "INSERT OR IGNORE INTO channel_post_receipts (post_id, reader_onion, read_at)
+pub fn store_channel_post_receipt(
+    db: &Database,
+    post_id: &str,
+    reader_onion: &str,
+    read_at: i64,
+) -> Result<()> {
+    db.connection()
+        .execute(
+            "INSERT OR IGNORE INTO channel_post_receipts (post_id, reader_onion, read_at)
          VALUES (?1, ?2, ?3)",
-        params![post_id, reader_onion, read_at],
-    ).map_err(|e| ChattorError::Database(format!("Failed to store post receipt: {}", e)))?;
+            params![post_id, reader_onion, read_at],
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to store post receipt: {}", e)))?;
     Ok(())
 }
 
 /// Get read count for a post (publisher side)
 #[allow(dead_code)]
 pub fn get_channel_post_read_count(db: &Database, post_id: &str) -> Result<i64> {
-    let count: i64 = db.connection().query_row(
-        "SELECT COUNT(*) FROM channel_post_receipts WHERE post_id = ?1",
-        params![post_id],
-        |row| row.get(0),
-    ).map_err(|e| ChattorError::Database(format!("Failed to count post receipts: {}", e)))?;
+    let count: i64 = db
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM channel_post_receipts WHERE post_id = ?1",
+            params![post_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to count post receipts: {}", e)))?;
     Ok(count)
 }
 
@@ -588,21 +688,26 @@ pub fn get_channel_post_read_counts_batch(
     );
 
     let conn = db.connection();
-    let mut stmt = conn.prepare(&sql)
-        .map_err(|e| ChattorError::Database(format!("Failed to prepare batch read counts: {}", e)))?;
+    let mut stmt = conn.prepare(&sql).map_err(|e| {
+        ChattorError::Database(format!("Failed to prepare batch read counts: {}", e))
+    })?;
 
-    let params: Vec<&dyn rusqlite::types::ToSql> = post_ids.iter()
+    let params: Vec<&dyn rusqlite::types::ToSql> = post_ids
+        .iter()
         .map(|s| s as &dyn rusqlite::types::ToSql)
         .collect();
 
-    let rows = stmt.query_map(params.as_slice(), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    }).map_err(|e| ChattorError::Database(format!("Failed to query batch read counts: {}", e)))?;
+    let rows = stmt
+        .query_map(params.as_slice(), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| ChattorError::Database(format!("Failed to query batch read counts: {}", e)))?;
 
     let mut counts = std::collections::HashMap::new();
     for row in rows {
-        let (post_id, count) = row
-            .map_err(|e| ChattorError::Database(format!("Failed to read batch count row: {}", e)))?;
+        let (post_id, count) = row.map_err(|e| {
+            ChattorError::Database(format!("Failed to read batch count row: {}", e))
+        })?;
         counts.insert(post_id, count);
     }
 
@@ -610,28 +715,38 @@ pub fn get_channel_post_read_counts_batch(
 }
 
 /// Get posts from a channel since a timestamp (for sync responses)
-pub fn get_channel_posts_since(db: &Database, channel_id: i64, since: i64) -> Result<Vec<ChannelPost>> {
+pub fn get_channel_posts_since(
+    db: &Database,
+    channel_id: i64,
+    since: i64,
+) -> Result<Vec<ChannelPost>> {
     let conn = db.connection();
-    let mut stmt = conn.prepare(
-        "SELECT id, channel_id, content, post_id, created_at, signature
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, channel_id, content, post_id, created_at, signature
          FROM channel_posts
          WHERE channel_id = ?1 AND created_at > ?2
          ORDER BY created_at ASC
-         LIMIT 100"
-    ).map_err(|e| ChattorError::Database(format!("Failed to prepare posts since query: {}", e)))?;
+         LIMIT 100",
+        )
+        .map_err(|e| {
+            ChattorError::Database(format!("Failed to prepare posts since query: {}", e))
+        })?;
 
-    let posts = stmt.query_map(params![channel_id, since], |row| {
-        Ok(ChannelPost {
-            id: row.get(0)?,
-            channel_id: row.get(1)?,
-            content: row.get(2)?,
-            post_id: row.get(3)?,
-            created_at: row.get(4)?,
-            signature: row.get(5)?,
+    let posts = stmt
+        .query_map(params![channel_id, since], |row| {
+            Ok(ChannelPost {
+                id: row.get(0)?,
+                channel_id: row.get(1)?,
+                content: row.get(2)?,
+                post_id: row.get(3)?,
+                created_at: row.get(4)?,
+                signature: row.get(5)?,
+            })
         })
-    }).map_err(|e| ChattorError::Database(format!("Failed to query posts since: {}", e)))?
-    .collect::<std::result::Result<Vec<_>, _>>()
-    .map_err(|e| ChattorError::Database(format!("Failed to collect posts since: {}", e)))?;
+        .map_err(|e| ChattorError::Database(format!("Failed to query posts since: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| ChattorError::Database(format!("Failed to collect posts since: {}", e)))?;
     Ok(posts)
 }
 
@@ -642,10 +757,14 @@ pub fn cleanup_expired_messages(db: &Database) -> Result<i64> {
         .unwrap_or_default()
         .as_secs() as i64;
 
-    let deleted = db.connection().execute(
-        "DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at < ?1",
-        params![now],
-    ).map_err(|e| ChattorError::Database(format!("Failed to cleanup expired: {}", e)))? as i64;
+    let deleted = db
+        .connection()
+        .execute(
+            "DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at < ?1",
+            params![now],
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to cleanup expired: {}", e)))?
+        as i64;
 
     Ok(deleted)
 }
@@ -663,7 +782,10 @@ pub fn get_app_setting(db: &Database, key: &str) -> Result<Option<String>> {
     match result {
         Ok(value) => Ok(Some(value)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(ChattorError::Database(format!("Failed to get setting: {}", e))),
+        Err(e) => Err(ChattorError::Database(format!(
+            "Failed to get setting: {}",
+            e
+        ))),
     }
 }
 
@@ -687,7 +809,8 @@ pub fn set_app_setting(db: &Database, key: &str, value: &str) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
         (key, value),
-    ).map_err(|e| ChattorError::Database(format!("Failed to set setting: {}", e)))?;
+    )
+    .map_err(|e| ChattorError::Database(format!("Failed to set setting: {}", e)))?;
     Ok(())
 }
 
@@ -703,9 +826,7 @@ pub fn cleanup_stale_prekey_material(db: &Database, max_age_secs: u64) -> Result
     // Find stale peers by checking prekey_created_at entries
     let mut stmt = conn
         .prepare("SELECT key, value FROM app_settings WHERE key LIKE 'prekey_created_at:%'")
-        .map_err(|e| {
-            ChattorError::Database(format!("Failed to query prekey timestamps: {}", e))
-        })?;
+        .map_err(|e| ChattorError::Database(format!("Failed to query prekey timestamps: {}", e)))?;
 
     let stale_peers: Vec<String> = stmt
         .query_map([], |row| {
@@ -713,9 +834,7 @@ pub fn cleanup_stale_prekey_material(db: &Database, max_age_secs: u64) -> Result
             let ts_str: String = row.get(1)?;
             Ok((key, ts_str))
         })
-        .map_err(|e| {
-            ChattorError::Database(format!("Failed to read prekey timestamps: {}", e))
-        })?
+        .map_err(|e| ChattorError::Database(format!("Failed to read prekey timestamps: {}", e)))?
         .filter_map(|r| r.ok())
         .filter_map(|(key, ts_str)| {
             let ts: u64 = ts_str.parse().ok()?;
@@ -756,12 +875,19 @@ pub fn cleanup_stale_prekey_material(db: &Database, max_age_secs: u64) -> Result
 }
 
 /// Store a peer's Ed25519 public key (TOFU binding).
-pub fn store_friend_pubkey(db: &crate::db::Database, onion: &str, pubkey: &[u8]) -> crate::error::Result<()> {
+pub fn store_friend_pubkey(
+    db: &crate::db::Database,
+    onion: &str,
+    pubkey: &[u8],
+) -> crate::error::Result<()> {
     let conn = db.connection();
     conn.execute(
         "UPDATE friends SET ed25519_pubkey = ?1 WHERE onion_address = ?2",
         (pubkey, onion),
-    ).map_err(|e| crate::error::ChattorError::Database(format!("Failed to store friend pubkey: {}", e)))?;
+    )
+    .map_err(|e| {
+        crate::error::ChattorError::Database(format!("Failed to store friend pubkey: {}", e))
+    })?;
     Ok(())
 }
 
@@ -775,11 +901,13 @@ mod tests {
         let db = Database::open(temp.path()).unwrap();
 
         // Add a test friend
-        db.connection().execute(
-            "INSERT INTO friends (onion_address, display_name, added_at, status)
+        db.connection()
+            .execute(
+                "INSERT INTO friends (onion_address, display_name, added_at, status)
              VALUES ('alice.onion', 'Alice', 1000, 'active')",
-            [],
-        ).unwrap();
+                [],
+            )
+            .unwrap();
 
         (db, temp)
     }
@@ -964,7 +1092,10 @@ mod tests {
 
         // Set TTL
         set_conversation_ephemeral_ttl(&db, conv_id, Some(300)).unwrap();
-        assert_eq!(get_conversation_ephemeral_ttl(&db, conv_id).unwrap(), Some(300));
+        assert_eq!(
+            get_conversation_ephemeral_ttl(&db, conv_id).unwrap(),
+            Some(300)
+        );
 
         // Disable
         set_conversation_ephemeral_ttl(&db, conv_id, None).unwrap();
@@ -980,10 +1111,12 @@ mod tests {
         store_outgoing_message(&db, conv_id, "me.onion", "will stay", "msg-stay").unwrap();
 
         // Set one message to expire in the past
-        db.connection().execute(
-            "UPDATE messages SET expires_at = 1 WHERE message_id = 'msg-exp'",
-            [],
-        ).unwrap();
+        db.connection()
+            .execute(
+                "UPDATE messages SET expires_at = 1 WHERE message_id = 'msg-exp'",
+                [],
+            )
+            .unwrap();
 
         let deleted = cleanup_expired_messages(&db).unwrap();
         assert_eq!(deleted, 1);
@@ -1001,20 +1134,25 @@ mod tests {
         store_outgoing_message(&db, conv_id, "me.onion", "ephemeral msg", "msg-1").unwrap();
 
         // Set ephemeral_ttl on the message but no expires_at
-        db.connection().execute(
-            "UPDATE messages SET ephemeral_ttl = 300 WHERE message_id = 'msg-1'",
-            [],
-        ).unwrap();
+        db.connection()
+            .execute(
+                "UPDATE messages SET ephemeral_ttl = 300 WHERE message_id = 'msg-1'",
+                [],
+            )
+            .unwrap();
 
         // Activate timers
         activate_ephemeral_timers(&db, conv_id).unwrap();
 
         // Check expires_at is now set
-        let expires_at: Option<i64> = db.connection().query_row(
-            "SELECT expires_at FROM messages WHERE message_id = 'msg-1'",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let expires_at: Option<i64> = db
+            .connection()
+            .query_row(
+                "SELECT expires_at FROM messages WHERE message_id = 'msg-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(expires_at.is_some());
         assert!(expires_at.unwrap() > 0);
     }
@@ -1026,16 +1164,18 @@ mod tests {
 
         initialize_channels(&db).unwrap();
 
-        let count: i64 = db.connection().query_row(
-            "SELECT COUNT(*) FROM channels", [], |row| row.get(0)
-        ).unwrap();
+        let count: i64 = db
+            .connection()
+            .query_row("SELECT COUNT(*) FROM channels", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(count, 2);
 
         // Calling again should be idempotent
         initialize_channels(&db).unwrap();
-        let count: i64 = db.connection().query_row(
-            "SELECT COUNT(*) FROM channels", [], |row| row.get(0)
-        ).unwrap();
+        let count: i64 = db
+            .connection()
+            .query_row("SELECT COUNT(*) FROM channels", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(count, 2);
     }
 
@@ -1077,9 +1217,14 @@ mod tests {
         // Insert 105 posts
         for i in 0..105 {
             store_channel_post(
-                &db, 1, &format!("Post {}", i),
-                &format!("post-{}", i), i as i64, "sig"
-            ).unwrap();
+                &db,
+                1,
+                &format!("Post {}", i),
+                &format!("post-{}", i),
+                i as i64,
+                "sig",
+            )
+            .unwrap();
         }
 
         enforce_channel_retention(&db, 1).unwrap();
@@ -1164,7 +1309,15 @@ mod tests {
         initialize_channels(&db).unwrap();
 
         for i in 0..5 {
-            store_channel_post(&db, 1, &format!("Post {}", i), &format!("post-{}", i), (1000 + i) as i64, "sig").unwrap();
+            store_channel_post(
+                &db,
+                1,
+                &format!("Post {}", i),
+                &format!("post-{}", i),
+                (1000 + i) as i64,
+                "sig",
+            )
+            .unwrap();
         }
 
         let posts = get_channel_posts_since(&db, 1, 1002).unwrap();
@@ -1227,7 +1380,8 @@ mod tests {
         store_channel_post_receipt(&db, "post-2", "bob.onion", 3000).unwrap();
         // post-3 has no receipts
 
-        let counts = get_channel_post_read_counts_batch(&db, &["post-1", "post-2", "post-3"]).unwrap();
+        let counts =
+            get_channel_post_read_counts_batch(&db, &["post-1", "post-2", "post-3"]).unwrap();
         assert_eq!(counts.get("post-1"), Some(&2));
         assert_eq!(counts.get("post-2"), Some(&1));
         assert_eq!(counts.get("post-3"), None); // no receipts = not in map

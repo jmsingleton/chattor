@@ -75,7 +75,7 @@ pub struct FriendRequestMessage {
     pub from_onion: String,
     pub from_friendcode: String,
     pub timestamp: i64,
-    pub signature: String,  // base64 ed25519 signature
+    pub signature: String, // base64 ed25519 signature
     /// Ed25519 public key (base64) for TOFU identity binding
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub ed25519_pubkey: Option<String>,
@@ -85,7 +85,7 @@ pub struct FriendRequestMessage {
 pub struct FriendRequestAcceptMessage {
     pub from_onion: String,
     pub to_onion: String,
-    pub signal_prekey_bundle: String,  // Serialized PreKey bundle
+    pub signal_prekey_bundle: String, // Serialized PreKey bundle
     pub timestamp: i64,
     pub signature: String,
     /// Ed25519 public key (base64) for TOFU identity binding
@@ -104,8 +104,8 @@ pub struct FriendRequestRejectMessage {
 pub struct TextMessage {
     pub from_onion: String,
     pub to_onion: String,
-    pub signal_header: String,      // base64-encoded encrypted Double Ratchet header
-    pub signal_ciphertext: String,  // base64 encrypted payload
+    pub signal_header: String, // base64-encoded encrypted Double Ratchet header
+    pub signal_ciphertext: String, // base64 encrypted payload
     pub signal_type: SignalMessageType,
     pub timestamp: i64,
     pub message_id: Uuid,
@@ -144,9 +144,9 @@ pub struct DeliveryReceiptMessage {
 pub struct PlaintextPayload {
     pub content: String,
     pub sent_at: i64,
-    pub message_type: String,  // "text", "typing_indicator", etc.
+    pub message_type: String, // "text", "typing_indicator", etc.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub ephemeral_ttl: Option<i64>,  // seconds until deletion after read
+    pub ephemeral_ttl: Option<i64>, // seconds until deletion after read
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -341,16 +341,14 @@ mod tests {
         let msg = Message::ChannelSyncResponse(ChannelSyncResponseMessage {
             publisher_onion: "alice.onion".into(),
             channel_type: ChannelType::Public,
-            posts: vec![
-                ChannelPostMessage {
-                    publisher_onion: "alice.onion".into(),
-                    channel_type: ChannelType::Public,
-                    post_id: Uuid::new_v4(),
-                    content: "Post 1".into(),
-                    created_at: 1000,
-                    signature: "sig1".into(),
-                },
-            ],
+            posts: vec![ChannelPostMessage {
+                publisher_onion: "alice.onion".into(),
+                channel_type: ChannelType::Public,
+                post_id: Uuid::new_v4(),
+                content: "Post 1".into(),
+                created_at: 1000,
+                signature: "sig1".into(),
+            }],
         });
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: Message = serde_json::from_str(&json).unwrap();
@@ -396,7 +394,11 @@ mod tests {
 
     #[test]
     fn test_presence_typing_roundtrip() {
-        for pt in [PresenceType::Heartbeat, PresenceType::TypingStarted, PresenceType::TypingStopped] {
+        for pt in [
+            PresenceType::Heartbeat,
+            PresenceType::TypingStarted,
+            PresenceType::TypingStopped,
+        ] {
             let msg = Message::Presence(PresenceMessage {
                 from_onion: "peer.onion".to_string(),
                 presence_type: pt.clone(),

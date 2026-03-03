@@ -17,10 +17,7 @@ pub async fn run(data_dir: PathBuf) -> crate::error::Result<()> {
         };
 
         let id = request.get("id").cloned();
-        let method = request
-            .get("method")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
 
         let response = match method {
             "initialize" => {

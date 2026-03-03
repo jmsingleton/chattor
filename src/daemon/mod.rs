@@ -46,7 +46,10 @@ pub async fn run(settings: Settings, passphrase_fd: Option<i32>) -> Result<()> {
                 .map_err(crate::error::ChattorError::Io)?;
             std::fs::rename(&tmp_path, &settings.db_path)
                 .map_err(crate::error::ChattorError::Io)?;
-            eprintln!("Database migration complete (backup at {}).", backup_path.display());
+            eprintln!(
+                "Database migration complete (backup at {}).",
+                backup_path.display()
+            );
             key
         } else {
             crate::db::encryption::derive_key(passphrase.as_bytes(), &salt)?

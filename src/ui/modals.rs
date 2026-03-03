@@ -8,12 +8,7 @@ use ratatui::{
 use crate::ui::theme::Theme;
 
 /// Render "Add Friend" modal
-pub fn render_add_friend_modal(
-    f: &mut Frame,
-    input: &str,
-    error: Option<&str>,
-    theme: &Theme,
-) {
+pub fn render_add_friend_modal(f: &mut Frame, input: &str, error: Option<&str>, theme: &Theme) {
     let area = centered_rect(60, 40, f.size());
 
     // Clear background
@@ -42,7 +37,11 @@ pub fn render_add_friend_modal(
 
     // Input field
     let input_widget = Paragraph::new(format!("{}_", input))
-        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        )
         .style(Style::default().fg(theme.input_fg));
     f.render_widget(input_widget, chunks[1]);
 
@@ -95,8 +94,7 @@ pub fn render_friend_request_modal(
         .split(area);
 
     // Friend code
-    let code = Paragraph::new(format!("Friend code: {}", friend_code))
-        .wrap(Wrap { trim: false });
+    let code = Paragraph::new(format!("Friend code: {}", friend_code)).wrap(Wrap { trim: false });
     f.render_widget(code, chunks[0]);
 
     // Onion address (wrapped for long addresses)
@@ -106,8 +104,7 @@ pub fn render_friend_request_modal(
     f.render_widget(onion, chunks[1]);
 
     // Message
-    let msg = Paragraph::new("This person wants to connect with you.")
-        .wrap(Wrap { trim: true });
+    let msg = Paragraph::new("This person wants to connect with you.").wrap(Wrap { trim: true });
     f.render_widget(msg, chunks[2]);
 
     // Controls
@@ -127,8 +124,8 @@ pub fn render_friend_request_list(
     theme: &Theme,
 ) {
     use ratatui::style::Modifier;
-    use ratatui::widgets::{List, ListItem};
     use ratatui::text::{Line, Span};
+    use ratatui::widgets::{List, ListItem};
 
     let area = centered_rect(60, 50, f.size());
     f.render_widget(Clear, area);
@@ -186,7 +183,9 @@ pub fn render_friend_request_list(
             };
 
             let style = if is_selected {
-                Style::default().fg(theme.sidebar_selected_fg).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.sidebar_selected_fg)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.fg)
             };
@@ -213,7 +212,13 @@ pub fn render_friend_request_list(
 /// Render "My Identity" modal showing friend code and onion address.
 /// The friend code is primary (human-friendly, shareable) and the .onion
 /// address is secondary (raw identifier).
-pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &str, copied_field: Option<&str>, theme: &Theme) {
+pub fn render_identity_modal(
+    f: &mut Frame,
+    friend_code: &str,
+    onion_address: &str,
+    copied_field: Option<&str>,
+    theme: &Theme,
+) {
     use ratatui::style::Modifier;
 
     let area = centered_rect(70, 70, f.size());
@@ -234,13 +239,13 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(1),  // Friend code label
-            Constraint::Length(1),  // Hint
+            Constraint::Length(1), // Friend code label
+            Constraint::Length(1), // Hint
             Constraint::Min(4),    // Friend code box (needs room for 32 words)
-            Constraint::Length(1),  // Spacer
-            Constraint::Length(1),  // Onion address label
-            Constraint::Length(3),  // Onion address box
-            Constraint::Length(1),  // Help text
+            Constraint::Length(1), // Spacer
+            Constraint::Length(1), // Onion address label
+            Constraint::Length(3), // Onion address box
+            Constraint::Length(1), // Help text
         ])
         .split(inner);
 
@@ -250,9 +255,16 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
     } else {
         "Friend Code  [c] copy"
     };
-    let code_label_color = if copied_field == Some("code") { theme.success } else { theme.fg };
-    let label1 = Paragraph::new(code_label)
-        .style(Style::default().fg(code_label_color).add_modifier(Modifier::BOLD));
+    let code_label_color = if copied_field == Some("code") {
+        theme.success
+    } else {
+        theme.fg
+    };
+    let label1 = Paragraph::new(code_label).style(
+        Style::default()
+            .fg(code_label_color)
+            .add_modifier(Modifier::BOLD),
+    );
     f.render_widget(label1, chunks[0]);
 
     // Hint text
@@ -262,8 +274,16 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
 
     // Friend code value (primary, prominent)
     let code_widget = Paragraph::new(friend_code)
-        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
-        .style(Style::default().fg(theme.success).add_modifier(Modifier::BOLD))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        )
+        .style(
+            Style::default()
+                .fg(theme.success)
+                .add_modifier(Modifier::BOLD),
+        )
         .wrap(Wrap { trim: false });
     f.render_widget(code_widget, chunks[2]);
 
@@ -273,29 +293,35 @@ pub fn render_identity_modal(f: &mut Frame, friend_code: &str, onion_address: &s
     } else {
         "Onion Address  [o] copy"
     };
-    let onion_label_color = if copied_field == Some("onion") { theme.success } else { theme.fg_dim };
-    let label2 = Paragraph::new(onion_label)
-        .style(Style::default().fg(onion_label_color));
+    let onion_label_color = if copied_field == Some("onion") {
+        theme.success
+    } else {
+        theme.fg_dim
+    };
+    let label2 = Paragraph::new(onion_label).style(Style::default().fg(onion_label_color));
     f.render_widget(label2, chunks[4]);
 
     // Onion address value (secondary)
     let onion_widget = Paragraph::new(onion_address)
-        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        )
         .style(Style::default().fg(theme.fg_dim))
         .wrap(Wrap { trim: false });
     f.render_widget(onion_widget, chunks[5]);
 
     // Help text
-    let help = Paragraph::new("[Esc/i] Close")
-        .style(Style::default().fg(theme.fg_dim));
+    let help = Paragraph::new("[Esc/i] Close").style(Style::default().fg(theme.fg_dim));
     f.render_widget(help, chunks[6]);
 }
 
 /// Render ephemeral messages duration picker modal
 pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize, theme: &Theme) {
     use ratatui::style::Modifier;
-    use ratatui::widgets::{List, ListItem};
     use ratatui::text::{Line, Span};
+    use ratatui::widgets::{List, ListItem};
 
     let area = centered_rect(50, 40, f.size());
     f.render_widget(Clear, area);
@@ -328,7 +354,9 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize, theme: &Theme)
             let arrow = if is_selected { "\u{25b8} " } else { "  " };
 
             let style = if is_selected {
-                Style::default().fg(theme.sidebar_selected_fg).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.sidebar_selected_fg)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.fg)
             };
@@ -383,7 +411,11 @@ pub fn render_subscribe_channel_modal(
     f.render_widget(prompt, chunks[0]);
 
     let input_widget = Paragraph::new(format!("{}_", input))
-        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        )
         .style(Style::default().fg(theme.input_fg));
     f.render_widget(input_widget, chunks[1]);
 

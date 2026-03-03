@@ -1,7 +1,7 @@
-use crate::error::{Result, ChattorError};
-use crate::tor::client::TorClient;
-use crate::protocol::message::{Message, MessageEnvelope};
+use crate::error::{ChattorError, Result};
 use crate::net::framing::send_message;
+use crate::protocol::message::{Message, MessageEnvelope};
+use crate::tor::client::TorClient;
 use arti_client::DataStream;
 use tracing::info;
 
@@ -15,16 +15,16 @@ pub struct TorConnection {
 
 impl TorConnection {
     /// Connect to peer via Tor (real DataStream)
-    pub async fn connect(
-        tor_client: &TorClient,
-        remote_onion: &str,
-    ) -> Result<Self> {
+    pub async fn connect(tor_client: &TorClient, remote_onion: &str) -> Result<Self> {
         use arti_client::StreamPrefs;
 
-        let stream = tor_client.inner()
+        let stream = tor_client
+            .inner()
             .connect_with_prefs((remote_onion, CHATTOR_PORT), &StreamPrefs::default())
             .await
-            .map_err(|e| ChattorError::Tor(format!("Failed to connect to {}: {}", remote_onion, e)))?;
+            .map_err(|e| {
+                ChattorError::Tor(format!("Failed to connect to {}: {}", remote_onion, e))
+            })?;
 
         info!("Connected to {} via Tor", remote_onion);
 

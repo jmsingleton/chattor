@@ -1,6 +1,6 @@
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use crate::error::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -41,19 +41,23 @@ impl Settings {
     fn default_config_dir() -> Result<PathBuf> {
         #[cfg(target_os = "macos")]
         {
-            let home = std::env::var("HOME")
-                .map_err(|_| crate::error::ChattorError::Io(
-                    std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
-                ))?;
+            let home = std::env::var("HOME").map_err(|_| {
+                crate::error::ChattorError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "HOME not set",
+                ))
+            })?;
             Ok(PathBuf::from(home).join("Library/Application Support/chattor"))
         }
 
         #[cfg(not(target_os = "macos"))]
         {
-            let home = std::env::var("HOME")
-                .map_err(|_| crate::error::ChattorError::Io(
-                    std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
-                ))?;
+            let home = std::env::var("HOME").map_err(|_| {
+                crate::error::ChattorError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "HOME not set",
+                ))
+            })?;
             Ok(PathBuf::from(home).join(".config/chattor"))
         }
     }
@@ -62,19 +66,23 @@ impl Settings {
     fn default_data_dir() -> Result<PathBuf> {
         #[cfg(target_os = "macos")]
         {
-            let home = std::env::var("HOME")
-                .map_err(|_| crate::error::ChattorError::Io(
-                    std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
-                ))?;
+            let home = std::env::var("HOME").map_err(|_| {
+                crate::error::ChattorError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "HOME not set",
+                ))
+            })?;
             Ok(PathBuf::from(home).join("Library/Application Support/chattor"))
         }
 
         #[cfg(not(target_os = "macos"))]
         {
-            let home = std::env::var("HOME")
-                .map_err(|_| crate::error::ChattorError::Io(
-                    std::io::Error::new(std::io::ErrorKind::NotFound, "HOME not set")
-                ))?;
+            let home = std::env::var("HOME").map_err(|_| {
+                crate::error::ChattorError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "HOME not set",
+                ))
+            })?;
             Ok(PathBuf::from(home).join(".local/share/chattor"))
         }
     }

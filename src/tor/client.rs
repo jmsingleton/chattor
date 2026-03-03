@@ -2,7 +2,7 @@
 //!
 //! Wraps the Arti Tor client for network connections.
 
-use crate::error::{Result, ChattorError};
+use crate::error::{ChattorError, Result};
 use arti_client::{TorClient as ArtiTorClient, TorClientConfig};
 use std::path::Path;
 use std::sync::Arc;
@@ -18,12 +18,10 @@ impl TorClient {
         let state_dir = data_dir.join("arti");
         let cache_dir = data_dir.join("arti-cache");
 
-        std::fs::create_dir_all(&state_dir).map_err(|e| {
-            ChattorError::Tor(format!("Failed to create arti state dir: {}", e))
-        })?;
-        std::fs::create_dir_all(&cache_dir).map_err(|e| {
-            ChattorError::Tor(format!("Failed to create arti cache dir: {}", e))
-        })?;
+        std::fs::create_dir_all(&state_dir)
+            .map_err(|e| ChattorError::Tor(format!("Failed to create arti state dir: {}", e)))?;
+        std::fs::create_dir_all(&cache_dir)
+            .map_err(|e| ChattorError::Tor(format!("Failed to create arti cache dir: {}", e)))?;
 
         // Arti requires 700 permissions on state/cache dirs (contains onion service keys)
         #[cfg(unix)]
@@ -41,9 +39,7 @@ impl TorClient {
         let config =
             arti_client::config::TorClientConfigBuilder::from_directories(&state_dir, &cache_dir)
                 .build()
-                .map_err(|e| {
-                    ChattorError::Tor(format!("Failed to build Tor config: {}", e))
-                })?;
+                .map_err(|e| ChattorError::Tor(format!("Failed to build Tor config: {}", e)))?;
 
         let client = ArtiTorClient::create_bootstrapped(config)
             .await

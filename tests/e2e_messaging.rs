@@ -8,7 +8,9 @@
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use chattor::crypto::{IdentityKeypair, PreKeyBundle, PreKeyPrivateMaterial, SessionStore, SignalSession};
+use chattor::crypto::{
+    IdentityKeypair, PreKeyBundle, PreKeyPrivateMaterial, SessionStore, SignalSession,
+};
 use chattor::db::queries::{get_app_setting, set_app_setting};
 use chattor::db::Database;
 use chattor::net::queue::MessageQueue;
@@ -156,7 +158,10 @@ fn test_full_friend_request_to_messaging_pipeline() {
     let alice_plaintext = make_payload("Hello Bob, this is Alice!", "text");
     let (alice_header, alice_ciphertext, is_prekey) =
         alice_session.encrypt(&alice_plaintext).unwrap();
-    assert!(is_prekey, "First message from initiator must be a PreKey message");
+    assert!(
+        is_prekey,
+        "First message from initiator must be a PreKey message"
+    );
 
     // 6. Bob loads stored private material and creates session from X3DH init data
     let loaded_identity: [u8; 32] = STANDARD
@@ -207,17 +212,14 @@ fn test_full_friend_request_to_messaging_pipeline() {
 
     // 8. Bob encrypts a reply (NOT a PreKey message)
     let bob_plaintext = make_payload("Hey Alice, got your message!", "text");
-    let (bob_header, bob_ciphertext, bob_is_prekey) =
-        bob_session.encrypt(&bob_plaintext).unwrap();
+    let (bob_header, bob_ciphertext, bob_is_prekey) = bob_session.encrypt(&bob_plaintext).unwrap();
     assert!(
         !bob_is_prekey,
         "Reply from recipient must NOT be a PreKey message"
     );
 
     // 9. Alice decrypts Bob's reply
-    let alice_decrypted = alice_session
-        .decrypt(&bob_header, &bob_ciphertext)
-        .unwrap();
+    let alice_decrypted = alice_session.decrypt(&bob_header, &bob_ciphertext).unwrap();
     let bob_payload: PlaintextPayload = serde_json::from_slice(&alice_decrypted).unwrap();
     assert_eq!(bob_payload.content, "Hey Alice, got your message!");
 }
@@ -245,8 +247,7 @@ fn test_handshake_enables_acceptor_to_send_first() {
 
     // 2. Bob encrypts a handshake message
     let handshake_payload = make_payload("", "handshake");
-    let (hs_header, hs_ciphertext, is_prekey) =
-        bob_session.encrypt(&handshake_payload).unwrap();
+    let (hs_header, hs_ciphertext, is_prekey) = bob_session.encrypt(&handshake_payload).unwrap();
     assert!(is_prekey, "Handshake must be a PreKey message");
 
     // 3. Alice receives handshake, creates session from the PreKey message
@@ -260,9 +261,7 @@ fn test_handshake_enables_acceptor_to_send_first() {
     .unwrap();
 
     // 4. Alice decrypts handshake to verify it works
-    let handshake_decrypted = alice_session
-        .decrypt(&hs_header, &hs_ciphertext)
-        .unwrap();
+    let handshake_decrypted = alice_session.decrypt(&hs_header, &hs_ciphertext).unwrap();
     let handshake: PlaintextPayload = serde_json::from_slice(&handshake_decrypted).unwrap();
     assert_eq!(handshake.message_type, "handshake");
 
@@ -456,7 +455,9 @@ fn test_message_queue_with_encrypted_messages() {
     let wire_msg = wrap_text_message("alice.onion", "bob.onion", &header, &ciphertext, is_prekey);
     let (_tmp, db) = temp_db();
     let queue = MessageQueue::new();
-    let queue_id = queue.enqueue(&db, "bob.onion", &wire_msg, "normal").unwrap();
+    let queue_id = queue
+        .enqueue(&db, "bob.onion", &wire_msg, "normal")
+        .unwrap();
     assert!(queue_id > 0);
 
     // 3. Retrieve from queue
@@ -475,8 +476,14 @@ fn test_message_queue_with_encrypted_messages() {
     let recovered_ct = STANDARD.decode(recovered_ct_b64).unwrap();
     let is_prekey_from_wire = matches!(recovered_signal_type, SignalMessageType::PrekeyMessage);
     assert_eq!(is_prekey_from_wire, is_prekey);
-    assert_eq!(recovered_ct, ciphertext, "Ciphertext must survive queue round-trip");
-    assert_eq!(recovered_header, header, "Header must survive queue round-trip");
+    assert_eq!(
+        recovered_ct, ciphertext,
+        "Ciphertext must survive queue round-trip"
+    );
+    assert_eq!(
+        recovered_header, header,
+        "Header must survive queue round-trip"
+    );
 
     // 5. Bob decrypts
     let decrypted = bob_session

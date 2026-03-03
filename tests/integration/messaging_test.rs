@@ -2,29 +2,37 @@
 //!
 //! Tests that verify components work together correctly.
 
-use chattor::db::Database;
 use chattor::crypto::signal::SignalSession;
+use chattor::db::Database;
 use chattor::net::queue::MessageQueue;
-use chattor::tor::address::onion_to_friend_code;
 use chattor::protocol::friend_code::friend_code_to_onion;
-
+use chattor::tor::address::onion_to_friend_code;
 
 fn setup_test_db() -> Database {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
-    conn.execute_batch(chattor::db::schema::CREATE_TABLES).unwrap();
+    conn.execute_batch(chattor::db::schema::CREATE_TABLES)
+        .unwrap();
 
     // Create test data
     conn.execute(
         "INSERT INTO friends (onion_address, friend_code, display_name, added_at, status)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        ["alice.onion", "ALICE-1234-TEST-5678", "Alice", "1234567890", "active"],
-    ).unwrap();
+        [
+            "alice.onion",
+            "ALICE-1234-TEST-5678",
+            "Alice",
+            "1234567890",
+            "active",
+        ],
+    )
+    .unwrap();
 
     conn.execute(
         "INSERT INTO conversations (friend_id, is_ephemeral, created_at)
          VALUES (1, 0, 1234567890)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
 
     Database::from_connection(conn)
 }
@@ -50,7 +58,7 @@ fn test_address_mapping_roundtrip() {
 
 #[test]
 fn test_message_queue_integration() {
-    use chattor::protocol::message::{Message, FriendRequestMessage};
+    use chattor::protocol::message::{FriendRequestMessage, Message};
 
     let db = setup_test_db();
     let queue = MessageQueue::new();
@@ -102,7 +110,8 @@ fn test_signal_session_creation() {
         &bob_bundle,
         &bob_private,
         &alice_signal_secret,
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(alice_session.remote_onion, "bob.onion");
 
     // Alice encrypts a message
@@ -117,7 +126,8 @@ fn test_signal_session_creation() {
         &bob_private,
         &alice_identity_encoded,
         &ephemeral_public,
-    ).unwrap();
+    )
+    .unwrap();
     let decrypted = bob_session.decrypt(&header, &ciphertext).unwrap();
     assert_eq!(plaintext, &decrypted[..]);
 }
@@ -147,7 +157,7 @@ fn test_database_schema_complete() {
 
 #[test]
 fn test_protocol_message_serialization() {
-    use chattor::protocol::message::{Message, FriendRequestMessage};
+    use chattor::protocol::message::{FriendRequestMessage, Message};
 
     let friend_request = FriendRequestMessage {
         from_onion: "alice.onion".to_string(),
@@ -174,11 +184,13 @@ fn test_full_conversation_flow() {
     let db = chattor::db::Database::open(temp.path()).unwrap();
 
     // Add a friend
-    db.connection().execute(
-        "INSERT INTO friends (onion_address, display_name, added_at, status)
+    db.connection()
+        .execute(
+            "INSERT INTO friends (onion_address, display_name, added_at, status)
          VALUES ('bob.onion', 'Bob', 1000, 'active')",
-        [],
-    ).unwrap();
+            [],
+        )
+        .unwrap();
 
     // Get friends
     let friends = chattor::db::queries::get_friends_with_unread(&db).unwrap();
@@ -186,13 +198,22 @@ fn test_full_conversation_flow() {
     assert_eq!(friends[0].display_name, Some("Bob".to_string()));
 
     // Create conversation
-    let conv_id = chattor::db::queries::get_or_create_conversation(&db, friends[0].friend_id).unwrap();
+    let conv_id =
+        chattor::db::queries::get_or_create_conversation(&db, friends[0].friend_id).unwrap();
 
     // Send a message
-    chattor::db::queries::store_outgoing_message(&db, conv_id, "me.onion", "Hello Bob!", "msg-001").unwrap();
+    chattor::db::queries::store_outgoing_message(&db, conv_id, "me.onion", "Hello Bob!", "msg-001")
+        .unwrap();
 
     // Receive a reply
-    chattor::db::queries::store_incoming_message(&db, conv_id, "bob.onion", "Hey there!", "msg-002").unwrap();
+    chattor::db::queries::store_incoming_message(
+        &db,
+        conv_id,
+        "bob.onion",
+        "Hey there!",
+        "msg-002",
+    )
+    .unwrap();
 
     // Check messages
     let messages = chattor::db::queries::get_messages(&db, conv_id, 50, 0).unwrap();
@@ -218,17 +239,26 @@ fn test_find_friend_for_incoming_message() {
     let db = chattor::db::Database::open(temp.path()).unwrap();
 
     // No friends yet
-    assert_eq!(chattor::db::queries::find_friend_by_onion(&db, "unknown.onion").unwrap(), None);
+    assert_eq!(
+        chattor::db::queries::find_friend_by_onion(&db, "unknown.onion").unwrap(),
+        None
+    );
 
     // Add friend
-    db.connection().execute(
-        "INSERT INTO friends (onion_address, display_name, added_at, status)
+    db.connection()
+        .execute(
+            "INSERT INTO friends (onion_address, display_name, added_at, status)
          VALUES ('alice.onion', 'Alice', 1000, 'active')",
-        [],
-    ).unwrap();
+            [],
+        )
+        .unwrap();
 
     // Now findable
-    assert!(chattor::db::queries::find_friend_by_onion(&db, "alice.onion").unwrap().is_some());
+    assert!(
+        chattor::db::queries::find_friend_by_onion(&db, "alice.onion")
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[test]
@@ -242,9 +272,14 @@ fn test_channel_post_flow() {
     // Publish posts to public channel (channel_id = 1)
     for i in 0..5 {
         chattor::db::queries::store_channel_post(
-            &db, 1, &format!("Post {}", i),
-            &format!("post-{}", i), (1000 + i) as i64, "sig"
-        ).unwrap();
+            &db,
+            1,
+            &format!("Post {}", i),
+            &format!("post-{}", i),
+            (1000 + i) as i64,
+            "sig",
+        )
+        .unwrap();
     }
 
     // Retrieve posts (newest first)
@@ -274,7 +309,8 @@ fn test_channel_post_flow() {
     assert_eq!(subscriptions[0].publisher_onion, "alice.onion");
 
     // Update sync time
-    chattor::db::queries::update_subscription_sync_time(&db, "alice.onion", "public", 5000).unwrap();
+    chattor::db::queries::update_subscription_sync_time(&db, "alice.onion", "public", 5000)
+        .unwrap();
     let subscriptions = chattor::db::queries::get_channel_subscriptions(&db).unwrap();
     assert_eq!(subscriptions[0].last_sync_at, Some(5000));
 
@@ -287,9 +323,14 @@ fn test_channel_post_flow() {
     // Retention enforcement
     for i in 5..110 {
         chattor::db::queries::store_channel_post(
-            &db, 1, &format!("Post {}", i),
-            &format!("post-{}", i), (1000 + i) as i64, "sig"
-        ).unwrap();
+            &db,
+            1,
+            &format!("Post {}", i),
+            &format!("post-{}", i),
+            (1000 + i) as i64,
+            "sig",
+        )
+        .unwrap();
     }
     let deleted = chattor::db::queries::enforce_channel_retention(&db, 1).unwrap();
     assert!(deleted > 0);

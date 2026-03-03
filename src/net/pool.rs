@@ -1,4 +1,4 @@
-use crate::error::{Result, ChattorError};
+use crate::error::{ChattorError, Result};
 use crate::protocol::message::Message;
 use crate::tor::client::TorClient;
 use crate::tor::connection::TorConnection;
@@ -74,10 +74,7 @@ impl ConnectionPool {
 
         if let Some(mut pooled) = cached {
             pooled.last_used = Instant::now();
-            let send_result = tokio::time::timeout(
-                SEND_TIMEOUT,
-                pooled.conn.send(message),
-            ).await;
+            let send_result = tokio::time::timeout(SEND_TIMEOUT, pooled.conn.send(message)).await;
 
             match send_result {
                 Ok(Ok(())) => {
@@ -103,9 +100,13 @@ impl ConnectionPool {
         // Send on fresh connection
         tokio::time::timeout(SEND_TIMEOUT, conn.send(message))
             .await
-            .map_err(|_| ChattorError::Network(
-                format!("Send timed out ({}s) to {}", SEND_TIMEOUT.as_secs(), peer_onion),
-            ))??;
+            .map_err(|_| {
+                ChattorError::Network(format!(
+                    "Send timed out ({}s) to {}",
+                    SEND_TIMEOUT.as_secs(),
+                    peer_onion
+                ))
+            })??;
 
         // Evict oldest idle connection if at capacity
         if self.connections.len() >= MAX_POOL_SIZE {
@@ -113,10 +114,13 @@ impl ConnectionPool {
         }
 
         // Cache the connection for reuse
-        self.connections.insert(peer_onion.to_string(), PooledConnection {
-            conn,
-            last_used: Instant::now(),
-        });
+        self.connections.insert(
+            peer_onion.to_string(),
+            PooledConnection {
+                conn,
+                last_used: Instant::now(),
+            },
+        );
 
         Ok(())
     }
@@ -130,7 +134,8 @@ impl ConnectionPool {
     /// Get a list of peer onion addresses with active (non-idle) connections.
     /// Used by the heartbeat task to know who to send presence updates to.
     pub fn connected_peers(&self) -> Vec<String> {
-        self.connections.iter()
+        self.connections
+            .iter()
             .filter(|entry| entry.value().last_used.elapsed() < IDLE_TIMEOUT)
             .map(|entry| entry.key().clone())
             .collect()
@@ -138,13 +143,18 @@ impl ConnectionPool {
 
     /// Evict the connection with the oldest `last_used` timestamp.
     fn evict_oldest_idle(&self) {
-        let oldest = self.connections.iter()
+        let oldest = self
+            .connections
+            .iter()
             .min_by_key(|entry| entry.value().last_used)
             .map(|entry| entry.key().clone());
 
         if let Some(key) = oldest {
             self.connections.remove(&key);
-            tracing::debug!("Connection pool at capacity: evicted oldest connection to {}", key);
+            tracing::debug!(
+                "Connection pool at capacity: evicted oldest connection to {}",
+                key
+            );
         }
     }
 }
@@ -168,7 +178,8 @@ mod tests {
             // Simulate the eviction check before insert
             if map.len() >= MAX_POOL_SIZE {
                 // Evict oldest entry
-                let oldest = map.iter()
+                let oldest = map
+                    .iter()
                     .min_by_key(|entry| *entry.value())
                     .map(|entry| entry.key().clone());
                 if let Some(key) = oldest {

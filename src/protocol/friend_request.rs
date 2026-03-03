@@ -1,7 +1,7 @@
-use crate::error::{Result, ChattorError};
 use crate::crypto::{IdentityKeypair, PreKeyBundle};
-use crate::protocol::message::*;
 use crate::db::Database;
+use crate::error::{ChattorError, Result};
+use crate::protocol::message::*;
 use base64::Engine;
 
 /// Handles friend request protocol
@@ -29,11 +29,12 @@ impl FriendRequestHandler {
             .as_secs() as i64;
 
         // Create message data to sign
-        let data = format!("{}{}{}",own_onion, friend_code, timestamp);
+        let data = format!("{}{}{}", own_onion, friend_code, timestamp);
 
         // Sign with identity key
         let signature = identity.sign(data.as_bytes());
-        let signature_base64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+        let signature_base64 =
+            base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
 
         Ok(FriendRequestMessage {
             from_onion: own_onion.to_string(),
@@ -51,7 +52,10 @@ impl FriendRequestHandler {
         let pubkey_b64 = match &request.ed25519_pubkey {
             Some(pk) => pk,
             None => {
-                tracing::warn!("Friend request from {} missing Ed25519 pubkey, rejecting", request.from_onion);
+                tracing::warn!(
+                    "Friend request from {} missing Ed25519 pubkey, rejecting",
+                    request.from_onion
+                );
                 return Ok(false);
             }
         };
@@ -78,7 +82,10 @@ impl FriendRequestHandler {
         };
 
         // Reconstruct the signed data
-        let data = format!("{}{}{}", request.from_onion, request.from_friendcode, request.timestamp);
+        let data = format!(
+            "{}{}{}",
+            request.from_onion, request.from_friendcode, request.timestamp
+        );
 
         // Decode signature from base64
         let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(&request.signature) {
@@ -87,7 +94,7 @@ impl FriendRequestHandler {
         };
 
         // Verify Ed25519 signature
-        use ed25519_dalek::{VerifyingKey, Verifier, Signature};
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
         let verifying_key = match VerifyingKey::from_bytes(&pubkey_array) {
             Ok(key) => key,
@@ -118,7 +125,8 @@ impl FriendRequestHandler {
                 &request.from_friendcode,
                 request.timestamp,
             ),
-        ).map_err(|e| ChattorError::Database(format!("Failed to store request: {}", e)))?;
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to store request: {}", e)))?;
 
         let id = conn.last_insert_rowid();
         Ok(id)
@@ -133,9 +141,12 @@ impl FriendRequestHandler {
     ) -> Result<FriendRequestAcceptMessage> {
         // Generate a dedicated X25519 Signal identity keypair for X3DH
         let signal_identity = libsignal_protocol::vxeddsa::gen_keypair();
-        let signal_identity_public_raw = libsignal_protocol::utils::decode_public_key(&signal_identity.public)
-            .map_err(|_| ChattorError::Crypto("Failed to decode signal identity public key".into()))?;
-        let (bundle, _private_material) = PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
+        let signal_identity_public_raw = libsignal_protocol::utils::decode_public_key(
+            &signal_identity.public,
+        )
+        .map_err(|_| ChattorError::Crypto("Failed to decode signal identity public key".into()))?;
+        let (bundle, _private_material) =
+            PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
 
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -145,7 +156,8 @@ impl FriendRequestHandler {
         // Sign message
         let data = format!("{}{}{}", own_onion, peer_onion, timestamp);
         let signature = identity.sign(data.as_bytes());
-        let signature_base64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+        let signature_base64 =
+            base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
 
         // Serialize bundle to JSON then base64
         let bundle_json = serde_json::to_string(&bundle)
@@ -178,27 +190,35 @@ impl FriendRequestHandler {
                 &crate::ui::input::truncate_display_dots(&accept.from_onion, 10),
                 accept.timestamp,
             ),
-        ).map_err(|e| ChattorError::Database(format!("Failed to add friend: {}", e)))?;
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to add friend: {}", e)))?;
 
         Ok(())
     }
 
     /// Accept friend request
-    pub fn accept_request(&self, request_id: i64, identity: &IdentityKeypair) -> Result<FriendRequestAcceptMessage> {
+    pub fn accept_request(
+        &self,
+        request_id: i64,
+        identity: &IdentityKeypair,
+    ) -> Result<FriendRequestAcceptMessage> {
         let conn = self.db.connection();
 
         // Get request details
-        let (from_onion, own_onion): (String, String) = conn.query_row(
-            "SELECT from_onion, 'bob.onion' FROM friend_requests WHERE id = ?1",
-            [request_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(|e| ChattorError::Database(format!("Request not found: {}", e)))?;
+        let (from_onion, own_onion): (String, String) = conn
+            .query_row(
+                "SELECT from_onion, 'bob.onion' FROM friend_requests WHERE id = ?1",
+                [request_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| ChattorError::Database(format!("Request not found: {}", e)))?;
 
         // Update request status
         conn.execute(
             "UPDATE friend_requests SET status = 'accepted' WHERE id = ?1",
             [request_id],
-        ).map_err(|e| ChattorError::Database(format!("Failed to update request: {}", e)))?;
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to update request: {}", e)))?;
 
         // Add friend
         conn.execute(
@@ -212,7 +232,8 @@ impl FriendRequestHandler {
                     .unwrap()
                     .as_secs() as i64,
             ),
-        ).map_err(|e| ChattorError::Database(format!("Failed to add friend: {}", e)))?;
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to add friend: {}", e)))?;
 
         // Create accept message
         self.create_accept_message(identity, &own_onion, &from_onion)
@@ -229,11 +250,7 @@ mod tests {
         let friend_code = "happy-1234-tiger-5678";
         let onion = "test.onion";
 
-        let request = FriendRequestHandler::create_request(
-            &identity,
-            onion,
-            friend_code
-        ).unwrap();
+        let request = FriendRequestHandler::create_request(&identity, onion, friend_code).unwrap();
 
         assert_eq!(request.from_onion, onion);
         assert_eq!(request.from_friendcode, friend_code);
@@ -258,7 +275,8 @@ mod tests {
         let onion = "test.onion";
         let friend_code = "happy-1234-tiger-5678";
 
-        let mut request = FriendRequestHandler::create_request(&identity, onion, friend_code).unwrap();
+        let mut request =
+            FriendRequestHandler::create_request(&identity, onion, friend_code).unwrap();
 
         // Forge: replace with a different identity's pubkey
         let other_identity = crate::crypto::IdentityKeypair::generate().unwrap();
@@ -275,11 +293,9 @@ mod tests {
         let handler = FriendRequestHandler::new(db);
         let identity = crate::crypto::IdentityKeypair::generate().unwrap();
 
-        let accept = handler.create_accept_message(
-            &identity,
-            "bob.onion",
-            "alice.onion"
-        ).unwrap();
+        let accept = handler
+            .create_accept_message(&identity, "bob.onion", "alice.onion")
+            .unwrap();
 
         assert_eq!(accept.from_onion, "bob.onion");
         assert_eq!(accept.to_onion, "alice.onion");
