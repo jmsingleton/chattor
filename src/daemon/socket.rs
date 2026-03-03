@@ -103,6 +103,19 @@ async fn handle_connection(
             }
         }
 
+        // Strip auth token from params before dispatching to RPC handlers
+        let request = if let serde_json::Value::Object(mut map) = request.params {
+            map.remove("auth");
+            rpc::RpcRequest {
+                jsonrpc: request.jsonrpc,
+                id: request.id,
+                method: request.method,
+                params: serde_json::Value::Object(map),
+            }
+        } else {
+            request
+        };
+
         // Handle streaming `listen` method: subscribe to broadcast and
         // stream events until the client disconnects.
         if request.method == "listen" {

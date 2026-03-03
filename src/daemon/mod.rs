@@ -35,12 +35,12 @@ pub async fn run(settings: Settings) -> Result<()> {
         let token: [u8; 32] = rand::thread_rng().gen();
         let token_hex = hex::encode(token);
         std::fs::write(&token_path, &token_hex)
-            .map_err(|e| crate::error::ChattorError::Io(e))?;
+            .map_err(crate::error::ChattorError::Io)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| crate::error::ChattorError::Io(e))?;
+                .map_err(crate::error::ChattorError::Io)?;
         }
         token_hex
     };
