@@ -7,6 +7,17 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, Mutex};
 
+/// Constant-time byte comparison to prevent timing side-channel attacks on auth tokens.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
 /// Start the Unix socket server. Returns a JoinHandle for the accept loop.
 pub async fn start(
     socket_path: &Path,
@@ -87,7 +98,7 @@ async fn handle_connection(
         if !authenticated {
             let provided_token = request.params.get("auth").and_then(|v| v.as_str());
             match provided_token {
-                Some(t) if t == auth_token => {
+                Some(t) if constant_time_eq(t.as_bytes(), auth_token.as_bytes()) => {
                     authenticated = true;
                 }
                 _ => {
@@ -127,7 +138,9 @@ async fn handle_connection(
                 serde_json::json!({"status": "listening"}),
             );
             if writer
-                .write_all(format!("{}\n", serde_json::to_string(&ack).unwrap_or_default()).as_bytes())
+                .write_all(
+                    format!("{}\n", serde_json::to_string(&ack).unwrap_or_default()).as_bytes(),
+                )
                 .await
                 .is_err()
             {
