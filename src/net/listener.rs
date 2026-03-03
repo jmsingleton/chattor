@@ -1,11 +1,10 @@
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
 use crate::error::Result;
 use crate::protocol::message::Message;
-use tor_hsservice::{handle_rend_requests, RendRequest};
-use tor_cell::relaycell::msg::Connected;
 use futures::StreamExt;
-
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
+use tor_cell::relaycell::msg::Connected;
+use tor_hsservice::{handle_rend_requests, RendRequest};
 
 /// Message received from peer
 pub struct IncomingMessage {
@@ -20,11 +19,21 @@ pub async fn listen_for_connections(
     listener: TcpListener,
     tx: mpsc::Sender<IncomingMessage>,
 ) -> Result<()> {
+    use std::sync::Arc;
+
+    // Limit concurrent incoming connection handlers to prevent DoS
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(50));
+
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 let tx = tx.clone();
+                let permit = match semaphore.clone().acquire_owned().await {
+                    Ok(permit) => permit,
+                    Err(_) => break, // Semaphore closed
+                };
                 tokio::spawn(async move {
+                    let _permit = permit; // Hold until handler completes
                     if let Err(e) = handle_connection(stream, addr.to_string(), tx).await {
                         eprintln!("Connection handler error: {}", e);
                     }
@@ -36,6 +45,7 @@ pub async fn listen_for_connections(
             }
         }
     }
+    Ok(())
 }
 
 /// Handle single incoming connection
@@ -49,8 +59,12 @@ async fn handle_connection(
     let envelope = crate::net::framing::receive_message(&mut stream).await?;
 
     // Send to app (unwrap envelope payload)
-    tx.send(IncomingMessage { message: envelope.payload, remote_addr }).await
-        .map_err(|e| crate::error::ChattorError::Network(format!("Failed to send to app: {}", e)))?;
+    tx.send(IncomingMessage {
+        message: envelope.payload,
+        remote_addr,
+    })
+    .await
+    .map_err(|e| crate::error::ChattorError::Network(format!("Failed to send to app: {}", e)))?;
 
     Ok(())
 }
@@ -83,10 +97,12 @@ pub async fn listen_for_tor_connections(
                 Ok(mut data_stream) => {
                     match crate::net::framing::receive_message(&mut data_stream).await {
                         Ok(envelope) => {
-                            let _ = tx.send(IncomingMessage {
-                                message: envelope.payload,
-                                remote_addr: "tor-rendezvous".to_string(),
-                            }).await;
+                            let _ = tx
+                                .send(IncomingMessage {
+                                    message: envelope.payload,
+                                    remote_addr: "tor-rendezvous".to_string(),
+                                })
+                                .await;
                         }
                         Err(e) => {
                             eprintln!("Tor connection framing error: {}", e);
@@ -110,8 +126,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_listener_accepts_connections() {
+        use crate::protocol::message::{DeliveryReceiptMessage, Message, MessageEnvelope};
         use tokio::io::AsyncWriteExt;
-        use crate::protocol::message::{Message, MessageEnvelope, DeliveryReceiptMessage};
         use uuid::Uuid;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -120,9 +136,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
 
         // Spawn listener
-        tokio::spawn(async move {
-            listen_for_connections(listener, tx).await
-        });
+        tokio::spawn(async move { listen_for_connections(listener, tx).await });
 
         // Connect as client and send a message
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -144,10 +158,7 @@ mod tests {
         stream.flush().await.unwrap();
 
         // Verify connection accepted and message received
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            rx.recv()
-        ).await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv()).await;
 
         assert!(result.is_ok());
         let incoming = result.unwrap().unwrap();

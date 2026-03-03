@@ -27,6 +27,11 @@ pub async fn run(settings: Settings, passphrase_fd: Option<i32>) -> Result<()> {
             "Passphrase cannot be empty".into(),
         ));
     }
+    if passphrase.trim().len() < 8 {
+        return Err(crate::error::ChattorError::Crypto(
+            "Passphrase must be at least 8 characters".into(),
+        ));
+    }
 
     let db_key = zeroize::Zeroizing::new(
         if crate::db::encryption::is_unencrypted(&settings.db_path) {
@@ -34,9 +39,14 @@ pub async fn run(settings: Settings, passphrase_fd: Option<i32>) -> Result<()> {
             eprintln!("Migrating existing database to encrypted format...");
             let tmp_path = settings.db_path.with_extension("db.enc");
             crate::db::Database::migrate_to_encrypted(&settings.db_path, &tmp_path, &key)?;
+            // Verify the new encrypted DB is readable before replacing the original
+            crate::db::Database::open_encrypted(&tmp_path, &key)?;
+            let backup_path = settings.db_path.with_extension("db.bak");
+            std::fs::rename(&settings.db_path, &backup_path)
+                .map_err(crate::error::ChattorError::Io)?;
             std::fs::rename(&tmp_path, &settings.db_path)
                 .map_err(crate::error::ChattorError::Io)?;
-            eprintln!("Database migration complete.");
+            eprintln!("Database migration complete (backup at {}).", backup_path.display());
             key
         } else {
             crate::db::encryption::derive_key(passphrase.as_bytes(), &salt)?

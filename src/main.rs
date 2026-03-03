@@ -56,6 +56,11 @@ async fn main() -> Result<()> {
                     "Passphrase cannot be empty".into(),
                 ));
             }
+            if passphrase.trim().len() < 8 {
+                return Err(error::ChattorError::Crypto(
+                    "Passphrase must be at least 8 characters".into(),
+                ));
+            }
 
             let db_key = zeroize::Zeroizing::new(
                 if db::encryption::is_unencrypted(&settings.db_path) {
@@ -63,8 +68,12 @@ async fn main() -> Result<()> {
                     eprintln!("Migrating existing database to encrypted format...");
                     let tmp_path = settings.db_path.with_extension("db.enc");
                     db::Database::migrate_to_encrypted(&settings.db_path, &tmp_path, &key)?;
+                    // Verify the new encrypted DB is readable before replacing the original
+                    db::Database::open_encrypted(&tmp_path, &key)?;
+                    let backup_path = settings.db_path.with_extension("db.bak");
+                    std::fs::rename(&settings.db_path, &backup_path)?;
                     std::fs::rename(&tmp_path, &settings.db_path)?;
-                    eprintln!("Database migration complete.");
+                    eprintln!("Database migration complete (backup at {}).", backup_path.display());
                     key
                 } else {
                     db::encryption::derive_key(passphrase.as_bytes(), &salt)?
@@ -422,6 +431,19 @@ async fn run_tui(
                 }
             }
             tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        }
+    });
+
+    // Spawn PreKey material cleanup task (every hour, removes material older than 7 days)
+    let app_prekey_cleanup = Arc::clone(&app);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            let app_lock = app_prekey_cleanup.lock().await;
+            let _ = crate::db::queries::cleanup_stale_prekey_material(
+                &app_lock.db,
+                7 * 24 * 3600, // 7 days
+            );
         }
     });
 
