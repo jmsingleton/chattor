@@ -325,6 +325,7 @@ Database path: `{data_dir}/messages.db`
 - Message handlers extracted from main.rs into reusable `src/handlers/` module
 
 ### Future Work
+- TOFU continuity checking: verify stored Ed25519 pubkey on subsequent messages, warn on key change (SSH-style)
 - Backup/restore functionality
 - File transfer support
 
