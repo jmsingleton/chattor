@@ -35,12 +35,43 @@ async fn main() -> Result<()> {
     settings.debug = cli.debug;
 
     match cli.command {
-        // No subcommand or explicit `tui` — run the interactive TUI
-        None => run_tui(settings, None).await,
-        Some(Command::Tui { theme }) => run_tui(settings, theme).await,
+        // TUI mode: prompt for passphrase, then run
+        None | Some(Command::Tui { .. }) => {
+            let theme = match &cli.command {
+                Some(Command::Tui { theme }) => theme.clone(),
+                _ => None,
+            };
+
+            // Derive encryption key from passphrase
+            std::fs::create_dir_all(&settings.data_dir)?;
+            let salt_path = settings.data_dir.join("db.salt");
+            let salt = db::encryption::load_or_create_salt(&salt_path)?;
+
+            let passphrase = rpassword::prompt_password_stderr("Database passphrase: ")
+                .map_err(error::ChattorError::Io)?;
+            if passphrase.is_empty() {
+                return Err(error::ChattorError::Crypto(
+                    "Passphrase cannot be empty".into(),
+                ));
+            }
+
+            let db_key = if db::encryption::is_unencrypted(&settings.db_path) {
+                let key = db::encryption::derive_key(passphrase.as_bytes(), &salt)?;
+                eprintln!("Migrating existing database to encrypted format...");
+                let tmp_path = settings.db_path.with_extension("db.enc");
+                db::Database::migrate_to_encrypted(&settings.db_path, &tmp_path, &key)?;
+                std::fs::rename(&tmp_path, &settings.db_path)?;
+                eprintln!("Database migration complete.");
+                key
+            } else {
+                db::encryption::derive_key(passphrase.as_bytes(), &salt)?
+            };
+
+            run_tui(settings, theme, Some(db_key)).await
+        }
 
         // Headless daemon
-        Some(Command::Daemon) => daemon::run(settings).await,
+        Some(Command::Daemon { passphrase_fd }) => daemon::run(settings, passphrase_fd).await,
 
         // CLI client commands — talk to the daemon via Unix socket
         Some(Command::Status) => {
@@ -132,9 +163,10 @@ async fn main() -> Result<()> {
                 ChannelsAction::Subscribe { onion } => {
                     ("channels_subscribe", serde_json::json!({ "onion": onion }))
                 }
-                ChannelsAction::Feed { channel } => {
-                    ("channels_feed", serde_json::json!({ "channel_id": channel }))
-                }
+                ChannelsAction::Feed { channel } => (
+                    "channels_feed",
+                    serde_json::json!({ "channel_id": channel }),
+                ),
             };
             let result = client::rpc_call(&settings.data_dir, method, params).await?;
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
@@ -168,7 +200,11 @@ async fn main() -> Result<()> {
 ///
 /// This contains all the original main() logic: terminal setup, Tor bootstrap
 /// animation, identity generation, background tasks, and the main event loop.
-async fn run_tui(settings: config::Settings, theme_name: Option<String>) -> Result<()> {
+async fn run_tui(
+    settings: config::Settings,
+    theme_name: Option<String>,
+    db_key: Option<[u8; 32]>,
+) -> Result<()> {
     use crate::crypto::IdentityKeypair;
     use app::App;
     use base64::Engine;
@@ -190,7 +226,10 @@ async fn run_tui(settings: config::Settings, theme_name: Option<String>) -> Resu
     use tokio::sync::Mutex;
     use ui::{AppAction, AppState, RenderContext};
 
-    let app = Arc::new(Mutex::new(App::new_with_settings(settings)?));
+    let app = Arc::new(Mutex::new(App::new_with_settings(
+        settings,
+        db_key.as_ref(),
+    )?));
 
     // Watch channel to broadcast connection pool to background tasks
     let (pool_tx, pool_rx) =

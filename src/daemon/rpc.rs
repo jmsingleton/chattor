@@ -765,7 +765,7 @@ mod tests {
             debug: false,
             tor_socks_port: 9050,
         };
-        let app = App::new_with_settings(settings).unwrap();
+        let app = App::new_with_settings(settings, None).unwrap();
         (Arc::new(Mutex::new(app)), temp_config, temp_data)
     }
 

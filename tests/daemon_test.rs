@@ -124,7 +124,8 @@ fn test_rpc_error_codes() {
 #[test]
 fn test_cli_send_parses() {
     use clap::Parser;
-    let args = chattor::cli::Cli::try_parse_from(["chattor", "send", "abc.onion", "hello"]).unwrap();
+    let args =
+        chattor::cli::Cli::try_parse_from(["chattor", "send", "abc.onion", "hello"]).unwrap();
     match args.command {
         Some(chattor::cli::Command::Send { peer, message }) => {
             assert_eq!(peer, "abc.onion");
@@ -138,7 +139,10 @@ fn test_cli_send_parses() {
 fn test_cli_daemon_parses() {
     use clap::Parser;
     let args = chattor::cli::Cli::try_parse_from(["chattor", "daemon"]).unwrap();
-    assert!(matches!(args.command, Some(chattor::cli::Command::Daemon)));
+    assert!(matches!(
+        args.command,
+        Some(chattor::cli::Command::Daemon { .. })
+    ));
 }
 
 #[test]
@@ -197,10 +201,7 @@ fn test_cli_channels_publish_parses() {
 fn test_cli_status_parses() {
     use clap::Parser;
     let args = chattor::cli::Cli::try_parse_from(["chattor", "status"]).unwrap();
-    assert!(matches!(
-        args.command,
-        Some(chattor::cli::Command::Status)
-    ));
+    assert!(matches!(args.command, Some(chattor::cli::Command::Status)));
 }
 
 #[test]
@@ -217,10 +218,7 @@ fn test_cli_identity_parses() {
 fn test_cli_listen_parses() {
     use clap::Parser;
     let args = chattor::cli::Cli::try_parse_from(["chattor", "listen"]).unwrap();
-    assert!(matches!(
-        args.command,
-        Some(chattor::cli::Command::Listen)
-    ));
+    assert!(matches!(args.command, Some(chattor::cli::Command::Listen)));
 }
 
 #[test]
@@ -292,8 +290,7 @@ fn test_cli_friends_add_parses() {
 #[test]
 fn test_cli_friends_accept_parses() {
     use clap::Parser;
-    let args =
-        chattor::cli::Cli::try_parse_from(["chattor", "friends", "accept", "42"]).unwrap();
+    let args = chattor::cli::Cli::try_parse_from(["chattor", "friends", "accept", "42"]).unwrap();
     match args.command {
         Some(chattor::cli::Command::Friends {
             action: chattor::cli::FriendsAction::Accept { id },
@@ -307,8 +304,7 @@ fn test_cli_friends_accept_parses() {
 #[test]
 fn test_cli_friends_reject_parses() {
     use clap::Parser;
-    let args =
-        chattor::cli::Cli::try_parse_from(["chattor", "friends", "reject", "7"]).unwrap();
+    let args = chattor::cli::Cli::try_parse_from(["chattor", "friends", "reject", "7"]).unwrap();
     match args.command {
         Some(chattor::cli::Command::Friends {
             action: chattor::cli::FriendsAction::Reject { id },
@@ -329,12 +325,8 @@ fn test_cli_debug_flag() {
 #[test]
 fn test_cli_config_dir_override() {
     use clap::Parser;
-    let args = chattor::cli::Cli::try_parse_from([
-        "chattor",
-        "--config-dir",
-        "/tmp/chattor-cfg",
-    ])
-    .unwrap();
+    let args =
+        chattor::cli::Cli::try_parse_from(["chattor", "--config-dir", "/tmp/chattor-cfg"]).unwrap();
     assert_eq!(args.config_dir.as_deref(), Some("/tmp/chattor-cfg"));
 }
 
@@ -366,10 +358,7 @@ fn test_mcp_tool_definitions() {
 #[test]
 fn test_mcp_tool_names() {
     let tools = chattor::mcp::tools::tool_definitions();
-    let names: Vec<&str> = tools
-        .iter()
-        .map(|t| t["name"].as_str().unwrap())
-        .collect();
+    let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
 
     assert!(names.contains(&"send_message"));
     assert!(names.contains(&"receive_messages"));
@@ -399,9 +388,7 @@ fn test_mcp_tool_to_rpc_mapping() {
         "friends_list"
     );
     assert_eq!(
-        tool_to_rpc("get_status", &serde_json::json!({}))
-            .unwrap()
-            .0,
+        tool_to_rpc("get_status", &serde_json::json!({})).unwrap().0,
         "status"
     );
     assert_eq!(
@@ -411,9 +398,7 @@ fn test_mcp_tool_to_rpc_mapping() {
         "recv_messages"
     );
     assert_eq!(
-        tool_to_rpc("add_friend", &serde_json::json!({}))
-            .unwrap()
-            .0,
+        tool_to_rpc("add_friend", &serde_json::json!({})).unwrap().0,
         "friends_add"
     );
     assert_eq!(

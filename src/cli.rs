@@ -37,7 +37,11 @@ pub enum Command {
     },
 
     /// Run headless daemon
-    Daemon,
+    Daemon {
+        /// Read passphrase from file descriptor (for automation)
+        #[arg(long)]
+        passphrase_fd: Option<i32>,
+    },
 
     /// Show daemon status
     Status,
@@ -161,7 +165,7 @@ mod tests {
     #[test]
     fn test_cli_daemon_subcommand() {
         let cli = Cli::parse_from(["chattor", "daemon"]);
-        assert!(matches!(cli.command, Some(Command::Daemon)));
+        assert!(matches!(cli.command, Some(Command::Daemon { .. })));
     }
 
     #[test]

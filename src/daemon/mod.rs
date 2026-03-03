@@ -11,8 +11,39 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
 /// Start the daemon: bootstrap Tor, spawn background tasks, run event loop.
-pub async fn run(settings: Settings) -> Result<()> {
-    let app = Arc::new(Mutex::new(App::new_with_settings(settings.clone())?));
+pub async fn run(settings: Settings, passphrase_fd: Option<i32>) -> Result<()> {
+    // Derive encryption key
+    std::fs::create_dir_all(&settings.data_dir)?;
+    let salt_path = settings.data_dir.join("db.salt");
+    let salt = crate::db::encryption::load_or_create_salt(&salt_path)?;
+
+    let passphrase = match passphrase_fd {
+        Some(fd) => read_passphrase_from_fd(fd)?,
+        None => rpassword::prompt_password_stderr("Database passphrase: ")
+            .map_err(crate::error::ChattorError::Io)?,
+    };
+    if passphrase.is_empty() {
+        return Err(crate::error::ChattorError::Crypto(
+            "Passphrase cannot be empty".into(),
+        ));
+    }
+
+    let db_key = if crate::db::encryption::is_unencrypted(&settings.db_path) {
+        let key = crate::db::encryption::derive_key(passphrase.as_bytes(), &salt)?;
+        eprintln!("Migrating existing database to encrypted format...");
+        let tmp_path = settings.db_path.with_extension("db.enc");
+        crate::db::Database::migrate_to_encrypted(&settings.db_path, &tmp_path, &key)?;
+        std::fs::rename(&tmp_path, &settings.db_path).map_err(crate::error::ChattorError::Io)?;
+        eprintln!("Database migration complete.");
+        key
+    } else {
+        crate::db::encryption::derive_key(passphrase.as_bytes(), &salt)?
+    };
+
+    let app = Arc::new(Mutex::new(App::new_with_settings(
+        settings.clone(),
+        Some(&db_key),
+    )?));
 
     // Ensure identity exists
     {
@@ -34,8 +65,7 @@ pub async fn run(settings: Settings) -> Result<()> {
         use rand::Rng;
         let token: [u8; 32] = rand::thread_rng().gen();
         let token_hex = hex::encode(token);
-        std::fs::write(&token_path, &token_hex)
-            .map_err(crate::error::ChattorError::Io)?;
+        std::fs::write(&token_path, &token_hex).map_err(crate::error::ChattorError::Io)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -96,4 +126,14 @@ pub async fn run(settings: Settings) -> Result<()> {
     std::fs::remove_file(&token_path).ok();
     pid::release(&pid_path);
     result
+}
+
+fn read_passphrase_from_fd(fd: i32) -> Result<String> {
+    use std::io::Read;
+    use std::os::unix::io::FromRawFd;
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let mut passphrase = String::new();
+    file.read_to_string(&mut passphrase)
+        .map_err(crate::error::ChattorError::Io)?;
+    Ok(passphrase.trim().to_string())
 }

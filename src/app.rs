@@ -1,12 +1,12 @@
-use crate::error::Result;
 use crate::config::Settings;
-use crate::db::Database;
 use crate::crypto::IdentityKeypair;
+use crate::db::Database;
+use crate::error::Result;
+use crate::net::pool::ConnectionPool;
+use crate::net::queue::MessageQueue;
+use crate::net::rate_limit::RateLimiter;
 use crate::tor::client::TorClient;
 use crate::tor::hidden_service::HiddenService;
-use crate::net::queue::MessageQueue;
-use crate::net::pool::ConnectionPool;
-use crate::net::rate_limit::RateLimiter;
 use std::fs;
 use std::sync::Arc;
 
@@ -24,14 +24,15 @@ pub struct App {
     pub message_queue: MessageQueue,
     pub connection_pool: Option<Arc<ConnectionPool>>,
     pub onion_address: Option<String>,
-    pub incoming_message_rx: Option<tokio::sync::mpsc::Receiver<crate::net::listener::IncomingMessage>>,
+    pub incoming_message_rx:
+        Option<tokio::sync::mpsc::Receiver<crate::net::listener::IncomingMessage>>,
     pub queue_command_rx: Option<tokio::sync::mpsc::Receiver<QueueCommand>>,
     pub rate_limiter: Arc<RateLimiter>,
 }
 
 impl App {
     #[allow(dead_code)]
-    pub fn new() -> Result<Self> {
+    pub fn new(db_key: Option<&[u8; 32]>) -> Result<Self> {
         // Load settings
         let settings = Settings::default()?;
 
@@ -40,7 +41,10 @@ impl App {
         fs::create_dir_all(&settings.data_dir)?;
 
         // Open database
-        let db = Database::open(&settings.db_path)?;
+        let db = match db_key {
+            Some(k) => Database::open_encrypted(&settings.db_path, k)?,
+            None => Database::open(&settings.db_path)?,
+        };
 
         // Initialize broadcast channels
         crate::db::queries::initialize_channels(&db)?;
@@ -49,8 +53,8 @@ impl App {
         let identity = IdentityKeypair::load_from_db(&db);
 
         // Load previously-persisted .onion address (set during Tor init)
-        let onion_address = crate::db::queries::get_app_setting(&db, "onion_address")
-            .unwrap_or(None);
+        let onion_address =
+            crate::db::queries::get_app_setting(&db, "onion_address").unwrap_or(None);
 
         // Initialize Phase 2 components
         let message_queue = MessageQueue::new();
@@ -80,7 +84,8 @@ impl App {
         }
 
         // Bootstrap Tor client with persistent data directory
-        let client = crate::tor::client::TorClient::new_with_data_dir(&self.settings.data_dir).await?;
+        let client =
+            crate::tor::client::TorClient::new_with_data_dir(&self.settings.data_dir).await?;
 
         // Launch onion service (arti manages the identity/keys internally)
         let (hidden_service, rend_requests) =
@@ -94,7 +99,9 @@ impl App {
         // Spawn Tor rendezvous listener for incoming connections
         let (msg_tx, msg_rx) = tokio::sync::mpsc::channel(100);
         tokio::spawn(async move {
-            if let Err(e) = crate::net::listener::listen_for_tor_connections(rend_requests, msg_tx).await {
+            if let Err(e) =
+                crate::net::listener::listen_for_tor_connections(rend_requests, msg_tx).await
+            {
                 eprintln!("Tor listener task error: {}", e);
             }
         });
@@ -124,19 +131,22 @@ impl App {
     }
 
     /// Create app with custom settings (for testing)
-    pub fn new_with_settings(settings: Settings) -> Result<Self> {
+    pub fn new_with_settings(settings: Settings, db_key: Option<&[u8; 32]>) -> Result<Self> {
         fs::create_dir_all(&settings.config_dir)?;
         fs::create_dir_all(&settings.data_dir)?;
 
-        let db = Database::open(&settings.db_path)?;
+        let db = match db_key {
+            Some(k) => Database::open_encrypted(&settings.db_path, k)?,
+            None => Database::open(&settings.db_path)?,
+        };
         crate::db::queries::initialize_channels(&db)?;
         let identity = IdentityKeypair::load_from_db(&db);
         let message_queue = MessageQueue::new();
         let rate_limiter = Arc::new(RateLimiter::default_limiter());
 
         // Load previously-persisted .onion address (set during Tor init)
-        let onion_address = crate::db::queries::get_app_setting(&db, "onion_address")
-            .unwrap_or(None);
+        let onion_address =
+            crate::db::queries::get_app_setting(&db, "onion_address").unwrap_or(None);
 
         Ok(App {
             settings,
@@ -166,7 +176,7 @@ mod tests {
         // Override HOME for test
         std::env::set_var("HOME", temp_dir.path());
 
-        let app = App::new();
+        let app = App::new(None);
         assert!(app.is_ok());
     }
 
@@ -175,7 +185,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         std::env::set_var("HOME", temp_dir.path());
 
-        let app = App::new().unwrap();
+        let app = App::new(None).unwrap();
 
         // Verify Phase 2 components exist
         assert!(app.tor_client.is_none()); // Not initialized by default
@@ -191,7 +201,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         std::env::set_var("HOME", temp_dir.path());
 
-        let mut app = App::new().unwrap();
+        let mut app = App::new(None).unwrap();
 
         // Initialize Tor (requires real network)
         let result = app.init_tor().await;
@@ -217,7 +227,7 @@ mod tests {
             tor_socks_port: 9050,
         };
 
-        let _app = App::new_with_settings(settings).unwrap();
+        let _app = App::new_with_settings(settings, None).unwrap();
 
         // This will take 30-60 seconds for real Tor bootstrap
         // For CI, we might want to skip or mock

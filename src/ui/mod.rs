@@ -2,19 +2,19 @@ pub mod app_ui;
 pub mod bootstrap;
 pub mod channel_feed;
 pub mod conversation;
+pub mod error;
+pub mod input;
 pub mod modals;
 pub mod sidebar;
 pub mod state;
-pub mod input;
-pub mod error;
 pub mod theme;
 
 pub use app_ui::{render_app, RenderContext};
 pub use bootstrap::{
-    BootstrapAction, BootstrapPhase, BootstrapUpdate,
-    render_connecting, render_failure, handle_bootstrap_key,
+    handle_bootstrap_key, render_connecting, render_failure, BootstrapAction, BootstrapPhase,
+    BootstrapUpdate,
 };
-pub use state::{AppState, AppAction};
+pub use state::{AppAction, AppState};
 pub use theme::Theme;
 
 use crate::app::App;
@@ -103,8 +103,8 @@ pub fn copy_to_clipboard(text: &str) -> bool {
 
 /// Fallback clipboard using command-line tools (wl-copy, xclip, xsel, pbcopy).
 fn clipboard_fallback(text: &str) -> bool {
-    use std::process::{Command, Stdio};
     use std::io::Write;
+    use std::process::{Command, Stdio};
 
     let tools: &[(&str, &[&str])] = &[
         ("wl-copy", &[]),
@@ -148,7 +148,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         std::env::set_var("HOME", temp_dir.path());
 
-        let app = App::new().unwrap();
+        let app = App::new(None).unwrap();
 
         // Should not panic
         display_connection_status(&app);
