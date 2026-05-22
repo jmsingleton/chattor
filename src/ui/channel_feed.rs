@@ -122,33 +122,27 @@ fn render_posts(
         lines.push(Line::from(""));
     }
 
-    // Scroll + scrollbar — mirrors the conversation view. When the feed
-    // overflows, the rightmost column inside the channel block becomes the
-    // scrollbar track.
-    let total_lines = lines.len();
+    // Scroll + scrollbar in visual-row space. Mirrors the conversation
+    // view: `Paragraph::line_count` accounts for soft-wrap so long posts
+    // don't count as a single line just because they're a single Span.
+    let paragraph_all = Paragraph::new(lines).wrap(Wrap { trim: false });
     let viewport_h = inner.height as usize;
-    let has_overflow = total_lines > viewport_h;
+    let text_area_width = inner.width.saturating_sub(1);
+    let visual_total = paragraph_all.line_count(text_area_width);
+    let has_overflow = visual_total > viewport_h;
     let text_area = if has_overflow {
-        Rect { width: inner.width.saturating_sub(1), ..inner }
+        Rect { width: text_area_width, ..inner }
     } else {
         inner
     };
 
-    let skip = if scroll_offset > 0 && has_overflow {
-        total_lines.saturating_sub(viewport_h + scroll_offset)
-    } else {
-        total_lines.saturating_sub(viewport_h)
-    };
-
-    let visible_lines: Vec<Line> = lines.into_iter().skip(skip).collect();
-
-    let paragraph = Paragraph::new(visible_lines)
-        .wrap(Wrap { trim: false });
+    let max_scroll = visual_total.saturating_sub(viewport_h);
+    let scroll_rows = max_scroll.saturating_sub(scroll_offset);
+    let paragraph = paragraph_all.scroll((scroll_rows as u16, 0));
     f.render_widget(paragraph, text_area);
 
     if has_overflow {
-        let max_scroll = total_lines.saturating_sub(viewport_h);
-        let mut sb_state = ScrollbarState::new(max_scroll).position(skip);
+        let mut sb_state = ScrollbarState::new(max_scroll).position(scroll_rows);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None)
@@ -176,13 +170,12 @@ fn render_channel_input(
 
     f.render_widget(widget, area);
 
-    // Native cursor placement. +1 for border, +2 for "> " prompt, then the
-    // character (not byte) count of the prefix up to `cursor`.
-    let chars_before_cursor = input
-        .get(..cursor)
-        .map(|s| s.chars().count())
-        .unwrap_or(0) as u16;
-    f.set_cursor(area.x + 1 + 2 + chars_before_cursor, area.y + 1);
+    // Native cursor placement, clamped via the shared helper so the
+    // cursor can't park past the right border on long input.
+    let prompt_cols: u16 = 2; // "> "
+    let effective_width = area.width.saturating_sub(prompt_cols);
+    let inner_col = crate::ui::text::input_cursor_column(input, cursor, effective_width);
+    f.set_cursor(area.x + prompt_cols + inner_col, area.y + 1);
 }
 
 fn format_timestamp(ts: i64) -> String {

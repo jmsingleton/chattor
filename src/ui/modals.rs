@@ -491,19 +491,12 @@ pub fn render_subscription_picker(
 }
 
 /// Position the OS cursor inside a bordered input box. `area` is the box's
-/// outer rect (including the border); the cursor lands one column right of
-/// the left border, on the inner row, offset by the character (not byte)
-/// count of the prefix up to `cursor`.
+/// outer rect (including the border). Delegates the char-count + clamp
+/// math to `ui::text::input_cursor_column` for parity with the
+/// conversation and channel-feed inputs.
 fn set_input_cursor(f: &mut Frame, area: Rect, input: &str, cursor: usize) {
-    let chars_before = input
-        .get(..cursor)
-        .map(|s| s.chars().count())
-        .unwrap_or(0) as u16;
-    // Clamp to inner width so we don't park the cursor past the right
-    // border when the input is longer than the visible area.
-    let max_col = area.width.saturating_sub(2);
-    let col = chars_before.min(max_col);
-    f.set_cursor(area.x + 1 + col, area.y + 1);
+    let col = crate::ui::text::input_cursor_column(input, cursor, area.width);
+    f.set_cursor(area.x + col, area.y + 1);
 }
 
 /// Helper to center a rect

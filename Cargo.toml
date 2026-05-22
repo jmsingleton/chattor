@@ -12,7 +12,10 @@ rust-version = "1.75"
 
 [dependencies]
 # TUI
-ratatui = "0.27"
+# `unstable-rendered-line-info` exposes `Paragraph::line_count(width)`,
+# which we use to map logical lines through soft-wrap to visual rows so
+# the scrollbar tracks actual screen content (not pre-wrap line count).
+ratatui = { version = "0.27", features = ["unstable-rendered-line-info"] }
 crossterm = "0.27"
 
 # Async runtime

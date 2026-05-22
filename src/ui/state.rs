@@ -1,6 +1,58 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::error::Result;
 
+// === Multi-byte-safe input editing helpers =================================
+//
+// `String::insert` and `String::remove` take *byte* indices and panic if the
+// index isn't on a UTF-8 char boundary. A naive `*cursor += 1` after
+// `input.insert(*cursor, c)` is wrong for any non-ASCII `c` (2-4 bytes) and
+// will eventually crash the renderer the next time it tries to touch a
+// non-boundary index. These helpers keep the byte cursor on a boundary at
+// all times.
+
+/// Insert `c` at the byte-position cursor and step past it.
+fn input_insert_char(input: &mut String, cursor: &mut usize, c: char) {
+    input.insert(*cursor, c);
+    *cursor += c.len_utf8();
+}
+
+/// Backspace: remove the character whose final byte is immediately before
+/// the cursor; cursor lands on the start of what was just removed.
+fn input_backspace(input: &mut String, cursor: &mut usize) {
+    if *cursor == 0 {
+        return;
+    }
+    let prev_start = input[..*cursor]
+        .char_indices()
+        .next_back()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    *cursor = prev_start;
+    input.remove(*cursor);
+}
+
+/// Move cursor one character to the left along char boundaries.
+fn input_cursor_left(input: &str, cursor: &mut usize) {
+    if *cursor == 0 {
+        return;
+    }
+    *cursor = input[..*cursor]
+        .char_indices()
+        .next_back()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+}
+
+/// Move cursor one character to the right along char boundaries.
+fn input_cursor_right(input: &str, cursor: &mut usize) {
+    if *cursor >= input.len() {
+        return;
+    }
+    if let Some(c) = input[*cursor..].chars().next() {
+        *cursor += c.len_utf8();
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum AppState {
     Normal {
@@ -170,27 +222,19 @@ impl AppState {
                             }
                         }
                         KeyCode::Char(c) => {
-                            input.insert(*cursor, c);
-                            *cursor += 1;
+                            input_insert_char(input, cursor, c);
                             Ok(None)
                         }
                         KeyCode::Backspace => {
-                            if *cursor > 0 {
-                                *cursor -= 1;
-                                input.remove(*cursor);
-                            }
+                            input_backspace(input, cursor);
                             Ok(None)
                         }
                         KeyCode::Left => {
-                            if *cursor > 0 {
-                                *cursor -= 1;
-                            }
+                            input_cursor_left(input, cursor);
                             Ok(None)
                         }
                         KeyCode::Right => {
-                            if *cursor < input.len() {
-                                *cursor += 1;
-                            }
+                            input_cursor_right(input, cursor);
                             Ok(None)
                         }
                         _ => Ok(None),
@@ -291,27 +335,19 @@ impl AppState {
             AppState::AddingFriend { input, cursor, error } => {
                 match key.code {
                     KeyCode::Char(c) => {
-                        input.insert(*cursor, c);
-                        *cursor += 1;
+                        input_insert_char(input, cursor, c);
                         Ok(None)
                     }
                     KeyCode::Backspace => {
-                        if *cursor > 0 {
-                            *cursor -= 1;
-                            input.remove(*cursor);
-                        }
+                        input_backspace(input, cursor);
                         Ok(None)
                     }
                     KeyCode::Left => {
-                        if *cursor > 0 {
-                            *cursor -= 1;
-                        }
+                        input_cursor_left(input, cursor);
                         Ok(None)
                     }
                     KeyCode::Right => {
-                        if *cursor < input.len() {
-                            *cursor += 1;
-                        }
+                        input_cursor_right(input, cursor);
                         Ok(None)
                     }
                     KeyCode::Enter => {
@@ -469,15 +505,19 @@ impl AppState {
                 if *is_own {
                     match key.code {
                         KeyCode::Char(c) => {
-                            input.insert(*cursor, c);
-                            *cursor += 1;
+                            input_insert_char(input, cursor, c);
                             Ok(None)
                         }
                         KeyCode::Backspace => {
-                            if *cursor > 0 {
-                                *cursor -= 1;
-                                input.remove(*cursor);
-                            }
+                            input_backspace(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Left => {
+                            input_cursor_left(input, cursor);
+                            Ok(None)
+                        }
+                        KeyCode::Right => {
+                            input_cursor_right(input, cursor);
                             Ok(None)
                         }
                         KeyCode::Enter => {
@@ -553,15 +593,19 @@ impl AppState {
             AppState::SubscribingToChannel { input, cursor, error } => {
                 match key.code {
                     KeyCode::Char(c) => {
-                        input.insert(*cursor, c);
-                        *cursor += 1;
+                        input_insert_char(input, cursor, c);
                         Ok(None)
                     }
                     KeyCode::Backspace => {
-                        if *cursor > 0 {
-                            *cursor -= 1;
-                            input.remove(*cursor);
-                        }
+                        input_backspace(input, cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Left => {
+                        input_cursor_left(input, cursor);
+                        Ok(None)
+                    }
+                    KeyCode::Right => {
+                        input_cursor_right(input, cursor);
                         Ok(None)
                     }
                     KeyCode::Enter => {
@@ -587,6 +631,102 @@ impl AppState {
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    // === Multi-byte input helper tests =====================================
+
+    #[test]
+    fn insert_advances_cursor_by_byte_len_of_char() {
+        let mut input = String::new();
+        let mut cursor = 0usize;
+        input_insert_char(&mut input, &mut cursor, '日'); // 3 bytes
+        assert_eq!(input, "日");
+        assert_eq!(cursor, 3);
+        input_insert_char(&mut input, &mut cursor, 'a'); // 1 byte
+        assert_eq!(input, "日a");
+        assert_eq!(cursor, 4);
+        input_insert_char(&mut input, &mut cursor, '👋'); // 4 bytes
+        assert_eq!(input, "日a👋");
+        assert_eq!(cursor, 8);
+    }
+
+    #[test]
+    fn backspace_walks_char_boundaries() {
+        let mut input = "a日b".to_string();
+        let mut cursor = input.len(); // at end
+        input_backspace(&mut input, &mut cursor);
+        assert_eq!(input, "a日");
+        assert_eq!(cursor, 4);
+        input_backspace(&mut input, &mut cursor);
+        assert_eq!(input, "a"); // removes the 3-byte 日 in one step
+        assert_eq!(cursor, 1);
+        input_backspace(&mut input, &mut cursor);
+        assert_eq!(input, "");
+        assert_eq!(cursor, 0);
+        // Empty input no-ops.
+        input_backspace(&mut input, &mut cursor);
+        assert_eq!(input, "");
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn arrows_walk_char_boundaries() {
+        let input = "a日b".to_string(); // bytes: 0 a, 1-3 日, 4 b, len 5
+        let mut cursor = 0usize;
+        input_cursor_right(&input, &mut cursor);
+        assert_eq!(cursor, 1); // past 'a'
+        input_cursor_right(&input, &mut cursor);
+        assert_eq!(cursor, 4); // past 日 (3 bytes)
+        input_cursor_right(&input, &mut cursor);
+        assert_eq!(cursor, 5); // past 'b' (end)
+        input_cursor_right(&input, &mut cursor);
+        assert_eq!(cursor, 5); // clamped at end
+        input_cursor_left(&input, &mut cursor);
+        assert_eq!(cursor, 4);
+        input_cursor_left(&input, &mut cursor);
+        assert_eq!(cursor, 1); // back through 日
+        input_cursor_left(&input, &mut cursor);
+        assert_eq!(cursor, 0);
+        input_cursor_left(&input, &mut cursor);
+        assert_eq!(cursor, 0); // clamped at start
+    }
+
+    /// Replays the sequence from the code-review finding: typing a 3-byte
+    /// CJK char and then any further keystroke used to panic on
+    /// is_char_boundary because cursor was bumped by 1 not 3. This test
+    /// exercises the whole AppState::Normal input loop and would have
+    /// crashed before the fix.
+    #[test]
+    fn normal_input_does_not_panic_on_multibyte_then_more() {
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: Some(1),
+            input: String::new(),
+            cursor: 0,
+            input_focused: true,
+            scroll_offset: 0,
+        };
+        let ctx = NavContext::default();
+        for c in "日本語abc".chars() {
+            state.handle_key_with_context(
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+                ctx,
+            ).unwrap();
+        }
+        // Backspace three times — across the ASCII tail and into the CJK.
+        for _ in 0..5 {
+            state.handle_key_with_context(
+                KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+                ctx,
+            ).unwrap();
+        }
+        match &state {
+            AppState::Normal { input, cursor, .. } => {
+                assert_eq!(input, "日");
+                assert_eq!(*cursor, 3, "cursor stays on the boundary after 日");
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
 
     #[test]
     fn default_state_is_normal() {

@@ -111,6 +111,59 @@ pub struct FriendRequestAcceptMessage {
     pub signature: String,
 }
 
+impl FriendRequestAcceptMessage {
+    /// Verify the Ed25519 signature on this accept message. The bytes
+    /// signed by the publisher in main.rs are `from_onion || to_onion ||
+    /// timestamp`, and the pubkey is derived from the publisher's v3 onion
+    /// address. Returns true only if the signature is genuine and the
+    /// timestamp is within a 5-minute window.
+    ///
+    /// `expected_to_onion` is our own .onion: an attacker can't replay an
+    /// accept message targeted at someone else to us. None disables the
+    /// recipient check (used by tests and one-off plumbing).
+    pub fn verify_signature(&self, expected_to_onion: Option<&str>) -> bool {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        use base64::Engine;
+
+        // Optional recipient binding.
+        if let Some(me) = expected_to_onion {
+            if self.to_onion != me {
+                return false;
+            }
+        }
+
+        // Freshness window.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        if (now - self.timestamp).abs() > 300 {
+            return false;
+        }
+
+        let pubkey_bytes = match crate::protocol::friend_code::onion_to_pubkey(&self.from_onion) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        let verifying_key = match VerifyingKey::from_bytes(&pubkey_bytes) {
+            Ok(k) => k,
+            Err(_) => return false,
+        };
+        let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(&self.signature) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        let sig_array: [u8; 64] = match sig_bytes.try_into() {
+            Ok(a) => a,
+            Err(_) => return false,
+        };
+        let signature = Signature::from_bytes(&sig_array);
+        let data = format!("{}{}{}", self.from_onion, self.to_onion, self.timestamp);
+
+        verifying_key.verify(data.as_bytes(), &signature).is_ok()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FriendRequestRejectMessage {
     pub from_onion: String,
@@ -488,6 +541,103 @@ mod tests {
         for (msg, expected) in cases {
             assert_eq!(msg.peer_onion(), expected, "variant {:?}", msg);
         }
+    }
+
+    fn sign_accept(
+        identity: &crate::crypto::IdentityKeypair,
+        accept: &mut FriendRequestAcceptMessage,
+    ) {
+        use base64::Engine;
+        let data = format!("{}{}{}", accept.from_onion, accept.to_onion, accept.timestamp);
+        accept.signature = base64::engine::general_purpose::STANDARD
+            .encode(identity.sign(data.as_bytes()).to_bytes());
+    }
+
+    #[test]
+    fn test_accept_signature_verifies_genuine() {
+        let alice = crate::crypto::IdentityKeypair::generate().unwrap();
+        let bob_onion = "bob".to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let mut accept = FriendRequestAcceptMessage {
+            from_onion: alice.to_onion_address(),
+            to_onion: bob_onion.clone(),
+            signal_prekey_bundle: "irrelevant".into(),
+            timestamp: now,
+            signature: String::new(),
+        };
+        sign_accept(&alice, &mut accept);
+
+        assert!(accept.verify_signature(Some(&bob_onion)));
+        assert!(accept.verify_signature(None));
+    }
+
+    #[test]
+    fn test_accept_signature_rejects_spoofed_from_onion() {
+        // Alice signs an accept; an attacker rewrites from_onion to Eve.
+        // Verification under Eve's pubkey must fail.
+        let alice = crate::crypto::IdentityKeypair::generate().unwrap();
+        let eve = crate::crypto::IdentityKeypair::generate().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let mut accept = FriendRequestAcceptMessage {
+            from_onion: alice.to_onion_address(),
+            to_onion: "bob".into(),
+            signal_prekey_bundle: "irrelevant".into(),
+            timestamp: now,
+            signature: String::new(),
+        };
+        sign_accept(&alice, &mut accept);
+        accept.from_onion = eve.to_onion_address();
+
+        assert!(!accept.verify_signature(Some("bob")));
+    }
+
+    #[test]
+    fn test_accept_signature_rejects_wrong_recipient() {
+        // An accept addressed to Bob must not verify when Carol checks it.
+        let alice = crate::crypto::IdentityKeypair::generate().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let mut accept = FriendRequestAcceptMessage {
+            from_onion: alice.to_onion_address(),
+            to_onion: "bob".into(),
+            signal_prekey_bundle: "irrelevant".into(),
+            timestamp: now,
+            signature: String::new(),
+        };
+        sign_accept(&alice, &mut accept);
+
+        assert!(!accept.verify_signature(Some("carol")));
+    }
+
+    #[test]
+    fn test_accept_signature_rejects_stale_timestamp() {
+        let alice = crate::crypto::IdentityKeypair::generate().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let mut accept = FriendRequestAcceptMessage {
+            from_onion: alice.to_onion_address(),
+            to_onion: "bob".into(),
+            signal_prekey_bundle: "irrelevant".into(),
+            timestamp: now - 600, // 10 minutes ago
+            signature: String::new(),
+        };
+        sign_accept(&alice, &mut accept);
+
+        assert!(!accept.verify_signature(Some("bob")));
     }
 
     #[test]

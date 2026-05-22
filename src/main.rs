@@ -1218,6 +1218,21 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             tracing::info!(from_onion = %req.from_onion, "received friend request");
         }
         protocol::message::Message::FriendRequestAccept(accept) => {
+            // Symmetric with FriendRequest validation: the acceptor's
+            // Ed25519 key is in their .onion address, so we can confirm
+            // they're really who they claim. The `to_onion` field must
+            // also be our address — otherwise an attacker could race a
+            // genuine accept with their own, claiming to be the acceptor
+            // and delivering an attacker-controlled PreKey bundle.
+            let own_onion = app.onion_address.as_deref();
+            if !accept.verify_signature(own_onion) {
+                tracing::warn!(
+                    from_onion = %accept.from_onion,
+                    to_onion = %accept.to_onion,
+                    "rejected friend request accept: invalid signature, stale, or wrong recipient"
+                );
+                return Ok(());
+            }
             handle_incoming_accept(app, accept)?;
         }
         protocol::message::Message::FriendRequestReject(reject) => {

@@ -181,37 +181,33 @@ fn render_messages(
         lines.push(Line::from(""));
     }
 
-    // Reserve the rightmost column for a scrollbar when content overflows.
-    // The scrollbar lives on the conversation block's outer right border —
-    // not inside the padded message area — so we render it over `area`'s
-    // right edge and shrink the text area by one column.
-    let total_lines = lines.len();
+    // Build the paragraph once over every logical line. `line_count` then
+    // tells us how many visual rows that paragraph would occupy at the
+    // current text width — accounting for soft-wrap on long messages.
+    // Without this, a single long message would count as 1 logical line
+    // even though it wraps to many on-screen rows, and the scrollbar would
+    // disappear while content was clearly cut off.
+    let paragraph_all = Paragraph::new(lines).wrap(Wrap { trim: false });
     let viewport_h = area.height as usize;
-    let has_overflow = total_lines > viewport_h;
+    let text_area_width = area.width.saturating_sub(1); // leave room for scrollbar
+    let visual_total = paragraph_all.line_count(text_area_width);
+    let has_overflow = visual_total > viewport_h;
     let text_area = if has_overflow {
-        Rect { width: area.width.saturating_sub(1), ..area }
+        Rect { width: text_area_width, ..area }
     } else {
         area
     };
 
-    let skip = if scroll_offset > 0 && total_lines > viewport_h {
-        total_lines.saturating_sub(viewport_h + scroll_offset)
-    } else {
-        total_lines.saturating_sub(viewport_h)
-    };
-
-    let visible_lines: Vec<Line> = lines.into_iter().skip(skip).collect();
-
-    let paragraph = Paragraph::new(visible_lines)
-        .wrap(Wrap { trim: false });
+    // Scrolling lives in visual-row space. The viewport sticks to the
+    // bottom by default; user-driven scroll_offset (currently always 0,
+    // but ready for PgUp/PgDn) walks rows back up from the bottom.
+    let max_scroll = visual_total.saturating_sub(viewport_h);
+    let scroll_rows = max_scroll.saturating_sub(scroll_offset);
+    let paragraph = paragraph_all.scroll((scroll_rows as u16, 0));
     f.render_widget(paragraph, text_area);
 
     if has_overflow {
-        // `skip` is the index of the first visible line; that's the natural
-        // scrollbar position. Track length is the max scroll offset
-        // (total - viewport).
-        let max_scroll = total_lines.saturating_sub(viewport_h);
-        let mut sb_state = ScrollbarState::new(max_scroll).position(skip);
+        let mut sb_state = ScrollbarState::new(max_scroll).position(scroll_rows);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None)
@@ -254,18 +250,16 @@ pub fn render_input(
     f.render_widget(widget, area);
 
     if focused {
-        // Place the OS cursor. area.x/y point at the border corner; +1
-        // for border, +prompt-width for the leading "> ", + char offset
-        // for the cursor itself. `cursor` is a byte index into `input`,
-        // so convert to character count to get the column.
+        // Place the OS cursor at the right column. `input_cursor_column`
+        // returns the offset *inside* the box (skipping the left border)
+        // and clamps so the cursor can't escape the right border on long
+        // input.
         let prompt_cols = prompt.chars().count() as u16;
-        let chars_before_cursor = input
-            .get(..cursor)
-            .map(|s| s.chars().count())
-            .unwrap_or(0) as u16;
-        let cursor_x = area.x + 1 + prompt_cols + chars_before_cursor;
-        let cursor_y = area.y + 1;
-        f.set_cursor(cursor_x, cursor_y);
+        // The prompt sits at the start of the inner area; treat it as a
+        // hidden prefix so the visible cursor budget is `width - prompt`.
+        let effective_width = area.width.saturating_sub(prompt_cols);
+        let inner_col = crate::ui::text::input_cursor_column(input, cursor, effective_width);
+        f.set_cursor(area.x + prompt_cols + inner_col, area.y + 1);
     }
 }
 
