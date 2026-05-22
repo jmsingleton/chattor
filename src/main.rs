@@ -364,7 +364,14 @@ async fn main() -> Result<()> {
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => {
-                    match app_state.handle_key(key)? {
+                    // Bounds for directional navigation. The current friend
+                    // and subscription counts come from the render-context
+                    // snapshot built each tick.
+                    let nav_ctx = ui::NavContext {
+                        friends_count: ctx.friends.len(),
+                        subscriptions_count: ctx.channel_subscriptions.len(),
+                    };
+                    match app_state.handle_key_with_context(key, nav_ctx)? {
                         Some(AppAction::SendFriendRequest(code)) => {
                             let app_lock = app.lock().await;
 

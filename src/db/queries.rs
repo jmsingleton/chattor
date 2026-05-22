@@ -14,17 +14,14 @@ pub struct FriendEntry {
 }
 
 impl FriendEntry {
-    /// Display name or truncated onion address
+    /// Display name or truncated onion address. Truncation is by character
+    /// count (not byte index), so a user-set multi-byte display name can't
+    /// panic the renderer.
     pub fn display(&self) -> String {
         if let Some(ref name) = self.display_name {
             name.clone()
         } else {
-            let addr = &self.onion_address;
-            if addr.len() > 12 {
-                format!("{}...", &addr[..12])
-            } else {
-                addr.clone()
-            }
+            crate::ui::text::truncate_with_ellipsis(&self.onion_address, 13)
         }
     }
 }
@@ -1172,7 +1169,7 @@ mod tests {
             conversation_id: None,
             unread_count: 0,
         };
-        assert_eq!(entry.display(), "abcdefghijkl...");
+        assert_eq!(entry.display(), "abcdefghijkl…");
 
         let entry2 = FriendEntry {
             friend_id: 2,

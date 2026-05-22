@@ -7,6 +7,7 @@ use ratatui::{
 };
 use crate::db::queries::ChannelPost;
 use crate::ui::theme::Theme;
+use crate::ui::text::truncate_with_ellipsis;
 
 /// Render the channel feed view
 #[allow(clippy::too_many_arguments)]
@@ -24,8 +25,10 @@ pub fn render_channel_feed(
     theme: &Theme,
 ) {
     let ch_label = if channel_type == "public" { "Public" } else { "Friends Only" };
-    let owner_label = if is_own { "My" } else {
-        if publisher_onion.len() > 12 { &publisher_onion[..12] } else { publisher_onion }
+    let owner_label: String = if is_own {
+        "My".to_string()
+    } else {
+        truncate_with_ellipsis(publisher_onion, 13)
     };
     let title = format!(" {} {} Channel ", owner_label, ch_label);
 
@@ -39,17 +42,19 @@ pub fn render_channel_feed(
             ])
             .split(area);
 
-        render_posts(f, chunks[0], &title, posts, read_counts, scroll_offset, theme);
+        render_posts(f, chunks[0], &title, is_own, posts, read_counts, scroll_offset, theme);
         render_channel_input(f, chunks[1], input, cursor, theme);
     } else {
-        render_posts(f, area, &title, posts, read_counts, scroll_offset, theme);
+        render_posts(f, area, &title, is_own, posts, read_counts, scroll_offset, theme);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_posts(
     f: &mut Frame,
     area: Rect,
     title: &str,
+    is_own: bool,
     posts: &[ChannelPost],
     read_counts: &std::collections::HashMap<String, i64>,
     scroll_offset: usize,
@@ -85,10 +90,17 @@ fn render_posts(
     for post in posts {
         let time = format_timestamp(post.created_at);
 
-        // Header line with timestamp
-        let mut header_spans = vec![
-            Span::styled(time, Style::default().fg(theme.msg_timestamp)),
-        ];
+        // Header line: publisher (only when not our own feed — own posts
+        // always come from us), then timestamp and seen-count.
+        let mut header_spans: Vec<Span<'_>> = Vec::new();
+        if !is_own {
+            header_spans.push(Span::styled(
+                truncate_with_ellipsis(&post.publisher_onion, 13),
+                Style::default().fg(theme.msg_peer_sender).add_modifier(ratatui::style::Modifier::BOLD),
+            ));
+            header_spans.push(Span::styled("  ", Style::default()));
+        }
+        header_spans.push(Span::styled(time, Style::default().fg(theme.msg_timestamp)));
 
         // Show read count for own channel posts
         if let Some(&count) = read_counts.get(&post.post_id) {
@@ -131,13 +143,7 @@ fn render_channel_input(
     cursor: usize,
     theme: &Theme,
 ) {
-    let display_text = if cursor < input.len() {
-        format!("> {}\u{2588}{}", &input[..cursor], &input[cursor..])
-    } else {
-        format!("> {}\u{2588}", input)
-    };
-
-    let widget = Paragraph::new(display_text)
+    let widget = Paragraph::new(format!("> {}", input))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -147,6 +153,14 @@ fn render_channel_input(
         .style(Style::default().fg(theme.input_fg));
 
     f.render_widget(widget, area);
+
+    // Native cursor placement. +1 for border, +2 for "> " prompt, then the
+    // character (not byte) count of the prefix up to `cursor`.
+    let chars_before_cursor = input
+        .get(..cursor)
+        .map(|s| s.chars().count())
+        .unwrap_or(0) as u16;
+    f.set_cursor(area.x + 1 + 2 + chars_before_cursor, area.y + 1);
 }
 
 fn format_timestamp(ts: i64) -> String {

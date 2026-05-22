@@ -6,6 +6,7 @@ pub mod modals;
 pub mod sidebar;
 pub mod state;
 pub mod error;
+pub mod text;
 pub mod theme;
 
 pub use app_ui::{render_app, RenderContext};
@@ -13,7 +14,7 @@ pub use bootstrap::{
     BootstrapAction, BootstrapPhase, BootstrapUpdate,
     render_connecting, render_failure, handle_bootstrap_key,
 };
-pub use state::{AppState, AppAction};
+pub use state::{AppAction, AppState, NavContext};
 pub use theme::Theme;
 
 use crate::app::App;

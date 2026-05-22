@@ -6,11 +6,16 @@ use ratatui::{
 };
 
 use crate::ui::theme::Theme;
+use crate::ui::text::truncate_with_ellipsis;
 
-/// Render "Add Friend" modal
+/// Render "Add Friend" modal.
+///
+/// `cursor` is the byte position within `input` where the OS cursor should
+/// be placed (so users can see what they're editing).
 pub fn render_add_friend_modal(
     f: &mut Frame,
     input: &str,
+    cursor: usize,
     error: Option<&str>,
     theme: &Theme,
 ) {
@@ -41,10 +46,11 @@ pub fn render_add_friend_modal(
     f.render_widget(prompt, chunks[0]);
 
     // Input field
-    let input_widget = Paragraph::new(format!("{}_", input))
+    let input_widget = Paragraph::new(input)
         .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
         .style(Style::default().fg(theme.input_fg));
     f.render_widget(input_widget, chunks[1]);
+    set_input_cursor(f, chunks[1], input, cursor);
 
     // Help text or error
     let help = if let Some(err) = error {
@@ -75,11 +81,7 @@ pub fn render_friend_request_modal(
 
     f.render_widget(Clear, area);
 
-    let onion_short = if from_onion.len() > 16 {
-        format!("{}…", &from_onion[..16])
-    } else {
-        from_onion.to_string()
-    };
+    let onion_short = truncate_with_ellipsis(from_onion, 17);
 
     let block = Block::default()
         .title(format!(" Friend Request from {} ", onion_short))
@@ -176,11 +178,7 @@ pub fn render_friend_request_list(
             let is_selected = i == selected_idx;
             let arrow = if is_selected { "\u{25b8} " } else { "  " };
 
-            let onion_display = if req.from_onion.len() > 16 {
-                format!("{}...", &req.from_onion[..16])
-            } else {
-                req.from_onion.clone()
-            };
+            let onion_display = truncate_with_ellipsis(&req.from_onion, 17);
 
             let elapsed = now - req.received_at;
             let time_ago = if elapsed < 60 {
@@ -359,10 +357,13 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize, theme: &Theme)
     f.render_widget(controls, chunks[1]);
 }
 
-/// Render "Subscribe to Channel" modal
+/// Render "Subscribe to Channel" modal.
+///
+/// `cursor` is the byte position within `input` for OS cursor placement.
 pub fn render_subscribe_channel_modal(
     f: &mut Frame,
     input: &str,
+    cursor: usize,
     error: Option<&str>,
     theme: &Theme,
 ) {
@@ -390,10 +391,11 @@ pub fn render_subscribe_channel_modal(
     let prompt = Paragraph::new("Enter publisher's .onion address:");
     f.render_widget(prompt, chunks[0]);
 
-    let input_widget = Paragraph::new(format!("{}_", input))
+    let input_widget = Paragraph::new(input)
         .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded))
         .style(Style::default().fg(theme.input_fg));
     f.render_widget(input_widget, chunks[1]);
+    set_input_cursor(f, chunks[1], input, cursor);
 
     let help = if let Some(err) = error {
         Paragraph::new(err).style(Style::default().fg(theme.error))
@@ -409,6 +411,22 @@ pub fn render_subscribe_channel_modal(
     f.render_widget(controls, chunks[3]);
 
     f.render_widget(block, area);
+}
+
+/// Position the OS cursor inside a bordered input box. `area` is the box's
+/// outer rect (including the border); the cursor lands one column right of
+/// the left border, on the inner row, offset by the character (not byte)
+/// count of the prefix up to `cursor`.
+fn set_input_cursor(f: &mut Frame, area: Rect, input: &str, cursor: usize) {
+    let chars_before = input
+        .get(..cursor)
+        .map(|s| s.chars().count())
+        .unwrap_or(0) as u16;
+    // Clamp to inner width so we don't park the cursor past the right
+    // border when the input is longer than the visible area.
+    let max_col = area.width.saturating_sub(2);
+    let col = chars_before.min(max_col);
+    f.set_cursor(area.x + 1 + col, area.y + 1);
 }
 
 /// Helper to center a rect

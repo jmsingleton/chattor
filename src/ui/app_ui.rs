@@ -40,10 +40,7 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
 
     // Header
     let addr_display = ctx.own_onion.as_deref()
-        .map(|a| {
-            let trunc = if a.len() > 16 { &a[..16] } else { a };
-            format!("  [@{}...]", trunc)
-        })
+        .map(|a| format!("  [@{}]", super::text::truncate_with_ellipsis(a, 17)))
         .unwrap_or_default();
 
     let (tor_icon, tor_label, tor_color) = if ctx.tor_connected {
@@ -149,8 +146,8 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
 
     // Modal overlays
     match app_state {
-        AppState::AddingFriend { input, error, .. } => {
-            crate::ui::modals::render_add_friend_modal(f, input, error.as_deref(), &ctx.theme);
+        AppState::AddingFriend { input, cursor, error, .. } => {
+            crate::ui::modals::render_add_friend_modal(f, input, *cursor, error.as_deref(), &ctx.theme);
         }
         AppState::ViewingFriendRequests { requests, selected_idx } => {
             crate::ui::modals::render_friend_request_list(f, requests, *selected_idx, &ctx.theme);
@@ -164,8 +161,8 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         AppState::SettingEphemeral { selected_idx, .. } => {
             crate::ui::modals::render_ephemeral_modal(f, *selected_idx, &ctx.theme);
         }
-        AppState::SubscribingToChannel { input, error, .. } => {
-            crate::ui::modals::render_subscribe_channel_modal(f, input, error.as_deref(), &ctx.theme);
+        AppState::SubscribingToChannel { input, cursor, error, .. } => {
+            crate::ui::modals::render_subscribe_channel_modal(f, input, *cursor, error.as_deref(), &ctx.theme);
         }
         _ => {}
     }

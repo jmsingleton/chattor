@@ -7,6 +7,7 @@ use ratatui::{
 };
 use crate::db::queries::{FriendEntry, ChannelSubscription};
 use crate::ui::theme::Theme;
+use crate::ui::text::truncate_with_ellipsis;
 
 /// Render the friends sidebar with channels section
 #[allow(dead_code)]
@@ -81,15 +82,10 @@ fn render_friends_list(
         .map(|(i, friend)| {
             let is_selected = selected_idx == Some(i);
             let arrow = if is_selected { "▸ " } else { "  " };
-            let name = friend.display();
 
-            // Truncate name to fit sidebar (leave room for arrow + status + unread)
-            let max_name_len = 14;
-            let truncated = if name.len() > max_name_len {
-                format!("{}…", &name[..max_name_len])
-            } else {
-                name
-            };
+            // Char-based truncation: byte-slicing would panic on a multi-
+            // byte display name (CJK / emoji).
+            let truncated = truncate_with_ellipsis(&friend.display(), 14);
 
             let (status_icon, status_color) = match presence.get(&friend.onion_address) {
                 Some((_, true)) => ("\u{270e}", theme.accent),
@@ -160,11 +156,7 @@ fn render_channels_section(
         ])));
 
         for sub in subscriptions {
-            let name = if sub.publisher_onion.len() > 8 {
-                format!("{}...", &sub.publisher_onion[..8])
-            } else {
-                sub.publisher_onion.clone()
-            };
+            let name = truncate_with_ellipsis(&sub.publisher_onion, 9);
             let ch_label = if sub.channel_type == "public" { "pub" } else { "fri" };
             items.push(ListItem::new(Line::from(vec![
                 Span::styled(format!("    {} [{}]", name, ch_label), Style::default().fg(theme.fg)),

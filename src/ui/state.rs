@@ -86,8 +86,34 @@ pub enum AppAction {
     Quit,
 }
 
+/// Counts that `handle_key` needs in order to bound navigation actions to
+/// the actual list lengths. Populated by the event loop from the
+/// most-recent render context. Defaults to zero, which renders all
+/// directional moves into no-ops — this is the safe behaviour when the
+/// caller hasn't supplied counts (e.g. tests).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NavContext {
+    pub friends_count: usize,
+    /// Currently unused; will gate sidebar-channel selection (task #29).
+    #[allow(dead_code)]
+    pub subscriptions_count: usize,
+}
+
 impl AppState {
+    /// Test-friendly entry point that defers to `handle_key_with_context`
+    /// using a zero-count `NavContext`. Production code should call
+    /// `handle_key_with_context` with the actual counts so that down-arrow
+    /// navigation is bounded.
+    #[cfg(test)]
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<Option<AppAction>> {
+        self.handle_key_with_context(key, NavContext::default())
+    }
+
+    pub fn handle_key_with_context(
+        &mut self,
+        key: KeyEvent,
+        ctx: NavContext,
+    ) -> Result<Option<AppAction>> {
         // Check global keys first
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Ok(Some(AppAction::Quit));
@@ -179,7 +205,7 @@ impl AppState {
                         KeyCode::Char('p') => Ok(Some(AppAction::ViewOwnChannel)),
                         KeyCode::Char('n') => Ok(Some(AppAction::ToggleNotifications)),
                         KeyCode::Tab => {
-                            if selected_friend_idx.is_none() {
+                            if selected_friend_idx.is_none() && ctx.friends_count > 0 {
                                 *selected_friend_idx = Some(0);
                             }
                             Ok(None)
@@ -193,8 +219,13 @@ impl AppState {
                             Ok(None)
                         }
                         KeyCode::Down => {
+                            // Stay bounded to friends_count - 1. With
+                            // friends_count == 0 the index can't move at
+                            // all (matches Up semantics).
                             if let Some(idx) = selected_friend_idx {
-                                *idx += 1;
+                                if *idx + 1 < ctx.friends_count {
+                                    *idx += 1;
+                                }
                             }
                             Ok(None)
                         }
@@ -510,6 +541,51 @@ mod tests {
     }
 
     #[test]
+    fn normal_down_arrow_is_bounded_by_friend_count() {
+        // With 3 friends and current selection at index 0, three Downs should
+        // land on index 2 and stay there — never roll off the end.
+        let mut state = AppState::Normal {
+            selected_friend_idx: Some(0),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        let ctx = NavContext { friends_count: 3, subscriptions_count: 0 };
+        for _ in 0..10 {
+            state.handle_key_with_context(
+                KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+                ctx,
+            ).unwrap();
+        }
+        match &state {
+            AppState::Normal { selected_friend_idx, .. } => {
+                assert_eq!(*selected_friend_idx, Some(2));
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
+    fn normal_tab_does_not_select_with_zero_friends() {
+        // Pressing Tab when there are no friends must not produce a Some(0)
+        // selection — there is no friend at index 0 to select.
+        let mut state = AppState::default();
+        let ctx = NavContext { friends_count: 0, subscriptions_count: 0 };
+        state.handle_key_with_context(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            ctx,
+        ).unwrap();
+        match &state {
+            AppState::Normal { selected_friend_idx, .. } => {
+                assert_eq!(*selected_friend_idx, None);
+            }
+            _ => panic!("Expected Normal state"),
+        }
+    }
+
+    #[test]
     fn normal_nav_mode_view_identity() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
@@ -724,9 +800,14 @@ mod tests {
 
     #[test]
     fn tab_initializes_friend_selection() {
+        // Tab needs a non-zero friends_count to be willing to set a
+        // selection — see `normal_tab_does_not_select_with_zero_friends`.
         let mut state = AppState::default();
-        let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
-        state.handle_key(key).unwrap();
+        let ctx = NavContext { friends_count: 1, subscriptions_count: 0 };
+        state.handle_key_with_context(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            ctx,
+        ).unwrap();
         match &state {
             AppState::Normal { selected_friend_idx, .. } => {
                 assert_eq!(*selected_friend_idx, Some(0));

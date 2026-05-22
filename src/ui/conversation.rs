@@ -119,7 +119,10 @@ pub fn render_conversation(
     }
 }
 
-/// Render message list
+/// Render message list. Inserts a centered date separator
+/// ("───── Tue, Mar 14 ─────") between messages whenever the local day
+/// changes, so old messages stay anchored in absolute time without losing
+/// the per-message "5m ago" relative stamps.
 fn render_messages(
     f: &mut Frame,
     area: Rect,
@@ -130,8 +133,16 @@ fn render_messages(
     theme: &Theme,
 ) {
     let mut lines: Vec<Line> = Vec::new();
+    let mut last_day: Option<chrono::NaiveDate> = None;
 
     for msg in messages {
+        // Date header if the day rolled over from the previous message.
+        let msg_day = local_date(msg.timestamp);
+        if last_day != Some(msg_day) {
+            lines.push(date_separator_line(msg_day, area.width, theme));
+            last_day = Some(msg_day);
+        }
+
         let is_own = own_onion.is_some_and(|o| msg.sender_onion == o);
         let sender = if is_own { "You" } else { friend_name };
         let time = format_timestamp(msg.timestamp);
@@ -184,7 +195,8 @@ fn render_messages(
     f.render_widget(paragraph, area);
 }
 
-/// Render the message input area
+/// Render the message input area. When focused, the native terminal cursor
+/// is positioned at the right column — no more fake block character.
 pub fn render_input(
     f: &mut Frame,
     area: Rect,
@@ -196,19 +208,12 @@ pub fn render_input(
     let border_color = if focused { theme.border_focused } else { theme.border };
     let prompt = if focused { "> " } else { "  " };
 
-    // Show cursor when focused
     let display_text = if focused {
-        if cursor < input.len() {
-            format!("{}{}\u{2588}{}", prompt, &input[..cursor], &input[cursor..])
-        } else {
-            format!("{}{}\u{2588}", prompt, input)
-        }
+        format!("{}{}", prompt, input)
+    } else if input.is_empty() {
+        format!("{}Type a message...", prompt)
     } else {
-        if input.is_empty() {
-            format!("{}Type a message...", prompt)
-        } else {
-            format!("{}{}", prompt, input)
-        }
+        format!("{}{}", prompt, input)
     };
 
     let widget = Paragraph::new(display_text)
@@ -221,6 +226,21 @@ pub fn render_input(
         .style(Style::default().fg(if focused { theme.input_fg } else { theme.input_placeholder }));
 
     f.render_widget(widget, area);
+
+    if focused {
+        // Place the OS cursor. area.x/y point at the border corner; +1
+        // for border, +prompt-width for the leading "> ", + char offset
+        // for the cursor itself. `cursor` is a byte index into `input`,
+        // so convert to character count to get the column.
+        let prompt_cols = prompt.chars().count() as u16;
+        let chars_before_cursor = input
+            .get(..cursor)
+            .map(|s| s.chars().count())
+            .unwrap_or(0) as u16;
+        let cursor_x = area.x + 1 + prompt_cols + chars_before_cursor;
+        let cursor_y = area.y + 1;
+        f.set_cursor(cursor_x, cursor_y);
+    }
 }
 
 /// Format TTL for display (e.g., 300 -> "5m", 3600 -> "1h")
@@ -234,6 +254,49 @@ fn format_ttl(seconds: i64) -> String {
     } else {
         format!("{}d", seconds / 86400)
     }
+}
+
+/// Local-time date for a unix-seconds timestamp. Falls back to the unix
+/// epoch if the timestamp can't be represented (out-of-range, etc.).
+fn local_date(ts: i64) -> chrono::NaiveDate {
+    use chrono::{Local, TimeZone};
+    Local
+        .timestamp_opt(ts, 0)
+        .single()
+        .map(|dt| dt.date_naive())
+        .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+}
+
+/// Build a centered date-separator line — `─── Today ───`, `─── Yesterday ───`,
+/// or `─── Wed, Mar 14 ───` for older messages. The horizontal rules fill the
+/// available width on either side.
+fn date_separator_line<'a>(date: chrono::NaiveDate, total_width: u16, theme: &Theme) -> Line<'a> {
+    use chrono::Local;
+    let today = Local::now().date_naive();
+    let label = if date == today {
+        "Today".to_string()
+    } else if today.signed_duration_since(date).num_days() == 1 {
+        "Yesterday".to_string()
+    } else if today.signed_duration_since(date).num_days() < 365 {
+        date.format("%a, %b %-d").to_string()
+    } else {
+        date.format("%b %-d, %Y").to_string()
+    };
+
+    let label_with_padding = format!(" {} ", label);
+    let label_width = label_with_padding.chars().count() as u16;
+    let rule_total = total_width.saturating_sub(label_width);
+    let left_rule = (rule_total / 2) as usize;
+    let right_rule = (rule_total - rule_total / 2) as usize;
+
+    let rule_style = Style::default().fg(theme.fg_dim);
+    let label_style = Style::default().fg(theme.fg_dim).add_modifier(Modifier::BOLD);
+
+    Line::from(vec![
+        Span::styled("─".repeat(left_rule), rule_style),
+        Span::styled(label_with_padding, label_style),
+        Span::styled("─".repeat(right_rule), rule_style),
+    ])
 }
 
 /// Format timestamp for display
