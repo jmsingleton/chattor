@@ -706,6 +706,21 @@ async fn main() -> Result<()> {
                                 scroll_offset: 0,
                             };
                         }
+                        Some(AppAction::BrowseSubscriptions) => {
+                            // Snapshot the current subscription list and
+                            // hand it to the picker modal. The user sees
+                            // exactly what's on disk; no live updates
+                            // while the picker is open is fine — they
+                            // can Esc and reopen.
+                            let app_lock = app.lock().await;
+                            let subscriptions = db::queries::get_channel_subscriptions(&app_lock.db)
+                                .unwrap_or_default();
+                            drop(app_lock);
+                            app_state = AppState::ChoosingSubscription {
+                                subscriptions,
+                                selected_idx: 0,
+                            };
+                        }
                         Some(AppAction::ViewOwnChannel) => {
                             let app_lock = app.lock().await;
                             let own_onion = app_lock.onion_address.clone().unwrap_or_default();
@@ -727,6 +742,73 @@ async fn main() -> Result<()> {
                                 std::time::Instant::now(),
                                 if new_state { "Notifications: ON" } else { "Notifications: OFF" },
                             ));
+                        }
+                        Some(AppAction::UnsubscribeFromChannel(publisher_onion, channel_type)) => {
+                            // Local removal first: drop the subscription
+                            // entry and every cached post from that
+                            // (publisher_onion, channel_type) feed. The
+                            // publisher then gets a best-effort
+                            // ChannelUnsubscribe so they can stop pushing.
+                            let app_lock = app.lock().await;
+                            db::queries::remove_channel_subscription(
+                                &app_lock.db, &publisher_onion, &channel_type,
+                            ).log_err("remove_channel_subscription");
+                            app_lock.db.connection().execute(
+                                "DELETE FROM channel_posts
+                                 WHERE publisher_onion = ?1 AND channel_type = ?2",
+                                rusqlite::params![publisher_onion, channel_type],
+                            ).ok();
+
+                            let own_onion = app_lock.onion_address.clone().unwrap_or_default();
+                            let ch_type_enum = if channel_type == "public" {
+                                protocol::message::ChannelType::Public
+                            } else {
+                                protocol::message::ChannelType::FriendsOnly
+                            };
+                            let unsub_msg = protocol::message::Message::ChannelUnsubscribe(
+                                protocol::message::ChannelUnsubscribeMessage {
+                                    subscriber_onion: own_onion,
+                                    channel_type: ch_type_enum,
+                                    timestamp: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs() as i64,
+                                }
+                            );
+                            app_lock.message_queue
+                                .enqueue(&app_lock.db, &publisher_onion, &unsub_msg, "low")
+                                .log_err("enqueue ChannelUnsubscribe");
+                            drop(app_lock);
+                        }
+                        Some(AppAction::DeleteSelectedFriend) => {
+                            // The `d` shortcut only fires when there's a
+                            // selection; ctx.friends is the same snapshot
+                            // we render from, so the index is valid.
+                            if let AppState::Normal { selected_friend_idx: Some(idx), .. } = &app_state {
+                                if let Some(friend) = ctx.friends.get(*idx) {
+                                    let app_lock = app.lock().await;
+                                    db::queries::delete_friend(&app_lock.db, friend.friend_id)
+                                        .log_err("delete_friend");
+                                    drop(app_lock);
+                                    app_state = AppState::default();
+                                }
+                            }
+                        }
+                        Some(AppAction::BlockSelectedFriend) => {
+                            if let AppState::Normal { selected_friend_idx: Some(idx), .. } = &app_state {
+                                if let Some(friend) = ctx.friends.get(*idx) {
+                                    let app_lock = app.lock().await;
+                                    db::queries::block_onion(
+                                        &app_lock.db,
+                                        &friend.onion_address,
+                                        Some("user-initiated"),
+                                    ).log_err("block_onion");
+                                    db::queries::delete_friend(&app_lock.db, friend.friend_id)
+                                        .log_err("delete_friend after block");
+                                    drop(app_lock);
+                                    app_state = AppState::default();
+                                }
+                            }
                         }
                         Some(AppAction::SendPresence(_)) => {} // Reserved for future use
                         Some(AppAction::Quit) => break Ok(()),
@@ -794,12 +876,19 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Process collected messages, rate-limited per peer onion.
-            // The token bucket lets each peer burst up to 20 messages and
-            // sustain 5 req/s; messages above that rate are dropped with a
-            // log. Receipts (no `from_onion`) bypass the check.
+            // Process collected messages, rate-limited and block-list
+            // gated per peer onion. The token bucket lets each peer burst
+            // up to 20 messages and sustain 5 req/s; messages above that
+            // rate are dropped with a log. Blocked onions are dropped
+            // before any handler sees them (covers every message type
+            // that carries a peer_onion — not just subscription requests).
+            // Receipts (no from_onion) skip both checks.
             for incoming in incoming_messages {
                 if let Some(peer) = incoming.message.peer_onion() {
+                    if db::queries::is_blocked(&app_lock.db, peer).unwrap_or(false) {
+                        tracing::warn!(peer = %peer, "dropped inbound message from blocked onion");
+                        continue;
+                    }
                     if !app_lock.inbound_rate_limiter.check(peer) {
                         tracing::warn!(peer = %peer, "rate-limited inbound message, dropping");
                         continue;

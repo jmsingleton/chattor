@@ -126,6 +126,7 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - `MessageEnvelope` wrapper with `protocol_version: 2` for forward compatibility
 - Signal Protocol envelope: `signal_header` (Double Ratchet), `signal_ciphertext`, `signal_type` (PreKeyMessage or Message)
 - `Message::peer_onion()` helper returns the sender's onion for rate-limiter dispatch (None for delivery/read receipts, which carry no sender field)
+- Inbound dispatcher in `main.rs` consults `db::queries::is_blocked` before the rate limiter, so any message type whose `peer_onion()` matches an entry in `blocked_onions` is dropped before reaching `handle_incoming_message`
 
 **6. Message Queue (`src/net/queue.rs`)**
 - FIFO queue for offline message delivery
@@ -153,12 +154,19 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - Full TUI with ratatui: friends sidebar, conversation view, channel feed
 - Bootstrap animation screen during Tor connection
 - Header displays: version, Tor connection status, onion address
-- Modals: add friend, friend requests, identity, ephemeral settings, channel subscribe
+- Modals: add friend, friend requests, identity, ephemeral settings, channel subscribe, subscription picker
 - Channel feed view with post composition (own channels) and read-only view (subscriptions)
 - Sidebar shows friends list + channels section (own channels + subscriptions)
 - Dynamic sidebar status icons: ● online, ✎ typing, ○ offline
 - "is typing..." indicator in conversation view
 - Theme struct provides consistent colors across all UI components
+- Responsive: sidebar width adapts to terminal width (20/26/32 cols at <80 / 80-119 / ≥120); footer keybinding row drops hints from the right when they don't fit
+- Vertical scrollbar (`ratatui::Scrollbar`) on the conversation and channel feed when content overflows
+- Native OS cursor via `Frame::set_cursor` in every input (conversation, channel post, add-friend, subscribe). The character column is computed from char-count of the prefix up to the byte cursor, so multi-byte input doesn't displace the cursor
+- Date separator lines (`──── Today ────`, etc.) inserted between messages on day boundaries
+- Channel posts on subscribed (non-own) feeds prefix each entry with the publisher's truncated onion
+- Char-based string truncation throughout: `ui::text::truncate_with_ellipsis` is the single helper, used by sidebar, header, modals, channel feed, and `FriendEntry::display`
+- NavContext threads counts into `AppState::handle_key_with_context` so directional navigation can't roll past the end of the friends list
 
 **9. Broadcast Channels (`src/ui/channel_feed.rs`, `src/db/queries.rs`)**
 - Two auto-created channels per user: Public and Friends Only

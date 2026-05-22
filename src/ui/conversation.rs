@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
 };
 use crate::db::queries::{ChatMessage, FriendEntry};
@@ -181,18 +181,44 @@ fn render_messages(
         lines.push(Line::from(""));
     }
 
-    // Apply scroll offset
-    let skip = if scroll_offset > 0 && lines.len() > area.height as usize {
-        lines.len().saturating_sub(area.height as usize + scroll_offset)
+    // Reserve the rightmost column for a scrollbar when content overflows.
+    // The scrollbar lives on the conversation block's outer right border —
+    // not inside the padded message area — so we render it over `area`'s
+    // right edge and shrink the text area by one column.
+    let total_lines = lines.len();
+    let viewport_h = area.height as usize;
+    let has_overflow = total_lines > viewport_h;
+    let text_area = if has_overflow {
+        Rect { width: area.width.saturating_sub(1), ..area }
     } else {
-        lines.len().saturating_sub(area.height as usize)
+        area
+    };
+
+    let skip = if scroll_offset > 0 && total_lines > viewport_h {
+        total_lines.saturating_sub(viewport_h + scroll_offset)
+    } else {
+        total_lines.saturating_sub(viewport_h)
     };
 
     let visible_lines: Vec<Line> = lines.into_iter().skip(skip).collect();
 
     let paragraph = Paragraph::new(visible_lines)
         .wrap(Wrap { trim: false });
-    f.render_widget(paragraph, area);
+    f.render_widget(paragraph, text_area);
+
+    if has_overflow {
+        // `skip` is the index of the first visible line; that's the natural
+        // scrollbar position. Track length is the max scroll offset
+        // (total - viewport).
+        let max_scroll = total_lines.saturating_sub(viewport_h);
+        let mut sb_state = ScrollbarState::new(max_scroll).position(skip);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_style(Style::default().fg(theme.fg_dim))
+            .thumb_style(Style::default().fg(theme.accent));
+        f.render_stateful_widget(scrollbar, area, &mut sb_state);
+    }
 }
 
 /// Render the message input area. When focused, the native terminal cursor

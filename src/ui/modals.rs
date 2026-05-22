@@ -413,6 +413,83 @@ pub fn render_subscribe_channel_modal(
     f.render_widget(block, area);
 }
 
+/// Render the subscriptions picker — a centered list of subscribed
+/// channels with selection-aware highlighting. Mirrors
+/// `render_friend_request_list`.
+pub fn render_subscription_picker(
+    f: &mut Frame,
+    subscriptions: &[crate::db::queries::ChannelSubscription],
+    selected_idx: usize,
+    theme: &Theme,
+) {
+    use ratatui::style::Modifier;
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::{List, ListItem};
+
+    let area = centered_rect(60, 50, f.size());
+    f.render_widget(Clear, area);
+
+    let title = format!(" Channel Subscriptions ({}) ", subscriptions.len());
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.channel_border));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if subscriptions.is_empty() {
+        let msg = Paragraph::new("No subscriptions yet. Press [s] to subscribe to a channel.")
+            .style(Style::default().fg(theme.fg_dim))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        f.render_widget(msg, inner);
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let items: Vec<ListItem> = subscriptions
+        .iter()
+        .enumerate()
+        .map(|(i, sub)| {
+            let is_selected = i == selected_idx;
+            let arrow = if is_selected { "\u{25b8} " } else { "  " };
+            let style = if is_selected {
+                Style::default().fg(theme.sidebar_selected_fg).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.fg)
+            };
+            let ch_label = if sub.channel_type == "public" { "public" } else { "friends" };
+            let line = Line::from(vec![
+                Span::raw(arrow.to_string()),
+                Span::styled(truncate_with_ellipsis(&sub.publisher_onion, 24), style),
+                Span::styled(
+                    format!("  [{}]", ch_label),
+                    Style::default().fg(theme.fg_dim),
+                ),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items);
+    f.render_widget(list, chunks[0]);
+
+    let controls = Paragraph::new("[Enter] Open    [Esc] Back")
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(theme.fg_dim));
+    f.render_widget(controls, chunks[1]);
+}
+
 /// Position the OS cursor inside a bordered input box. `area` is the box's
 /// outer rect (including the border); the cursor lands one column right of
 /// the left border, on the inner row, offset by the character (not byte)

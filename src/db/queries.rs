@@ -252,6 +252,87 @@ pub fn find_friend_by_onion(db: &Database, onion_address: &str) -> Result<Option
     }
 }
 
+/// Delete a friend by row id. Cascades the removal across every table
+/// that references them — conversation, messages, queued sends, Signal
+/// session, channel subscription. Stored PreKey private material keyed
+/// by their onion is also dropped so a future re-add starts fresh.
+///
+/// This is not a transaction: if a later step fails the earlier ones
+/// remain. That's acceptable for an interactive delete — partial cleanup
+/// is preferable to no cleanup, and any leftover rows are inert.
+pub fn delete_friend(db: &Database, friend_id: i64) -> Result<()> {
+    let conn = db.connection();
+
+    // Resolve the onion address up front so we can target all the
+    // onion-keyed tables that don't reference friend_id directly.
+    let onion: Option<String> = conn.query_row(
+        "SELECT onion_address FROM friends WHERE id = ?1",
+        params![friend_id],
+        |row| row.get::<_, String>(0),
+    ).ok();
+
+    // Conversation + messages.
+    let conv_ids: Vec<i64> = conn.prepare("SELECT id FROM conversations WHERE friend_id = ?1")
+        .and_then(|mut stmt| {
+            stmt.query_map(params![friend_id], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<i64>>>()
+        })
+        .unwrap_or_default();
+    for conv_id in conv_ids {
+        conn.execute("DELETE FROM messages WHERE conversation_id = ?1", params![conv_id])
+            .map_err(|e| ChattorError::Database(format!("Failed to delete messages: {}", e)))?;
+        conn.execute("DELETE FROM conversations WHERE id = ?1", params![conv_id])
+            .map_err(|e| ChattorError::Database(format!("Failed to delete conversation: {}", e)))?;
+    }
+
+    // Friend row itself.
+    conn.execute("DELETE FROM friends WHERE id = ?1", params![friend_id])
+        .map_err(|e| ChattorError::Database(format!("Failed to delete friend: {}", e)))?;
+
+    // Onion-keyed cleanup.
+    if let Some(o) = onion {
+        conn.execute("DELETE FROM signal_sessions WHERE remote_onion = ?1", params![o])
+            .map_err(|e| ChattorError::Database(format!("Failed to delete signal session: {}", e)))?;
+        conn.execute("DELETE FROM message_queue WHERE peer_onion = ?1", params![o])
+            .map_err(|e| ChattorError::Database(format!("Failed to delete queued messages: {}", e)))?;
+        conn.execute("DELETE FROM channel_subscriptions WHERE publisher_onion = ?1", params![o])
+            .map_err(|e| ChattorError::Database(format!("Failed to delete channel subscription: {}", e)))?;
+        conn.execute("DELETE FROM channel_subscribers WHERE subscriber_onion = ?1", params![o])
+            .map_err(|e| ChattorError::Database(format!("Failed to delete channel subscriber: {}", e)))?;
+        conn.execute(
+            "DELETE FROM app_settings WHERE key LIKE ?1 OR key LIKE ?2",
+            params![format!("prekey_%:{}", o), format!("signal_identity_secret:{}", o)],
+        ).map_err(|e| ChattorError::Database(format!("Failed to delete prekey material: {}", e)))?;
+    }
+
+    Ok(())
+}
+
+/// Insert an onion into the blocked_onions list. Returns Ok even if the
+/// address is already blocked (uses INSERT OR REPLACE).
+pub fn block_onion(db: &Database, onion_address: &str, reason: Option<&str>) -> Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    db.connection().execute(
+        "INSERT OR REPLACE INTO blocked_onions (onion_address, blocked_at, reason)
+         VALUES (?1, ?2, ?3)",
+        params![onion_address, now, reason],
+    ).map_err(|e| ChattorError::Database(format!("Failed to block onion: {}", e)))?;
+    Ok(())
+}
+
+/// True if `onion_address` appears in the blocked_onions table.
+pub fn is_blocked(db: &Database, onion_address: &str) -> Result<bool> {
+    let count: i64 = db.connection().query_row(
+        "SELECT COUNT(*) FROM blocked_onions WHERE onion_address = ?1",
+        params![onion_address],
+        |row| row.get(0),
+    ).map_err(|e| ChattorError::Database(format!("Failed to check block status: {}", e)))?;
+    Ok(count > 0)
+}
+
 /// Count pending friend requests
 pub fn get_pending_request_count(db: &Database) -> Result<i64> {
     let count: i64 = db.connection().query_row(

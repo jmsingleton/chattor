@@ -50,6 +50,14 @@ pub enum AppState {
         cursor: usize,
         error: Option<String>,
     },
+    /// Picker over the user's existing subscriptions. Opened with `S`
+    /// (shift+s) from Normal mode; mirrors the ViewingFriendRequests
+    /// flow — Up/Down to move, Enter to open the selected feed, Esc to
+    /// return to Normal.
+    ChoosingSubscription {
+        subscriptions: Vec<crate::db::queries::ChannelSubscription>,
+        selected_idx: usize,
+    },
 }
 
 impl Default for AppState {
@@ -77,9 +85,25 @@ pub enum AppAction {
     ViewFriendRequests,
     PublishChannelPost(String, String),     // (content, channel_type)
     SubscribeToChannel(String),             // publisher .onion address
-    #[allow(dead_code)]
+    /// Unsubscribe from a foreign channel — (publisher_onion, channel_type).
+    /// Fired from the ViewingChannel state when the user presses `u` on a
+    /// subscribed (non-own) channel feed.
+    UnsubscribeFromChannel(String, String),
+    /// Open a specific channel feed — fired by the subscriptions picker
+    /// (`S` keybinding) and the Enter action inside ChoosingSubscription.
     SelectChannel(String, String, bool),    // (publisher_onion, channel_type, is_own)
+    /// Open the subscriptions picker. main.rs loads the current
+    /// subscription list and transitions to ChoosingSubscription.
+    BrowseSubscriptions,
     ViewOwnChannel,
+    /// Delete the currently-selected friend. main.rs resolves the index
+    /// against its own friends slice and removes the row, the
+    /// conversation, queued messages, and any local subscription.
+    DeleteSelectedFriend,
+    /// Block the currently-selected friend's onion: insert into
+    /// blocked_onions and remove the friend record. Subsequent inbound
+    /// messages from that peer are dropped at the dispatcher.
+    BlockSelectedFriend,
     ToggleNotifications,
     #[allow(dead_code)]
     SendPresence(crate::protocol::message::PresenceType),
@@ -202,8 +226,30 @@ impl AppState {
                             };
                             Ok(None)
                         }
+                        // Shift+S: browse existing subscriptions instead
+                        // of subscribing to a new one. main.rs loads the
+                        // list and switches us to ChoosingSubscription.
+                        KeyCode::Char('S') => Ok(Some(AppAction::BrowseSubscriptions)),
                         KeyCode::Char('p') => Ok(Some(AppAction::ViewOwnChannel)),
                         KeyCode::Char('n') => Ok(Some(AppAction::ToggleNotifications)),
+                        // Delete / block only fire when a friend is
+                        // selected. The shortcut intentionally needs a
+                        // selection to avoid acting on something the user
+                        // can't see highlighted.
+                        KeyCode::Char('d') => {
+                            if selected_friend_idx.is_some() {
+                                Ok(Some(AppAction::DeleteSelectedFriend))
+                            } else {
+                                Ok(None)
+                            }
+                        }
+                        KeyCode::Char('b') => {
+                            if selected_friend_idx.is_some() {
+                                Ok(Some(AppAction::BlockSelectedFriend))
+                            } else {
+                                Ok(None)
+                            }
+                        }
                         KeyCode::Tab => {
                             if selected_friend_idx.is_none() && ctx.friends_count > 0 {
                                 *selected_friend_idx = Some(0);
@@ -419,7 +465,7 @@ impl AppState {
                 }
             }
 
-            AppState::ViewingChannel { input, cursor, is_own, channel_type, .. } => {
+            AppState::ViewingChannel { input, cursor, is_own, channel_type, publisher_onion, .. } => {
                 if *is_own {
                     match key.code {
                         KeyCode::Char(c) => {
@@ -457,8 +503,50 @@ impl AppState {
                             *self = AppState::default();
                             Ok(None)
                         }
+                        // `u` unsubscribes from the publisher we're
+                        // currently viewing and returns to the friends
+                        // view. The protocol-level ChannelUnsubscribe is
+                        // sent by the action handler.
+                        KeyCode::Char('u') => {
+                            let pub_o = publisher_onion.clone();
+                            let ch_t = channel_type.clone();
+                            *self = AppState::default();
+                            Ok(Some(AppAction::UnsubscribeFromChannel(pub_o, ch_t)))
+                        }
                         _ => Ok(None),
                     }
+                }
+            }
+
+            AppState::ChoosingSubscription { subscriptions, selected_idx } => {
+                match key.code {
+                    KeyCode::Up => {
+                        if *selected_idx > 0 {
+                            *selected_idx -= 1;
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Down => {
+                        if *selected_idx + 1 < subscriptions.len() {
+                            *selected_idx += 1;
+                        }
+                        Ok(None)
+                    }
+                    KeyCode::Enter => {
+                        if let Some(sub) = subscriptions.get(*selected_idx) {
+                            let pub_o = sub.publisher_onion.clone();
+                            let ch_t = sub.channel_type.clone();
+                            *self = AppState::default();
+                            Ok(Some(AppAction::SelectChannel(pub_o, ch_t, false)))
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                    KeyCode::Esc => {
+                        *self = AppState::default();
+                        Ok(None)
+                    }
+                    _ => Ok(None),
                 }
             }
 

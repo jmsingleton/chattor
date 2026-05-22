@@ -63,6 +63,12 @@ You → TUI (ratatui) → Signal Protocol (E2E) → Tor Hidden Service → Peer
 - **TOML config** — override any theme color via `~/.config/chattor/theme.toml`
 - **Animated bootstrap** — mushroom ASCII art while connecting to Tor (it takes a moment)
 - **Sidebar + conversation + channels** — friends list, chat view, and channel feed all in one layout
+- **Responsive layout** — sidebar width and footer keybinding hints adapt to the terminal size; the conversation and channel views render a vertical scrollbar when content overflows
+- **Real terminal cursor** in every input field — no fake block characters
+- **Absolute date headers** (`──── Today ────`, `──── Wed, Mar 14 ────`) anchor old conversations alongside the per-message relative timestamps
+- **Channel ops in-UI** — `s` to subscribe, `S` to browse existing subscriptions, `u` to unsubscribe from the channel you're viewing
+- **Friend management** — `d` deletes the selected friend (cascading conversation + queue + session cleanup); `b` blocks their onion so subsequent inbound messages are dropped at the dispatcher
+- **Multi-byte safe** — display names, onion truncations, and channel publisher labels are all character-based; no panics on CJK/emoji input
 - **Clipboard support** — wl-copy, xclip, xsel, pbcopy (whatever your system has)
 
 ---

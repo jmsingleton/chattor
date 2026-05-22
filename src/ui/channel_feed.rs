@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
 };
 use crate::db::queries::ChannelPost;
@@ -122,18 +122,40 @@ fn render_posts(
         lines.push(Line::from(""));
     }
 
-    // Apply scroll offset
-    let skip = if scroll_offset > 0 && lines.len() > inner.height as usize {
-        lines.len().saturating_sub(inner.height as usize + scroll_offset)
+    // Scroll + scrollbar — mirrors the conversation view. When the feed
+    // overflows, the rightmost column inside the channel block becomes the
+    // scrollbar track.
+    let total_lines = lines.len();
+    let viewport_h = inner.height as usize;
+    let has_overflow = total_lines > viewport_h;
+    let text_area = if has_overflow {
+        Rect { width: inner.width.saturating_sub(1), ..inner }
     } else {
-        lines.len().saturating_sub(inner.height as usize)
+        inner
+    };
+
+    let skip = if scroll_offset > 0 && has_overflow {
+        total_lines.saturating_sub(viewport_h + scroll_offset)
+    } else {
+        total_lines.saturating_sub(viewport_h)
     };
 
     let visible_lines: Vec<Line> = lines.into_iter().skip(skip).collect();
 
     let paragraph = Paragraph::new(visible_lines)
         .wrap(Wrap { trim: false });
-    f.render_widget(paragraph, inner);
+    f.render_widget(paragraph, text_area);
+
+    if has_overflow {
+        let max_scroll = total_lines.saturating_sub(viewport_h);
+        let mut sb_state = ScrollbarState::new(max_scroll).position(skip);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_style(Style::default().fg(theme.fg_dim))
+            .thumb_style(Style::default().fg(theme.channel_border));
+        f.render_stateful_widget(scrollbar, inner, &mut sb_state);
+    }
 }
 
 fn render_channel_input(

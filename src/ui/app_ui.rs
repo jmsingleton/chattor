@@ -68,11 +68,20 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
             &ctx.theme,
         );
     } else {
-        // Split into sidebar + conversation
+        // Responsive sidebar width. On narrow terminals (<80 cols) we
+        // shrink to 20 cols so the conversation stays usable; on wide
+        // terminals (>=120) we grow to 32 cols so friend names with long
+        // display strings fit without truncation. Otherwise 26 cols hits
+        // a balanced default.
+        let sidebar_width = match chunks[1].width {
+            w if w < 80 => 20,
+            w if w >= 120 => 32,
+            _ => 26,
+        };
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(24),  // Sidebar
+                Constraint::Length(sidebar_width),
                 Constraint::Min(0),      // Conversation
             ])
             .split(chunks[1]);
@@ -132,14 +141,16 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         );
     }
 
-    // Footer
+    // Footer. The hint row drops pairs from right-to-left when the
+    // terminal isn't wide enough to fit the full keybinding list,
+    // keeping the most essential bindings (Send/Esc, Quit) visible.
     let footer_spans = if let Some(ref flash) = ctx.notification_flash {
         vec![
             Span::raw("  "),
             Span::styled(flash.as_str(), Style::default().fg(ctx.theme.accent).add_modifier(Modifier::BOLD)),
         ]
     } else {
-        format_footer_spans(app_state, &ctx.theme)
+        format_footer_spans(app_state, chunks[2].width, &ctx.theme)
     };
     let footer = Paragraph::new(Line::from(footer_spans));
     f.render_widget(footer, chunks[2]);
@@ -164,26 +175,51 @@ pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
         AppState::SubscribingToChannel { input, cursor, error, .. } => {
             crate::ui::modals::render_subscribe_channel_modal(f, input, *cursor, error.as_deref(), &ctx.theme);
         }
+        AppState::ChoosingSubscription { subscriptions, selected_idx } => {
+            crate::ui::modals::render_subscription_picker(f, subscriptions, *selected_idx, &ctx.theme);
+        }
         _ => {}
     }
 }
 
-fn format_footer_spans<'a>(state: &AppState, theme: &'a Theme) -> Vec<Span<'a>> {
+fn format_footer_spans<'a>(state: &AppState, width: u16, theme: &'a Theme) -> Vec<Span<'a>> {
     let pairs: Vec<(&str, &str)> = match state {
         AppState::Normal { input_focused: true, .. } => vec![("Enter", "Send"), ("Esc", "Nav")],
-        AppState::Normal { .. } => vec![("Tab/\u{2191}\u{2193}", "Select"), ("Enter", "Open"), ("a", "Add"), ("n", "Notif"), ("s", "Subscribe"), ("p", "Channel"), ("i", "Identity"), ("f", "Requests"), ("q", "Quit")],
+        AppState::Normal { .. } => vec![("Tab/\u{2191}\u{2193}", "Select"), ("Enter", "Open"), ("a", "Add"), ("d", "Delete"), ("b", "Block"), ("n", "Notif"), ("s", "Subscribe"), ("S", "Browse"), ("p", "Channel"), ("i", "Identity"), ("f", "Requests"), ("q", "Quit")],
         AppState::AddingFriend { .. } => vec![("Enter", "Send"), ("Esc", "Cancel")],
         AppState::ViewingFriendRequests { .. } => vec![("\u{2191}\u{2193}", "Navigate"), ("Enter", "View"), ("Esc", "Back")],
         AppState::ViewingFriendRequest { .. } => vec![("A", "Accept"), ("R", "Reject"), ("Esc", "Back")],
         AppState::ViewingMyIdentity { .. } => vec![("o", "Copy onion"), ("c", "Copy code"), ("i/Esc", "Close")],
         AppState::SettingEphemeral { .. } => vec![("\u{2191}\u{2193}", "Select"), ("Enter", "Confirm"), ("Esc", "Cancel")],
         AppState::ViewingChannel { is_own: true, .. } => vec![("Enter", "Post"), ("Esc", "Back")],
-        AppState::ViewingChannel { .. } => vec![("Esc", "Back")],
+        AppState::ViewingChannel { .. } => vec![("u", "Unsubscribe"), ("Esc", "Back")],
         AppState::SubscribingToChannel { .. } => vec![("Enter", "Subscribe"), ("Esc", "Cancel")],
+        AppState::ChoosingSubscription { .. } => vec![("\u{2191}\u{2193}", "Navigate"), ("Enter", "Open"), ("Esc", "Back")],
     };
 
+    // Width budget: subtract the leading 2-space margin. Each pair occupies
+    // `[key] desc` plus 2 spaces of separator (except after the last). We
+    // drop pairs from the right end until the row fits, but always keep at
+    // least the first pair so users see something actionable.
+    let budget = (width as usize).saturating_sub(2);
+    let mut included = pairs.len();
+    loop {
+        let needed = pair_row_width(&pairs[..included]);
+        if needed <= budget || included <= 1 {
+            break;
+        }
+        included -= 1;
+    }
+    // If even the first pair overflows, render just an ellipsis indicator.
+    if included == 0 {
+        return vec![
+            Span::raw("  "),
+            Span::styled("…", Style::default().fg(theme.fg_dim)),
+        ];
+    }
+
     let mut spans = vec![Span::raw("  ")];
-    for (i, (key, desc)) in pairs.iter().enumerate() {
+    for (i, (key, desc)) in pairs[..included].iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled("  ", Style::default().fg(theme.fg_dim)));
         }
@@ -197,4 +233,18 @@ fn format_footer_spans<'a>(state: &AppState, theme: &'a Theme) -> Vec<Span<'a>> 
         ));
     }
     spans
+}
+
+/// Column count for a `[key] desc` row separated by 2 spaces. Counts
+/// characters, not bytes — labels include multi-byte arrow glyphs.
+fn pair_row_width(pairs: &[(&str, &str)]) -> usize {
+    let mut total = 0;
+    for (i, (key, desc)) in pairs.iter().enumerate() {
+        if i > 0 {
+            total += 2;
+        }
+        // "[key] desc"
+        total += 1 + key.chars().count() + 1 + 1 + desc.chars().count();
+    }
+    total
 }
