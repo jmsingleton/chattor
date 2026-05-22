@@ -299,6 +299,15 @@ pub fn delete_friend(db: &Database, friend_id: i64) -> Result<()> {
             .map_err(|e| ChattorError::Database(format!("Failed to delete channel subscription: {}", e)))?;
         conn.execute("DELETE FROM channel_subscribers WHERE subscriber_onion = ?1", params![o])
             .map_err(|e| ChattorError::Database(format!("Failed to delete channel subscriber: {}", e)))?;
+        // Cached posts authored by this peer — keyed on publisher_onion
+        // since the v10 schema. Leaving them behind would let a removed
+        // friend keep occupying retention storage.
+        conn.execute("DELETE FROM channel_posts WHERE publisher_onion = ?1", params![o])
+            .map_err(|e| ChattorError::Database(format!("Failed to delete cached channel posts: {}", e)))?;
+        // Any pending friend_requests row from this peer that we never
+        // accepted is also stale.
+        conn.execute("DELETE FROM friend_requests WHERE from_onion = ?1", params![o])
+            .map_err(|e| ChattorError::Database(format!("Failed to delete pending friend requests: {}", e)))?;
         conn.execute(
             "DELETE FROM app_settings WHERE key LIKE ?1 OR key LIKE ?2",
             params![format!("prekey_%:{}", o), format!("signal_identity_secret:{}", o)],
@@ -1260,5 +1269,115 @@ mod tests {
             unread_count: 0,
         };
         assert_eq!(entry2.display(), "Alice");
+    }
+
+    // === delete_friend / block / is_blocked tests =========================
+
+    /// Insert a friend with the given onion and return its row id.
+    fn insert_friend(db: &Database, onion: &str) -> i64 {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT INTO friends (onion_address, display_name, added_at, status)
+             VALUES (?1, ?2, 0, 'active')",
+            params![onion, &onion[..onion.len().min(10)]],
+        ).unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn test_delete_friend_cascades_across_tables() {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+        initialize_channels(&db).unwrap();
+
+        let alice_onion = "alice.onion".to_string();
+        let alice_id = insert_friend(&db, &alice_onion);
+        let conv_id = get_or_create_conversation(&db, alice_id).unwrap();
+
+        let conn = db.connection();
+        // Populate every table delete_friend should clean.
+        conn.execute(
+            "INSERT INTO messages (message_id, conversation_id, sender_onion, content, timestamp, status)
+             VALUES ('m1', ?1, ?2, 'hi', 1, 'sent')",
+            params![conv_id, alice_onion],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO signal_sessions (remote_onion, session_state, updated_at) VALUES (?1, X'00', 1)",
+            params![alice_onion],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO message_queue (peer_onion, message_json, priority, retry_count, next_retry_at, created_at)
+             VALUES (?1, '{}', 'normal', 0, 1, 1)",
+            params![alice_onion],
+        ).unwrap();
+        add_channel_subscription(&db, &alice_onion, "public").unwrap();
+        add_channel_subscriber(&db, &alice_onion, "public").unwrap();
+        store_channel_post(&db, &alice_onion, "public", "hello", "p1", 1, "sig").unwrap();
+        conn.execute(
+            "INSERT INTO friend_requests (from_onion, friend_code, received_at, status)
+             VALUES (?1, 'fc', 1, 'pending')",
+            params![alice_onion],
+        ).unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, 'x')",
+            params![format!("prekey_identity:{}", alice_onion)],
+        ).unwrap();
+
+        // And one unrelated friend whose rows must survive.
+        let bob_onion = "bob.onion".to_string();
+        let bob_id = insert_friend(&db, &bob_onion);
+        let bob_conv = get_or_create_conversation(&db, bob_id).unwrap();
+        add_channel_subscription(&db, &bob_onion, "public").unwrap();
+        store_channel_post(&db, &bob_onion, "public", "bob's post", "p-bob", 1, "sig").unwrap();
+
+        delete_friend(&db, alice_id).unwrap();
+
+        // Alice is gone everywhere.
+        let friend_count: i64 = conn.query_row("SELECT COUNT(*) FROM friends WHERE id = ?1", params![alice_id], |r| r.get(0)).unwrap();
+        let conv_count: i64 = conn.query_row("SELECT COUNT(*) FROM conversations WHERE id = ?1", params![conv_id], |r| r.get(0)).unwrap();
+        let msg_count: i64 = conn.query_row("SELECT COUNT(*) FROM messages WHERE conversation_id = ?1", params![conv_id], |r| r.get(0)).unwrap();
+        let sess_count: i64 = conn.query_row("SELECT COUNT(*) FROM signal_sessions WHERE remote_onion = ?1", params![alice_onion], |r| r.get(0)).unwrap();
+        let queue_count: i64 = conn.query_row("SELECT COUNT(*) FROM message_queue WHERE peer_onion = ?1", params![alice_onion], |r| r.get(0)).unwrap();
+        let sub_count: i64 = conn.query_row("SELECT COUNT(*) FROM channel_subscriptions WHERE publisher_onion = ?1", params![alice_onion], |r| r.get(0)).unwrap();
+        let suber_count: i64 = conn.query_row("SELECT COUNT(*) FROM channel_subscribers WHERE subscriber_onion = ?1", params![alice_onion], |r| r.get(0)).unwrap();
+        let post_count: i64 = conn.query_row("SELECT COUNT(*) FROM channel_posts WHERE publisher_onion = ?1", params![alice_onion], |r| r.get(0)).unwrap();
+        let req_count: i64 = conn.query_row("SELECT COUNT(*) FROM friend_requests WHERE from_onion = ?1", params![alice_onion], |r| r.get(0)).unwrap();
+        let prekey_count: i64 = conn.query_row("SELECT COUNT(*) FROM app_settings WHERE key LIKE ?1", params![format!("prekey_%:{}", alice_onion)], |r| r.get(0)).unwrap();
+
+        assert_eq!(friend_count, 0);
+        assert_eq!(conv_count, 0);
+        assert_eq!(msg_count, 0);
+        assert_eq!(sess_count, 0);
+        assert_eq!(queue_count, 0);
+        assert_eq!(sub_count, 0);
+        assert_eq!(suber_count, 0);
+        assert_eq!(post_count, 0);
+        assert_eq!(req_count, 0);
+        assert_eq!(prekey_count, 0);
+
+        // Bob is intact.
+        let bob_friend: i64 = conn.query_row("SELECT COUNT(*) FROM friends WHERE id = ?1", params![bob_id], |r| r.get(0)).unwrap();
+        let bob_conv_count: i64 = conn.query_row("SELECT COUNT(*) FROM conversations WHERE id = ?1", params![bob_conv], |r| r.get(0)).unwrap();
+        let bob_sub: i64 = conn.query_row("SELECT COUNT(*) FROM channel_subscriptions WHERE publisher_onion = ?1", params![bob_onion], |r| r.get(0)).unwrap();
+        let bob_posts: i64 = conn.query_row("SELECT COUNT(*) FROM channel_posts WHERE publisher_onion = ?1", params![bob_onion], |r| r.get(0)).unwrap();
+        assert_eq!(bob_friend, 1);
+        assert_eq!(bob_conv_count, 1);
+        assert_eq!(bob_sub, 1);
+        assert_eq!(bob_posts, 1);
+    }
+
+    #[test]
+    fn test_block_onion_and_is_blocked() {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+
+        assert!(!is_blocked(&db, "eve.onion").unwrap());
+        block_onion(&db, "eve.onion", Some("test")).unwrap();
+        assert!(is_blocked(&db, "eve.onion").unwrap());
+        // INSERT OR REPLACE: blocking twice doesn't error.
+        block_onion(&db, "eve.onion", None).unwrap();
+        assert!(is_blocked(&db, "eve.onion").unwrap());
+        // Other onions are unaffected.
+        assert!(!is_blocked(&db, "alice.onion").unwrap());
     }
 }

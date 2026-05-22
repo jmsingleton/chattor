@@ -16,6 +16,14 @@ use futures::StreamExt;
 /// dropped — Tor will apply backpressure naturally if accepts stall.
 const MAX_INFLIGHT_RENDEZVOUS: usize = 256;
 
+/// Maximum time a single rendezvous accept may spend reading the framed
+/// envelope before we abandon it. Closes a slow-loris vector: without a
+/// timeout an attacker could dribble bytes (or nothing at all) on each
+/// stream and park every semaphore permit indefinitely, starving
+/// well-behaved peers. 30s is generous — even a slow Tor circuit usually
+/// delivers our small JSON envelopes well inside that.
+const RENDEZVOUS_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 
 /// Message received from peer
 pub struct IncomingMessage {
@@ -102,15 +110,26 @@ pub async fn listen_for_tor_connections(
 
             match stream_request.accept(Connected::new_empty()).await {
                 Ok(mut data_stream) => {
-                    match crate::net::framing::receive_message(&mut data_stream).await {
-                        Ok(envelope) => {
+                    // Bound the time spent reading the framed envelope.
+                    // tokio::time::timeout drops the read future on
+                    // expiry, releasing the semaphore permit (via the
+                    // outer task exit) and discarding the stream.
+                    let read_fut = crate::net::framing::receive_message(&mut data_stream);
+                    match tokio::time::timeout(RENDEZVOUS_READ_TIMEOUT, read_fut).await {
+                        Ok(Ok(envelope)) => {
                             let _ = tx.send(IncomingMessage {
                                 message: envelope.payload,
                                 remote_addr: "tor-rendezvous".to_string(),
                             }).await;
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             tracing::warn!(error = %e, "tor connection framing error");
+                        }
+                        Err(_elapsed) => {
+                            tracing::warn!(
+                                "tor rendezvous read exceeded {:?}, dropping stream",
+                                RENDEZVOUS_READ_TIMEOUT,
+                            );
                         }
                     }
                 }

@@ -233,34 +233,46 @@ async fn main() -> Result<()> {
         // Wait for Tor to initialize before starting heartbeats
         tokio::time::sleep(std::time::Duration::from_secs(15)).await;
         loop {
-            {
+            // Snapshot the pool Arc and connected-peer list under the lock
+            // once per tick, then drop the lock before any awaits. Sending
+            // a presence heartbeat over a slow/dead Tor circuit can take
+            // tens of seconds — holding app_heartbeat across that send
+            // would freeze the UI event loop and every other background
+            // task on the same mutex.
+            let (pool_opt, own_onion, peers) = {
                 let app_lock = app_heartbeat.lock().await;
-                if let Some(ref pool) = app_lock.connection_pool {
-                    let own_onion = app_lock.onion_address.clone().unwrap_or_default();
-                    let peers = pool.connected_peers();
-                    drop(app_lock);
+                let peers = app_lock
+                    .connection_pool
+                    .as_ref()
+                    .map(|p| p.connected_peers())
+                    .unwrap_or_default();
+                (
+                    app_lock.connection_pool.clone(),
+                    app_lock.onion_address.clone().unwrap_or_default(),
+                    peers,
+                )
+            };
 
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64;
+            if let Some(pool) = pool_opt {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
 
-                    for peer in peers {
-                        let msg = protocol::message::Message::Presence(
-                            protocol::message::PresenceMessage {
-                                from_onion: own_onion.clone(),
-                                presence_type: protocol::message::PresenceType::Heartbeat,
-                                timestamp: now,
-                            }
-                        );
-                        // Best-effort: don't retry or queue heartbeats
-                        let app_lock = app_heartbeat.lock().await;
-                        if let Some(ref pool) = app_lock.connection_pool {
-                            let _ = pool.send(&peer, &msg).await;
+                for peer in peers {
+                    let msg = protocol::message::Message::Presence(
+                        protocol::message::PresenceMessage {
+                            from_onion: own_onion.clone(),
+                            presence_type: protocol::message::PresenceType::Heartbeat,
+                            timestamp: now,
                         }
-                    }
+                    );
+                    // Best-effort: don't retry or queue heartbeats. The
+                    // pool's per-send timeout (10s) bounds each call.
+                    let _ = pool.send(&peer, &msg).await;
                 }
             }
+
             tokio::time::sleep(presence::HEARTBEAT_INTERVAL).await;
         }
     });
@@ -373,16 +385,18 @@ async fn main() -> Result<()> {
                     };
                     match app_state.handle_key_with_context(key, nav_ctx)? {
                         Some(AppAction::SendFriendRequest(code)) => {
-                            let app_lock = app.lock().await;
+                            // Build the signed request under the lock, then
+                            // drop it before the Tor send. On send failure
+                            // we reacquire briefly to enqueue.
+                            let built = {
+                                let app_lock = app.lock().await;
+                                build_friend_request_message(&app_lock, &code)
+                                    .map(|(peer, msg)| {
+                                        (peer, msg, app_lock.connection_pool.clone())
+                                    })
+                            };
 
-                            match handle_send_friend_request(&app_lock, &code).await {
-                                Ok(SendResult::SentImmediately) => {
-                                    app_state = AppState::default();
-                                }
-                                Ok(SendResult::Queued) => {
-                                    // Show queued status briefly, then return to normal
-                                    app_state = AppState::default();
-                                }
+                            match built {
                                 Err(e) => {
                                     app_state = AppState::AddingFriend {
                                         input: code,
@@ -390,8 +404,39 @@ async fn main() -> Result<()> {
                                         error: Some(format!("Failed: {}", e)),
                                     };
                                 }
+                                Ok((peer_onion, message, pool_opt)) => {
+                                    // Tor send happens with no lock held.
+                                    let send_result = match pool_opt {
+                                        Some(pool) => pool.send(&peer_onion, &message).await,
+                                        None => Err(error::ChattorError::Tor(
+                                            "Connection pool not initialized".into()
+                                        )),
+                                    };
+
+                                    match send_result {
+                                        Ok(()) => {
+                                            app_state = AppState::default();
+                                        }
+                                        Err(_) => {
+                                            // Queue for retry; reacquire lock for the DB write.
+                                            let app_lock = app.lock().await;
+                                            let queued = app_lock.message_queue
+                                                .enqueue(&app_lock.db, &peer_onion, &message, "high");
+                                            drop(app_lock);
+                                            match queued {
+                                                Ok(_) => app_state = AppState::default(),
+                                                Err(e) => {
+                                                    app_state = AppState::AddingFriend {
+                                                        input: code,
+                                                        cursor: 0,
+                                                        error: Some(format!("Failed: {}", e)),
+                                                    };
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            drop(app_lock);
                         }
                         Some(AppAction::AcceptFriendRequest(id)) => {
                             let return_to_list = matches!(app_state, AppState::ViewingFriendRequests { .. });
@@ -585,9 +630,23 @@ async fn main() -> Result<()> {
 
                                     if let Some(text_msg) = encrypted_msg {
                                         let msg = protocol::message::Message::TextMessage(text_msg.clone());
-                                        // Try to send directly, queue on failure
-                                        match try_send_direct(&app_lock, &peer_onion, &msg).await {
-                                            Ok(_) => {
+                                        // Drop the app lock around the Tor send so a slow circuit
+                                        // can't freeze the UI. The post-send DB updates are quick
+                                        // and reacquire the lock cleanly. Pool is cloneable
+                                        // (Arc) so the snapshot is cheap.
+                                        let pool_opt = app_lock.connection_pool.clone();
+                                        drop(app_lock);
+
+                                        let send_result = match pool_opt {
+                                            Some(pool) => pool.send(&peer_onion, &msg).await,
+                                            None => Err(error::ChattorError::Tor(
+                                                "Connection pool not initialized".into()
+                                            )),
+                                        };
+
+                                        let app_lock = app.lock().await;
+                                        match send_result {
+                                            Ok(()) => {
                                                 db::queries::update_message_status(&app_lock.db, &msg_id, "sent")
                                                     .log_err("update_message_status('sent')");
                                             }
@@ -598,15 +657,19 @@ async fn main() -> Result<()> {
                                                     .log_err("update_message_status('queued')");
                                             }
                                         }
+                                        drop(app_lock);
                                     } else {
                                         tracing::warn!(peer = %peer_onion, "failed to encrypt message: no session");
                                         db::queries::update_message_status(&app_lock.db, &msg_id, "failed")
                                             .log_err("update_message_status('failed')");
+                                        drop(app_lock);
                                     }
+                                } else {
+                                    drop(app_lock);
                                 }
+                            } else {
+                                drop(app_lock);
                             }
-
-                            drop(app_lock);
                             was_typing = false;
                             last_typing_sent = None;
                         }
@@ -822,21 +885,32 @@ async fn main() -> Result<()> {
                         let should_send_stopped = !is_typing_now && was_typing;
 
                         if should_send_started || should_send_stopped {
-                            let app_lock = app.lock().await;
-                            let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
-                            if let Some(friend) = friends.get(*idx) {
-                                let own_onion = app_lock.onion_address.clone().unwrap_or_default();
+                            // Snapshot everything the send needs from the
+                            // lock, then drop it before the Tor await.
+                            // Same reasoning as the heartbeat task above —
+                            // a slow circuit would otherwise freeze the
+                            // UI for the typing-debounce duration.
+                            let (pool_opt, friend_onion_opt, own_onion) = {
+                                let app_lock = app.lock().await;
+                                let friends = db::queries::get_friends_with_unread(&app_lock.db).unwrap_or_default();
+                                let friend_onion = friends.get(*idx).map(|f| f.onion_address.clone());
+                                (
+                                    app_lock.connection_pool.clone(),
+                                    friend_onion,
+                                    app_lock.onion_address.clone().unwrap_or_default(),
+                                )
+                            };
+
+                            if let (Some(pool), Some(friend_onion)) = (pool_opt, friend_onion_opt) {
                                 let now = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
                                     .as_secs() as i64;
-
                                 let presence_type = if should_send_started {
                                     protocol::message::PresenceType::TypingStarted
                                 } else {
                                     protocol::message::PresenceType::TypingStopped
                                 };
-
                                 let msg = protocol::message::Message::Presence(
                                     protocol::message::PresenceMessage {
                                         from_onion: own_onion,
@@ -844,13 +918,9 @@ async fn main() -> Result<()> {
                                         timestamp: now,
                                     }
                                 );
-
-                                // Best-effort send (don't queue typing indicators)
-                                if let Some(ref pool) = app_lock.connection_pool {
-                                    let _ = pool.send(&friend.onion_address, &msg).await;
-                                }
+                                // Best-effort: don't queue typing indicators.
+                                let _ = pool.send(&friend_onion, &msg).await;
                             }
-                            drop(app_lock);
 
                             if should_send_started {
                                 last_typing_sent = Some(std::time::Instant::now());
@@ -961,17 +1031,20 @@ fn init_tracing(data_dir: &std::path::Path, debug: bool) {
         .try_init();
 }
 
-/// Handle sending a friend request
-async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendResult> {
+/// Build the signed FriendRequest message for `peer_input` (a .onion or a
+/// friend-code word sequence). Sync — needs only `&App` for identity and
+/// own onion lookup. The caller drops the lock around the actual send so
+/// a slow Tor circuit can't freeze the UI.
+fn build_friend_request_message(
+    app: &App,
+    peer_input: &str,
+) -> Result<(String, protocol::message::Message)> {
     use crate::protocol::friend_request::FriendRequestHandler;
 
     let trimmed = peer_input.trim();
-
-    // Accept both .onion addresses and friend codes (word sequences)
     let peer_onion = if trimmed.ends_with(".onion") {
         trimmed.to_string()
     } else {
-        // Try to decode as a friend code (reversible word encoding of .onion)
         match crate::protocol::friend_code::friend_code_to_onion(trimmed) {
             Ok(onion) => onion,
             Err(_) => return Err(error::ChattorError::Tor(
@@ -979,35 +1052,20 @@ async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<SendR
             )),
         }
     };
-    let peer_onion = peer_onion.as_str();
 
-    // Get our .onion address
     let own_onion = app.onion_address.as_ref()
         .ok_or_else(|| error::ChattorError::Tor("Tor not initialized yet".into()))?;
 
-    // Generate our own friend code to include in the request
     let own_friend_code = crate::tor::address::onion_to_friend_code(own_onion)
         .unwrap_or_else(|_| "unknown".to_string());
 
-    // Create friend request message
     let request_msg = FriendRequestHandler::create_request(
         app.identity.as_ref().expect("identity set during init"),
         own_onion,
         &own_friend_code,
     )?;
 
-    // Wrap in Message enum
-    let message = protocol::message::Message::FriendRequest(request_msg);
-
-    // Try direct send, queue on failure
-    match try_send_direct(app, peer_onion, &message).await {
-        Ok(_) => Ok(SendResult::SentImmediately),
-        Err(_) => {
-            // Queue for background delivery
-            app.message_queue.enqueue(&app.db, peer_onion, &message, "high")?;
-            Ok(SendResult::Queued)
-        }
-    }
+    Ok((peer_onion, protocol::message::Message::FriendRequest(request_msg)))
 }
 
 /// Handle accepting a friend request
@@ -1153,24 +1211,6 @@ fn handle_reject_friend_request(app: &App, request_id: i64) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Result of attempting to send a message
-pub enum SendResult {
-    SentImmediately,
-    Queued,
-}
-
-/// Try to send a message directly to peer via the connection pool
-async fn try_send_direct(
-    app: &App,
-    peer_onion: &str,
-    message: &protocol::message::Message,
-) -> Result<()> {
-    let pool = app.connection_pool.as_ref()
-        .ok_or_else(|| error::ChattorError::Tor("Connection pool not initialized".into()))?;
-
-    pool.send(peer_onion, message).await
 }
 
 /// Handle an incoming message from the listener

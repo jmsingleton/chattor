@@ -561,4 +561,100 @@ mod tests {
         ).unwrap();
         assert_eq!(count, 0);
     }
+
+    /// v9 → v10: legacy channel_posts rows (which used a `channel_id` FK and
+    /// no `publisher_onion` column) must be dropped on upgrade, the table
+    /// must be recreated with the new schema, and channel_subscriptions
+    /// must have their last_sync_at reset so subscribers re-fetch with
+    /// publisher attribution intact. Unrelated tables must survive.
+    #[test]
+    fn test_migration_v9_to_v10() {
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+
+        // Simulate a v9 database. Database::open initializes to current
+        // (v10) schema; we then knock it back to v9, drop the v10 table,
+        // and recreate the legacy channel_posts shape before exercising
+        // the migration on reopen.
+        {
+            let db = Database::open(temp_db.path()).unwrap();
+            let conn = db.connection();
+
+            // Sanity: at v10 after fresh open.
+            let v: i64 = conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
+            assert_eq!(v, SCHEMA_VERSION as i64);
+
+            // Reset to v9 + legacy channel_posts schema (the pre-v10 shape).
+            conn.execute("UPDATE schema_version SET version = 9", []).unwrap();
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS channel_posts;
+                 CREATE TABLE channel_posts (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     channel_id INTEGER NOT NULL,
+                     content TEXT NOT NULL,
+                     post_id TEXT NOT NULL UNIQUE,
+                     created_at INTEGER NOT NULL,
+                     signature TEXT NOT NULL
+                 );"
+            ).unwrap();
+
+            // Some legacy rows that should not survive.
+            conn.execute(
+                "INSERT INTO channel_posts (channel_id, content, post_id, created_at, signature)
+                 VALUES (0, 'orphan', 'p1', 1, 'sig')",
+                [],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO channel_posts (channel_id, content, post_id, created_at, signature)
+                 VALUES (1, 'own', 'p2', 2, 'sig')",
+                [],
+            ).unwrap();
+
+            // Subscriptions exist and have a non-null last_sync_at.
+            crate::db::queries::add_channel_subscription(&db, "alice.onion", "public").unwrap();
+            crate::db::queries::update_subscription_sync_time(&db, "alice.onion", "public", 12345).unwrap();
+
+            // Unrelated table: a friends row must survive untouched.
+            conn.execute(
+                "INSERT INTO friends (onion_address, display_name, added_at, status)
+                 VALUES ('keep.onion', 'Keep', 1, 'active')",
+                [],
+            ).unwrap();
+        }
+
+        // Reopen — triggers v9→v10 migration.
+        let db = Database::open(temp_db.path()).unwrap();
+        let conn = db.connection();
+
+        // Now at v10.
+        let v: i64 = conn.query_row("SELECT version FROM schema_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, SCHEMA_VERSION as i64);
+
+        // Legacy rows are gone, the table exists with the new shape.
+        let post_count: i64 = conn.query_row("SELECT COUNT(*) FROM channel_posts", [], |r| r.get(0)).unwrap();
+        assert_eq!(post_count, 0);
+
+        // New columns must be present — selecting publisher_onion/channel_type
+        // would error out if the migration didn't recreate the table.
+        let shape_check: rusqlite::Result<i64> = conn.query_row(
+            "SELECT COUNT(*) FROM channel_posts WHERE publisher_onion = '' AND channel_type = ''",
+            [], |r| r.get(0),
+        );
+        assert!(shape_check.is_ok(), "channel_posts must have publisher_onion + channel_type columns");
+
+        // Subscription last_sync_at is reset so the next sync re-fetches
+        // with publisher attribution.
+        let last_sync: Option<i64> = conn.query_row(
+            "SELECT last_sync_at FROM channel_subscriptions WHERE publisher_onion = ?1",
+            ["alice.onion"],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(last_sync, None);
+
+        // Unrelated friends row survives.
+        let friend_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM friends WHERE onion_address = ?1",
+            ["keep.onion"], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(friend_count, 1);
+    }
 }

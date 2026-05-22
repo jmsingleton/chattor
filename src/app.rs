@@ -113,6 +113,20 @@ impl App {
         });
         self.queue_command_rx = Some(queue_cmd_rx);
 
+        // Spawn rate-limiter GC. Bounds HashMap memory by evicting buckets
+        // idle past BUCKET_IDLE_TTL (1 hour). Fires every 10 minutes — well
+        // below the TTL so we never lose track of a peer who has paused.
+        let limiter = Arc::clone(&self.inbound_rate_limiter);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+                let evicted = limiter.gc_idle();
+                if evicted > 0 {
+                    tracing::debug!(evicted, "rate-limiter idle buckets pruned");
+                }
+            }
+        });
+
         // Store in app state
         let client = Arc::new(client);
         let pool = ConnectionPool::new(Arc::clone(&client));
