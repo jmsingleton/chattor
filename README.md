@@ -33,7 +33,8 @@ You → TUI (ratatui) → Signal Protocol (E2E) → Tor Hidden Service → Peer
 ### Encryption & Identity
 
 - **Signal Protocol** — real X3DH key exchange + Double Ratchet, implemented with [`libsignal-dezire`](https://crates.io/crates/libsignal-dezire) (AGPL-3.0)
-- **Protocol versioning** — MessageEnvelope wrapper for future wire format evolution
+- **Friend-request authentication** — every inbound friend request is verified against the Ed25519 key embedded in the sender's v3 `.onion` address; forged or backdated requests are dropped
+- **Protocol versioning** — `MessageEnvelope` wrapper (currently `protocol_version: 2`) for future wire format evolution
 - **Ed25519 identity** — one keypair per user, stored encrypted; `.onion` address managed by arti
 - **SQLCipher** — database encrypted at rest with bundled SQLCipher (via `rusqlite`)
 
@@ -41,17 +42,19 @@ You → TUI (ratatui) → Signal Protocol (E2E) → Tor Hidden Service → Peer
 
 - **Pure P2P over Tor** — each user hosts a real arti onion service; no central relay, no NAT traversal headaches
 - **Connection pooling** — per-peer Tor circuit caching with DashMap, idle eviction (5min), retry-on-stale, and pool size cap (50)
-- **Rate limiting** — per-peer token bucket rate limiter (5 req/s sustained, 20 burst)
+- **Rate limiting** — per-peer token bucket rate limiter (5 req/s sustained, 20 burst), checked on every inbound message in the dispatcher
+- **DoS-bounded rendezvous** — per-process cap of 256 in-flight Tor rendezvous accept tasks; Tor applies backpressure naturally when the cap is hit
 - **Offline message queue** — FIFO queue with exponential backoff retries, persisted to database
 - **Friend codes** — 32-word mnemonic encoding of your public key (256-word list, 8 groups of 4 words)
 
 ### Broadcast Channels
 
 - **Public & Friends-Only** channels — two auto-created per user, with subscriber management
-- **Ed25519-signed posts** — every post is cryptographically signed by the publisher
-- **Pull-based sync** — subscribers request missed posts; no push spam
+- **Ed25519-signed posts** — every post is cryptographically signed by the publisher, and every receiver (both direct `ChannelPost` and `ChannelSyncResponse` paths) verifies the signature against the publisher's onion-derived key before storing
+- **Friends-only enforcement** — checked on inbound subscribe requests, sync requests, *and* direct posts; non-friend posts to a friends-only feed are dropped
+- **Hybrid push + pull sync** — new posts are pushed to online subscribers and missed posts are pulled on demand via `ChannelSyncRequest`
 - **Read receipts** — publishers see "seen by N" per post
-- **100-post retention** — older posts pruned automatically
+- **100-post retention** — per `(publisher_onion, channel_type)` feed, bounding both our own channels and each subscribed publisher
 - **Auto-subscribe** — friends subscribe to each other's channels on friend accept
 
 ### Terminal UI

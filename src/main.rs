@@ -28,6 +28,7 @@ use ratatui::{
 use std::time::Duration;
 use std::io;
 use crate::crypto::IdentityKeypair;
+use crate::error::LogErr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use base64::Engine;
@@ -48,6 +49,13 @@ async fn main() -> Result<()> {
         }
         Arc::new(Mutex::new(App::new_with_settings(settings)?))
     };
+
+    // Set up tracing. The TUI takes over the terminal in raw alt-screen mode,
+    // so stderr is invisible to the user until the app exits. Route all
+    // tracing output to `data_dir/chattor.log` instead. Level is INFO by
+    // default, DEBUG when `--debug` is passed. Failure to open the log file
+    // is non-fatal — the app still runs, just without logging.
+    init_tracing(&app.lock().await.settings.data_dir, cli.debug);
 
     // Load theme
     let theme = {
@@ -384,7 +392,7 @@ async fn main() -> Result<()> {
 
                             match handle_accept_friend_request(&app_lock, id) {
                                 Ok(_) => {}
-                                Err(e) => eprintln!("Failed to accept friend request: {}", e),
+                                Err(e) => tracing::error!(error = %e, "failed to accept friend request"),
                             }
 
                             if return_to_list {
@@ -405,7 +413,7 @@ async fn main() -> Result<()> {
 
                             match handle_reject_friend_request(&app_lock, id) {
                                 Ok(_) => {}
-                                Err(e) => eprintln!("Failed to reject friend request: {}", e),
+                                Err(e) => tracing::error!(error = %e, "failed to reject friend request"),
                             }
 
                             if return_to_list {
@@ -460,8 +468,10 @@ async fn main() -> Result<()> {
                                 ).unwrap_or(0);
 
                                 if conv_id > 0 {
-                                    db::queries::mark_conversation_read(&app_lock.db, conv_id).ok();
-                                    db::queries::activate_ephemeral_timers(&app_lock.db, conv_id).ok();
+                                    db::queries::mark_conversation_read(&app_lock.db, conv_id)
+                                        .log_err("mark_conversation_read");
+                                    db::queries::activate_ephemeral_timers(&app_lock.db, conv_id)
+                                        .log_err("activate_ephemeral_timers");
 
                                     // Send read receipts for unread messages from peer
                                     let own_onion = app_lock.onion_address.clone().unwrap_or_default();
@@ -472,14 +482,16 @@ async fn main() -> Result<()> {
                                                     message_id: uuid,
                                                     timestamp: std::time::SystemTime::now()
                                                         .duration_since(std::time::UNIX_EPOCH)
-                                                        .unwrap()
+                                                        .unwrap_or_default()
                                                         .as_secs() as i64,
                                                 };
                                                 let receipt_msg = protocol::message::Message::ReadReceipt(receipt);
-                                                app_lock.message_queue.enqueue(&app_lock.db, sender_onion, &receipt_msg, "low").ok();
+                                                app_lock.message_queue.enqueue(&app_lock.db, sender_onion, &receipt_msg, "low")
+                                                    .log_err("enqueue read receipt");
                                             }
                                             // Mark the message as read locally
-                                            db::queries::update_message_status(&app_lock.db, msg_id, "read").ok();
+                                            db::queries::update_message_status(&app_lock.db, msg_id, "read")
+                                                .log_err("update_message_status('read')");
                                         }
                                     }
                                 }
@@ -537,7 +549,8 @@ async fn main() -> Result<()> {
                                                     Some(pt) => {
                                                         match session.encrypt(&pt) {
                                                             Ok((header, ciphertext, is_prekey)) => {
-                                                                store.store_session(&session).ok();
+                                                                store.store_session(&session)
+                                                                    .log_err("store_session after encrypt");
                                                                 Some(protocol::message::TextMessage {
                                                                     from_onion: own_onion.clone(),
                                                                     to_onion: peer_onion.clone(),
@@ -568,16 +581,20 @@ async fn main() -> Result<()> {
                                         // Try to send directly, queue on failure
                                         match try_send_direct(&app_lock, &peer_onion, &msg).await {
                                             Ok(_) => {
-                                                db::queries::update_message_status(&app_lock.db, &msg_id, "sent").ok();
+                                                db::queries::update_message_status(&app_lock.db, &msg_id, "sent")
+                                                    .log_err("update_message_status('sent')");
                                             }
                                             Err(_) => {
-                                                app_lock.message_queue.enqueue(&app_lock.db, &peer_onion, &msg, "normal").ok();
-                                                db::queries::update_message_status(&app_lock.db, &msg_id, "queued").ok();
+                                                app_lock.message_queue.enqueue(&app_lock.db, &peer_onion, &msg, "normal")
+                                                    .log_err("enqueue text message on direct-send failure");
+                                                db::queries::update_message_status(&app_lock.db, &msg_id, "queued")
+                                                    .log_err("update_message_status('queued')");
                                             }
                                         }
                                     } else {
-                                        eprintln!("Failed to encrypt message: no session for {}", peer_onion);
-                                        db::queries::update_message_status(&app_lock.db, &msg_id, "failed").ok();
+                                        tracing::warn!(peer = %peer_onion, "failed to encrypt message: no session");
+                                        db::queries::update_message_status(&app_lock.db, &msg_id, "failed")
+                                            .log_err("update_message_status('failed')");
                                     }
                                 }
                             }
@@ -614,12 +631,12 @@ async fn main() -> Result<()> {
                             db::queries::store_channel_post(
                                 &app_lock.db, &own_onion, &channel_type,
                                 &content, &post_id, now, &signature
-                            ).ok();
+                            ).log_err("store_channel_post (own publish)");
 
                             // Enforce retention for this feed.
                             db::queries::enforce_channel_retention(
                                 &app_lock.db, &own_onion, &channel_type
-                            ).ok();
+                            ).log_err("enforce_channel_retention (own feed)");
 
                             // Push to online subscribers
                             let channel_type_enum = if channel_type == "public" {
@@ -641,7 +658,8 @@ async fn main() -> Result<()> {
 
                             let subscribers = db::queries::get_channel_subscribers(&app_lock.db, &channel_type).unwrap_or_default();
                             for sub_onion in subscribers {
-                                app_lock.message_queue.enqueue(&app_lock.db, &sub_onion, &post_msg, "normal").ok();
+                                app_lock.message_queue.enqueue(&app_lock.db, &sub_onion, &post_msg, "normal")
+                                    .log_err("enqueue channel post to subscriber");
                             }
 
                             drop(app_lock);
@@ -651,7 +669,8 @@ async fn main() -> Result<()> {
                             let own_onion = app_lock.onion_address.clone().unwrap_or_default();
 
                             // Store subscription locally
-                            db::queries::add_channel_subscription(&app_lock.db, &publisher_onion, "public").ok();
+                            db::queries::add_channel_subscription(&app_lock.db, &publisher_onion, "public")
+                                .log_err("add_channel_subscription");
 
                             // Send subscribe message to publisher
                             let sub_msg = protocol::message::Message::ChannelSubscribe(
@@ -664,7 +683,8 @@ async fn main() -> Result<()> {
                                         .as_secs() as i64,
                                 }
                             );
-                            app_lock.message_queue.enqueue(&app_lock.db, &publisher_onion, &sub_msg, "normal").ok();
+                            app_lock.message_queue.enqueue(&app_lock.db, &publisher_onion, &sub_msg, "normal")
+                                .log_err("enqueue ChannelSubscribe");
 
                             drop(app_lock);
                             app_state = AppState::default();
@@ -767,10 +787,19 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Process collected messages
+            // Process collected messages, rate-limited per peer onion.
+            // The token bucket lets each peer burst up to 20 messages and
+            // sustain 5 req/s; messages above that rate are dropped with a
+            // log. Receipts (no `from_onion`) bypass the check.
             for incoming in incoming_messages {
+                if let Some(peer) = incoming.message.peer_onion() {
+                    if !app_lock.inbound_rate_limiter.check(peer) {
+                        tracing::warn!(peer = %peer, "rate-limited inbound message, dropping");
+                        continue;
+                    }
+                }
                 if let Err(e) = handle_incoming_message(&app_lock, incoming, &presence_map).await {
-                    eprintln!("Failed to handle incoming message: {}", e);
+                    tracing::error!(error = %e, "failed to handle incoming message");
                 }
             }
         }
@@ -788,7 +817,7 @@ async fn main() -> Result<()> {
         if should_process {
             let app_lock = app.lock().await;
             if let Err(e) = process_message_queue(&app_lock).await {
-                eprintln!("Queue processing error: {}", e);
+                tracing::error!(error = %e, "queue processing error");
             }
         }
     };
@@ -803,6 +832,37 @@ async fn main() -> Result<()> {
     terminal.show_cursor()?;
 
     result
+}
+
+/// Set up tracing to write to `data_dir/chattor.log`. INFO by default; DEBUG
+/// when `debug` is true. Falls back to no-op on any I/O failure so the app
+/// always starts.
+fn init_tracing(data_dir: &std::path::Path, debug: bool) {
+    use tracing_subscriber::filter::LevelFilter;
+
+    if std::fs::create_dir_all(data_dir).is_err() {
+        return;
+    }
+    let log_path = data_dir.join("chattor.log");
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+
+    let level = if debug { LevelFilter::DEBUG } else { LevelFilter::INFO };
+
+    // try_init returns Err if a global subscriber is already set (e.g. by a
+    // test harness); ignore.
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::sync::Mutex::new(file))
+        .with_max_level(level)
+        .with_target(true)
+        .with_ansi(false)
+        .try_init();
 }
 
 /// Handle sending a friend request
@@ -975,7 +1035,7 @@ fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
     // it can block the UI for up to 30s waiting for a Tor circuit)
     let message = protocol::message::Message::FriendRequestAccept(accept_msg);
     app.message_queue.enqueue(&app.db, &from_onion, &message, "high")?;
-    eprintln!("Friend request #{} accepted (queued for delivery)", request_id);
+    tracing::info!(request_id, "friend request accepted (queued for delivery)");
 
     Ok(())
 }
@@ -991,9 +1051,9 @@ fn handle_reject_friend_request(app: &App, request_id: i64) -> Result<()> {
     ).map_err(|e| error::ChattorError::Database(format!("Failed to delete request: {}", e)))?;
 
     if rows_affected == 0 {
-        eprintln!("Friend request #{} not found", request_id);
+        tracing::warn!(request_id, "friend request not found");
     } else {
-        eprintln!("Friend request #{} rejected", request_id);
+        tracing::info!(request_id, "friend request rejected");
     }
 
     Ok(())
@@ -1065,7 +1125,7 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             handle_incoming_accept(app, accept)?;
         }
         protocol::message::Message::FriendRequestReject(reject) => {
-            eprintln!("Friend request rejected by {}", reject.from_onion);
+            tracing::info!(from_onion = %reject.from_onion, "friend request rejected by peer");
         }
         protocol::message::Message::TextMessage(text_msg) => {
             let from_onion = &text_msg.from_onion;
@@ -1163,11 +1223,26 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                         .map_err(|_| error::ChattorError::Crypto(
                             "PreKey SPK secret has wrong length".into()
                         ))?;
-                    let prekey_secret: Option<[u8; 32]> = opk_b64.map(|b64| {
-                        let bytes = base64::engine::general_purpose::STANDARD.decode(&b64)
-                            .expect("Failed to decode PreKey OPK");
-                        bytes.try_into().expect("PreKey OPK has wrong length")
-                    });
+                    // OPK is optional. If a stored value is present but
+                    // malformed, treat as an error rather than panicking —
+                    // these bytes come from disk after a peer-initiated
+                    // handshake and can be corrupted.
+                    let prekey_secret: Option<[u8; 32]> = match opk_b64 {
+                        Some(b64) => {
+                            let bytes = base64::engine::general_purpose::STANDARD
+                                .decode(&b64)
+                                .map_err(|e| error::ChattorError::Crypto(
+                                    format!("Failed to decode PreKey OPK: {}", e)
+                                ))?;
+                            let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+                                error::ChattorError::Crypto(
+                                    "PreKey OPK has wrong length (expected 32)".into()
+                                )
+                            })?;
+                            Some(arr)
+                        }
+                        None => None,
+                    };
 
                     let private_material = crypto::PreKeyPrivateMaterial {
                         identity_secret,
@@ -1201,14 +1276,14 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                         ))?
                 }
                 None => {
-                    eprintln!("No session for {} and not a PreKey message, cannot decrypt", from_onion);
+                    tracing::warn!(from_onion = %from_onion, "no session and not a PreKey message; cannot decrypt");
                     return Ok(());
                 }
             };
 
             // Handshake messages are session-establishment only — don't display
             if payload.message_type == "handshake" {
-                eprintln!("Session established with {} via handshake", from_onion);
+                tracing::info!(from_onion = %from_onion, "signal session established via handshake");
                 return Ok(());
             }
 
@@ -1233,14 +1308,17 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                         .as_secs() as i64,
                 };
                 let receipt_msg = protocol::message::Message::DeliveryReceipt(receipt);
-                app.message_queue.enqueue(&app.db, from_onion, &receipt_msg, "high").ok();
+                app.message_queue.enqueue(&app.db, from_onion, &receipt_msg, "high")
+                    .log_err("enqueue delivery receipt");
             }
         }
         protocol::message::Message::DeliveryReceipt(receipt) => {
-            db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "delivered").ok();
+            db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "delivered")
+                .log_err("update_message_status('delivered')");
         }
         protocol::message::Message::ReadReceipt(receipt) => {
-            db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "read").ok();
+            db::queries::update_message_status(&app.db, &receipt.message_id.to_string(), "read")
+                .log_err("update_message_status('read')");
         }
         protocol::message::Message::ChannelSubscribe(sub) => {
             // Check if subscriber is blocked
@@ -1260,12 +1338,12 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 if channel_type == "friends_only"
                     && db::queries::find_friend_by_onion(&app.db, &sub.subscriber_onion)?.is_none()
                 {
-                    eprintln!("Rejected friends_only subscription from non-friend {}", sub.subscriber_onion);
+                    tracing::warn!(subscriber = %sub.subscriber_onion, "rejected friends_only subscription from non-friend");
                     return Ok(());
                 }
 
                 db::queries::add_channel_subscriber(&app.db, &sub.subscriber_onion, channel_type)?;
-                eprintln!("New {} channel subscriber: {}", channel_type, sub.subscriber_onion);
+                tracing::info!(channel_type, subscriber = %sub.subscriber_onion, "new channel subscriber");
             }
         }
         protocol::message::Message::ChannelUnsubscribe(unsub) => {
@@ -1274,7 +1352,7 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 protocol::message::ChannelType::FriendsOnly => "friends_only",
             };
             db::queries::remove_channel_subscriber(&app.db, &unsub.subscriber_onion, channel_type)?;
-            eprintln!("Unsubscribed: {} from {} channel", unsub.subscriber_onion, channel_type);
+            tracing::info!(subscriber = %unsub.subscriber_onion, channel_type, "unsubscribed from channel");
         }
         protocol::message::Message::ChannelPost(post) => {
             let channel_type_str = match post.channel_type {
@@ -1329,7 +1407,8 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                     .as_secs() as i64,
             };
             let receipt_msg = protocol::message::Message::ChannelPostReceipt(receipt);
-            app.message_queue.enqueue(&app.db, &post.publisher_onion, &receipt_msg, "low").ok();
+            app.message_queue.enqueue(&app.db, &post.publisher_onion, &receipt_msg, "low")
+                .log_err("enqueue ChannelPostReceipt");
         }
         protocol::message::Message::ChannelSyncRequest(req) => {
             let channel_type_str = match req.channel_type {
@@ -1368,7 +1447,8 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                         posts: post_messages,
                     }
                 );
-                app.message_queue.enqueue(&app.db, &req.subscriber_onion, &response, "normal").ok();
+                app.message_queue.enqueue(&app.db, &req.subscriber_onion, &response, "normal")
+                    .log_err("enqueue ChannelSyncResponse");
             }
         }
         protocol::message::Message::ChannelSyncResponse(resp) => {
@@ -1518,7 +1598,7 @@ async fn process_message_queue(app: &App) -> Result<()> {
                         }
                         None => {
                             app.message_queue.mark_failed(&app.db, id)?;
-                            eprintln!("Message #{} expired after 24h", id);
+                            tracing::warn!(message_id = id, "message expired after 24h");
                         }
                     }
                 }
@@ -1648,7 +1728,7 @@ fn handle_incoming_accept(
         });
 
         app.message_queue.enqueue(&app.db, &accept.from_onion, &handshake_msg, "high")?;
-        eprintln!("Queued handshake PreKey message to {}", accept.from_onion);
+        tracing::info!(peer = %accept.from_onion, "queued handshake PreKey message");
     }
 
     // Add as friend
@@ -1672,7 +1752,7 @@ fn handle_incoming_accept(
     // Also subscribe them to our friends_only channel
     db::queries::add_channel_subscriber(&app.db, &accept.from_onion, "friends_only")?;
 
-    eprintln!("Friend request accepted by {}", accept.from_onion);
+    tracing::info!(from_onion = %accept.from_onion, "friend request accepted by peer");
 
     Ok(())
 }

@@ -123,8 +123,9 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - `PresenceType` enum: `Heartbeat`, `TypingStarted`, `TypingStopped`
 - `ChannelType` enum: `Public`, `FriendsOnly`
 - JSON serialization with serde for wire protocol
-- `MessageEnvelope` wrapper with `protocol_version: 1` for forward compatibility
+- `MessageEnvelope` wrapper with `protocol_version: 2` for forward compatibility
 - Signal Protocol envelope: `signal_header` (Double Ratchet), `signal_ciphertext`, `signal_type` (PreKeyMessage or Message)
+- `Message::peer_onion()` helper returns the sender's onion for rate-limiter dispatch (None for delivery/read receipts, which carry no sender field)
 
 **6. Message Queue (`src/net/queue.rs`)**
 - FIFO queue for offline message delivery
@@ -145,6 +146,8 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - Per-peer token bucket rate limiter for inbound messages
 - Default: 5 tokens/sec sustained, 20 burst
 - Independent buckets per peer (one peer's abuse doesn't affect others)
+- Wired into the main inbound dispatch loop in `main.rs` (around the loop that drains `incoming_message_rx`): every message whose `peer_onion()` is `Some` is gated by `app.inbound_rate_limiter.check(peer)`; rate-limited messages are logged and dropped
+- Per-process concurrency cap on rendezvous accept tasks lives in `src/net/listener.rs` (`MAX_INFLIGHT_RENDEZVOUS = 256`) — a `Semaphore` permit is acquired before spawning the per-stream task
 
 **8. UI Layer (`src/ui/`)**
 - Full TUI with ratatui: friends sidebar, conversation view, channel feed
@@ -159,8 +162,11 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 
 **9. Broadcast Channels (`src/ui/channel_feed.rs`, `src/db/queries.rs`)**
 - Two auto-created channels per user: Public and Friends Only
-- Posts are Ed25519-signed, stored with 100-post retention limit
-- Pull-based sync: subscribers request missed posts via `ChannelSyncRequest/Response`
+- Posts are Ed25519-signed by the publisher's identity key; receivers verify via `ChannelPostMessage::verify_signature` (derives the pubkey from the publisher's v3 onion address) before storing. This applies on both the direct `ChannelPost` path and per post in a `ChannelSyncResponse`. `ChannelSyncResponse` additionally rejects the whole batch if the envelope's `publisher_onion` doesn't match the inner post's `publisher_onion`.
+- Stored per `(publisher_onion, channel_type)` — schema v10 dropped the legacy `channel_id` column; foreign posts no longer share a `channel_id=0` bucket
+- Per-feed 100-post retention runs on both publish (own feeds) and on each `ChannelPost` / `ChannelSyncResponse` (subscribed feeds)
+- Friends-only enforcement runs on inbound `ChannelSubscribe`, `ChannelSyncRequest`, *and* `ChannelPost` / `ChannelSyncResponse`
+- Hybrid sync: live posts are pushed to currently-online subscribers and missed posts are pulled via `ChannelSyncRequest`
 - Read receipts: publisher sees "seen by N" count per post
 - Auto-subscribe: friends automatically subscribe to each other's channels on friend accept
 - Periodic sync task runs every 5 minutes
@@ -240,10 +246,18 @@ Database path: `{data_dir}/messages.db`
 
 ### Phase 6: Hardening ✅
 **Chunk 1 — Polish & Fixes: ✅**
-- Friend request Ed25519 signature verification (closed security gap)
-- Dead code removal (QueueProcessor, ConnectionPool, MiningActive)
-- Real PreKeyBundle generation in friend request accept flow
-- Zero TODOs remaining in src/
+- Friend request Ed25519 signature verification implemented in `protocol/friend_request.rs::validate_request` and called from `main.rs::handle_incoming_message` on every inbound `FriendRequest`. Forged or stale (>5 min skew) requests are dropped before they reach the DB.
+- Channel post Ed25519 signature verification (`ChannelPostMessage::verify_signature`) called on every inbound `ChannelPost` and on each entry in `ChannelSyncResponse`.
+- Friends-only check on inbound `ChannelPost` and `ChannelSyncResponse` (was previously only on `Subscribe`/`SyncRequest`).
+- Per-publisher post storage (schema v10): `channel_posts` keyed by `(publisher_onion, channel_type)` instead of the legacy `channel_id=0` sentinel for foreign posts.
+- Rate limiter wired into the main inbound dispatcher; rendezvous accept tasks capped at `MAX_INFLIGHT_RENDEZVOUS = 256` (`src/net/listener.rs`).
+- `tracing_subscriber` initialized in `main()` writing to `data_dir/chattor.log` (level controlled by `--debug`). All previous `eprintln!`/`println!` in `src/` (except the dead `display_connection_status` CLI helper) migrated to `tracing` macros so failures aren't hidden behind ratatui's alternate screen.
+- `LogErr` trait in `error.rs` replaces silent `.ok()` discards on high-impact DB writes (message status updates, queue enqueues, session stores, channel post stores).
+- `.expect` on adversary-controlled PreKey OPK bytes (`main.rs::handle_incoming_message`) converted to `Result` propagation.
+- `PreKeyBundle::generate()` (random-bytes test bundle) gated behind `#[cfg(test)]` so it can't be reached from production code.
+- Dead code removal (QueueProcessor, ConnectionPool, MiningActive, plus unused `FriendRequestHandler` methods that lived alongside `validate_request`).
+- Real PreKeyBundle generation in friend request accept flow.
+- Zero TODOs remaining in src/.
 
 **Chunk 2 — Real Tor Hidden Service: ✅**
 - Real arti onion service hosting (replaces stubs)
@@ -287,7 +301,7 @@ Database path: `{data_dir}/messages.db`
 ## Important Technical Details
 
 ### Database Schema Migrations
-- Automatic migrations from v2 through v9 in `src/db/connection.rs::Database::initialize()`
+- Automatic migrations from v2 through v10 in `src/db/connection.rs::Database::initialize()`
 - Each version has a `migrate_to_vN()` method that checks current version and applies changes
 - Migrations run before `CREATE_TABLES` (which uses `IF NOT EXISTS` for idempotency)
 - v3: Clear old Signal sessions (production crypto migration)
@@ -297,6 +311,7 @@ Database path: `{data_dir}/messages.db`
 - v7: Add 5 broadcast channel tables
 - v8: Add `app_settings` key-value table for .onion address persistence
 - v9: Wipe signal_sessions (libsignal-dezire format incompatible with old hand-rolled crypto)
+- v10: Recreate `channel_posts` with `publisher_onion` + `channel_type` columns (drop legacy `channel_id`); clears existing posts and resets `last_sync_at` so subscriptions re-fetch with publisher attribution intact
 
 ### Tor Hidden Service Identity
 - .onion address generated and managed by arti (v3 onion format, persistent via arti state dir)

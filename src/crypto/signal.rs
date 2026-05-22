@@ -42,12 +42,15 @@ pub struct PreKey {
 }
 
 impl PreKeyBundle {
-    /// Generate new PreKey bundle with random bytes (test-only).
+    /// Generate a PreKey bundle filled with random bytes.
     ///
-    /// Creates a bundle with random (non-cryptographic) key material.
-    /// Useful only for error-path testing where valid keys are not needed.
-    /// For production use, see `generate_real()`.
-    #[allow(dead_code)]
+    /// **Test-only.** The key material is non-cryptographic random and the
+    /// "signature" is junk — calling this in production would produce
+    /// attacker-forgeable bundles. Gated behind `#[cfg(test)]` so it cannot
+    /// be reached from main binary code; tests that need a syntactically
+    /// valid (but cryptographically useless) bundle still have access.
+    /// For real bundle generation, see `generate_real`.
+    #[cfg(test)]
     pub fn generate() -> Result<Self> {
         use rand::Rng;
 

@@ -70,6 +70,30 @@ pub enum Message {
     Presence(PresenceMessage),
 }
 
+impl Message {
+    /// Return the onion address of the peer that sent this message, if the
+    /// message carries one in its envelope. Delivery / read receipts have no
+    /// `from_onion` field and return None — those bypass per-peer rate
+    /// limiting because we can't attribute them to a specific peer at the
+    /// dispatch boundary (and they're cheap to handle).
+    pub fn peer_onion(&self) -> Option<&str> {
+        match self {
+            Message::FriendRequest(m) => Some(&m.from_onion),
+            Message::FriendRequestAccept(m) => Some(&m.from_onion),
+            Message::FriendRequestReject(m) => Some(&m.from_onion),
+            Message::TextMessage(m) => Some(&m.from_onion),
+            Message::DeliveryReceipt(_) | Message::ReadReceipt(_) => None,
+            Message::ChannelSubscribe(m) => Some(&m.subscriber_onion),
+            Message::ChannelUnsubscribe(m) => Some(&m.subscriber_onion),
+            Message::ChannelPost(m) => Some(&m.publisher_onion),
+            Message::ChannelSyncRequest(m) => Some(&m.subscriber_onion),
+            Message::ChannelSyncResponse(m) => Some(&m.publisher_onion),
+            Message::ChannelPostReceipt(m) => Some(&m.reader_onion),
+            Message::Presence(m) => Some(&m.from_onion),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FriendRequestMessage {
     pub from_onion: String,
@@ -405,6 +429,65 @@ mod tests {
         post.content = "tampered".into();
 
         assert!(!post.verify_signature(), "Tampered content must invalidate signature");
+    }
+
+    #[test]
+    fn test_peer_onion_covers_every_variant() {
+        use uuid::Uuid;
+
+        // Each variant either returns Some(onion) for the carrier field, or
+        // None for receipts that have no sender attribution.
+        let cases: Vec<(Message, Option<&str>)> = vec![
+            (Message::FriendRequest(FriendRequestMessage {
+                from_onion: "alice".into(), from_friendcode: "fc".into(),
+                timestamp: 0, signature: "".into(),
+            }), Some("alice")),
+            (Message::FriendRequestAccept(FriendRequestAcceptMessage {
+                from_onion: "alice".into(), to_onion: "bob".into(),
+                signal_prekey_bundle: "".into(), timestamp: 0, signature: "".into(),
+            }), Some("alice")),
+            (Message::FriendRequestReject(FriendRequestRejectMessage {
+                from_onion: "alice".into(), to_onion: "bob".into(), timestamp: 0,
+            }), Some("alice")),
+            (Message::TextMessage(TextMessage {
+                from_onion: "alice".into(), to_onion: "bob".into(),
+                signal_header: "".into(), signal_ciphertext: "".into(),
+                signal_type: SignalMessageType::Message, timestamp: 0,
+                message_id: Uuid::nil(), x3dh_init: None,
+            }), Some("alice")),
+            (Message::DeliveryReceipt(DeliveryReceiptMessage {
+                message_id: Uuid::nil(), timestamp: 0,
+            }), None),
+            (Message::ReadReceipt(DeliveryReceiptMessage {
+                message_id: Uuid::nil(), timestamp: 0,
+            }), None),
+            (Message::ChannelSubscribe(ChannelSubscribeMessage {
+                subscriber_onion: "alice".into(), channel_type: ChannelType::Public, timestamp: 0,
+            }), Some("alice")),
+            (Message::ChannelUnsubscribe(ChannelUnsubscribeMessage {
+                subscriber_onion: "alice".into(), channel_type: ChannelType::Public, timestamp: 0,
+            }), Some("alice")),
+            (Message::ChannelPost(ChannelPostMessage {
+                publisher_onion: "alice".into(), channel_type: ChannelType::Public,
+                post_id: Uuid::nil(), content: "".into(), created_at: 0, signature: "".into(),
+            }), Some("alice")),
+            (Message::ChannelSyncRequest(ChannelSyncRequestMessage {
+                subscriber_onion: "alice".into(), channel_type: ChannelType::Public, since_timestamp: 0,
+            }), Some("alice")),
+            (Message::ChannelSyncResponse(ChannelSyncResponseMessage {
+                publisher_onion: "alice".into(), channel_type: ChannelType::Public, posts: vec![],
+            }), Some("alice")),
+            (Message::ChannelPostReceipt(ChannelPostReceiptMessage {
+                post_id: Uuid::nil(), reader_onion: "alice".into(), timestamp: 0,
+            }), Some("alice")),
+            (Message::Presence(PresenceMessage {
+                from_onion: "alice".into(), presence_type: PresenceType::Heartbeat, timestamp: 0,
+            }), Some("alice")),
+        ];
+
+        for (msg, expected) in cases {
+            assert_eq!(msg.peer_onion(), expected, "variant {:?}", msg);
+        }
     }
 
     #[test]

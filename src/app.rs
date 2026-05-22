@@ -6,6 +6,7 @@ use crate::tor::client::TorClient;
 use crate::tor::hidden_service::HiddenService;
 use crate::net::queue::MessageQueue;
 use crate::net::pool::ConnectionPool;
+use crate::net::rate_limit::RateLimiter;
 use std::fs;
 use std::sync::Arc;
 
@@ -25,6 +26,9 @@ pub struct App {
     pub onion_address: Option<String>,
     pub incoming_message_rx: Option<tokio::sync::mpsc::Receiver<crate::net::listener::IncomingMessage>>,
     pub queue_command_rx: Option<tokio::sync::mpsc::Receiver<QueueCommand>>,
+    /// Per-peer token bucket rate limiter for inbound messages. Default
+    /// budget is 5 req/s sustained, 20 burst per peer onion.
+    pub inbound_rate_limiter: Arc<RateLimiter>,
 }
 
 impl App {
@@ -66,6 +70,7 @@ impl App {
             onion_address,
             incoming_message_rx: None,
             queue_command_rx: None,
+            inbound_rate_limiter: Arc::new(RateLimiter::default_limiter()),
         })
     }
 
@@ -91,7 +96,7 @@ impl App {
         let (msg_tx, msg_rx) = tokio::sync::mpsc::channel(100);
         tokio::spawn(async move {
             if let Err(e) = crate::net::listener::listen_for_tor_connections(rend_requests, msg_tx).await {
-                eprintln!("Tor listener task error: {}", e);
+                tracing::error!(error = %e, "tor listener task error");
             }
         });
         self.incoming_message_rx = Some(msg_rx);
@@ -144,6 +149,7 @@ impl App {
             onion_address,
             incoming_message_rx: None,
             queue_command_rx: None,
+            inbound_rate_limiter: Arc::new(RateLimiter::default_limiter()),
         })
     }
 }

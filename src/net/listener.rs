@@ -1,10 +1,20 @@
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
+use tokio::sync::Semaphore;
+use std::sync::Arc;
 use crate::error::Result;
 use crate::protocol::message::Message;
 use tor_hsservice::{handle_rend_requests, RendRequest};
 use tor_cell::relaycell::msg::Connected;
 use futures::StreamExt;
+
+/// Maximum number of in-flight rendezvous accept tasks. Bounds memory and
+/// CPU usage when a peer (or many peers) open connections faster than the
+/// dispatcher can drain them. Picked high enough not to throttle normal
+/// behaviour (5 req/s sustained × 20 peers = 100), low enough to cap blast
+/// radius on flood. New rendezvous wait on the semaphore rather than being
+/// dropped — Tor will apply backpressure naturally if accepts stall.
+const MAX_INFLIGHT_RENDEZVOUS: usize = 256;
 
 
 /// Message received from peer
@@ -26,12 +36,12 @@ pub async fn listen_for_connections(
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     if let Err(e) = handle_connection(stream, addr.to_string(), tx).await {
-                        eprintln!("Connection handler error: {}", e);
+                        tracing::warn!(error = %e, "connection handler error");
                     }
                 });
             }
             Err(e) => {
-                eprintln!("Failed to accept connection: {}", e);
+                tracing::warn!(error = %e, "failed to accept connection");
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         }
@@ -66,9 +76,30 @@ pub async fn listen_for_tor_connections(
     let stream_requests = handle_rend_requests(rend_requests);
     futures::pin_mut!(stream_requests);
 
+    // Per-process cap on concurrent accept tasks. Combined with the per-peer
+    // rate limiter at the dispatcher, this gates global resource use even
+    // when a single peer (or many peers) open streams in bursts.
+    let semaphore = Arc::new(Semaphore::new(MAX_INFLIGHT_RENDEZVOUS));
+
     while let Some(stream_request) = stream_requests.next().await {
+        // Wait for a permit before accepting. Tor applies backpressure
+        // naturally when accepts stall — this is preferable to dropping
+        // rendezvous requests outright.
+        let permit = match semaphore.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => {
+                // Semaphore closed — this only happens if we explicitly close
+                // it, which we don't. Treat as a hard listener error.
+                tracing::error!("rendezvous semaphore closed unexpectedly");
+                return Ok(());
+            }
+        };
+
         let tx = tx.clone();
         tokio::spawn(async move {
+            // Permit is dropped when this task exits, freeing the slot.
+            let _permit = permit;
+
             match stream_request.accept(Connected::new_empty()).await {
                 Ok(mut data_stream) => {
                     match crate::net::framing::receive_message(&mut data_stream).await {
@@ -79,12 +110,12 @@ pub async fn listen_for_tor_connections(
                             }).await;
                         }
                         Err(e) => {
-                            eprintln!("Tor connection framing error: {}", e);
+                            tracing::warn!(error = %e, "tor connection framing error");
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to accept Tor stream: {}", e);
+                    tracing::warn!(error = %e, "failed to accept tor stream");
                 }
             }
         });

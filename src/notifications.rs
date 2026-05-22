@@ -30,7 +30,7 @@ pub fn notify_message(sender_name: &str) {
         .timeout(notify_rust::Timeout::Milliseconds(5000))
         .show()
     {
-        eprintln!("Desktop notification failed: {}", e);
+        tracing::warn!(error = %e, "desktop notification failed");
     }
 }
 

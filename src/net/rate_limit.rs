@@ -1,4 +1,9 @@
-#![allow(dead_code)]
+//! Per-peer token bucket rate limiter for inbound messages.
+//!
+//! The limiter has an independent bucket per peer onion, so one peer's abuse
+//! doesn't affect others. It is consulted on every inbound message in the
+//! main dispatch loop; messages with no identifiable peer (delivery / read
+//! receipts) skip the check.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -27,6 +32,7 @@ impl RateLimiter {
         }
     }
 
+    /// Default rate limiter: 5 req/s sustained, 20 burst per peer.
     pub fn default_limiter() -> Self {
         Self::new(DEFAULT_RATE as u32, DEFAULT_BURST)
     }
@@ -54,8 +60,6 @@ impl RateLimiter {
         }
     }
 }
-
-// TODO: wire into message dispatch in listener.rs or main.rs incoming message handler
 
 #[cfg(test)]
 mod tests {

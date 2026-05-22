@@ -49,6 +49,33 @@ pub enum ChattorError {
 
 pub type Result<T> = std::result::Result<T, ChattorError>;
 
+/// Drop-in replacement for `.ok()` that also logs the error before discarding
+/// it. Use at sites where we genuinely don't want a failed call (typically a
+/// status update, an enqueue, or a fire-and-forget side effect) to abort the
+/// surrounding flow, but where silently swallowing the error has bitten us
+/// before — message state corruption, lost queued sends, dropped sessions.
+///
+/// ```ignore
+/// db::queries::update_message_status(&db, id, "sent")
+///     .log_err("update_message_status('sent')");
+/// ```
+pub trait LogErr<T> {
+    /// Log the error at WARN level with `context` as the message; return None.
+    fn log_err(self, context: &'static str) -> Option<T>;
+}
+
+impl<T, E: std::fmt::Display> LogErr<T> for std::result::Result<T, E> {
+    fn log_err(self, context: &'static str) -> Option<T> {
+        match self {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!(error = %e, "{}", context);
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

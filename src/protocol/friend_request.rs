@@ -111,7 +111,7 @@ mod tests {
 
         assert_eq!(request.from_onion, onion);
         assert_eq!(request.from_friendcode, friend_code);
-        assert!(request.signature.len() > 0);
+        assert!(!request.signature.is_empty());
         assert!(request.timestamp > 0);
     }
 
