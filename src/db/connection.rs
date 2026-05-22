@@ -46,6 +46,7 @@ impl Database {
                 self.migrate_to_v7()?;
                 self.migrate_to_v8()?;
                 self.migrate_to_v9()?;
+                self.migrate_to_v10()?;
             },
             Err(_) => {
                 // Fresh database - will set version after creating tables
@@ -299,6 +300,66 @@ impl Database {
             warn!("  Sessions will be re-established automatically on next message exchange.");
 
             info!("Migration to schema v9 complete");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate database from v9 to v10 (publisher_onion column on channel_posts).
+    ///
+    /// Channel posts are now stored per-publisher (instead of all foreign posts
+    /// being lumped into a `channel_id=0` bucket), and incoming posts get their
+    /// Ed25519 signatures verified against the publisher's onion-derived pubkey.
+    /// Existing posts cannot be migrated cleanly — foreign posts have no
+    /// publisher attribution, and signatures over old serialisations cannot be
+    /// re-verified — so all rows are dropped. Channels themselves and
+    /// subscriptions are preserved; missed posts will be re-synced on next
+    /// channel sync.
+    fn migrate_to_v10(&self) -> Result<()> {
+        let version = self.get_schema_version()?;
+
+        if version < 10 {
+            info!("Migrating database to schema v10 (publisher_onion on channel_posts)");
+
+            let conn = self.connection();
+
+            // Drop and recreate channel_posts with the new column. This is
+            // simpler than ALTER TABLE because:
+            //   1) SQLite's ALTER cannot add a NOT NULL column without a
+            //      default, and existing posts have no recoverable publisher.
+            //   2) Old foreign posts used the channel_id=0 sentinel which the
+            //      new code rejects, so they would be unreadable anyway.
+            let deleted = conn.execute("DELETE FROM channel_posts", [])
+                .map_err(|e| ChattorError::Database(format!("Failed to clear channel_posts: {}", e)))?;
+            info!("  Cleared {} legacy channel posts (re-sync will refetch)", deleted);
+
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS channel_posts;
+                 CREATE TABLE channel_posts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    publisher_onion TEXT NOT NULL,
+                    channel_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    post_id TEXT NOT NULL UNIQUE,
+                    created_at INTEGER NOT NULL,
+                    signature TEXT NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_channel_posts_publisher_type
+                    ON channel_posts(publisher_onion, channel_type);
+                 CREATE INDEX IF NOT EXISTS idx_channel_posts_post_id ON channel_posts(post_id);
+                 CREATE INDEX IF NOT EXISTS idx_channel_posts_created ON channel_posts(created_at);"
+            ).map_err(|e| ChattorError::Database(format!("Failed to recreate channel_posts: {}", e)))?;
+
+            // Sync state for foreign channels also has to drop so we re-fetch
+            // from scratch with publisher attribution.
+            conn.execute("UPDATE channel_subscriptions SET last_sync_at = NULL", [])
+                .map_err(|e| ChattorError::Database(format!("Failed to reset sync timestamps: {}", e)))?;
+
+            conn.execute("UPDATE schema_version SET version = 10", [])
+                .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
+
+            warn!("Schema upgraded to v10. All channel posts cleared; foreign posts will re-sync.");
+            info!("Migration to schema v10 complete");
         }
 
         Ok(())

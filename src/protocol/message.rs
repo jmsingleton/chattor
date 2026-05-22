@@ -160,6 +160,45 @@ pub struct ChannelPostMessage {
     pub signature: String,
 }
 
+impl ChannelPostMessage {
+    /// Reconstruct the bytes that were signed when this post was published.
+    /// Must match the format used by `PublishChannelPost` in main.rs.
+    fn signed_data(&self) -> String {
+        format!("{}{}{}", self.post_id, self.content, self.created_at)
+    }
+
+    /// Verify the Ed25519 signature on this post against the publisher's
+    /// v3 .onion address (which encodes their Ed25519 verifying key).
+    ///
+    /// Returns Ok(true) only if the signature is authentic. All decode or
+    /// length failures yield Ok(false) — the post is rejected, not surfaced
+    /// as an error.
+    pub fn verify_signature(&self) -> bool {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        use base64::Engine;
+
+        let pubkey_bytes = match crate::protocol::friend_code::onion_to_pubkey(&self.publisher_onion) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        let verifying_key = match VerifyingKey::from_bytes(&pubkey_bytes) {
+            Ok(k) => k,
+            Err(_) => return false,
+        };
+        let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(&self.signature) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        let sig_array: [u8; 64] = match sig_bytes.try_into() {
+            Ok(a) => a,
+            Err(_) => return false,
+        };
+        let signature = Signature::from_bytes(&sig_array);
+
+        verifying_key.verify(self.signed_data().as_bytes(), &signature).is_ok()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChannelSubscribeMessage {
     pub subscriber_onion: String,
@@ -303,6 +342,83 @@ mod tests {
         assert!(json.contains("channel_post"));
         let deserialized: Message = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
+    }
+
+    /// Mirror of the production publish path in main.rs — sign
+    /// `post_id || content || created_at` with the publisher's identity key
+    /// and base64-encode the signature.
+    fn sign_post(identity: &crate::crypto::IdentityKeypair, post: &mut ChannelPostMessage) {
+        use base64::Engine;
+        let data = format!("{}{}{}", post.post_id, post.content, post.created_at);
+        post.signature = base64::engine::general_purpose::STANDARD
+            .encode(identity.sign(data.as_bytes()).to_bytes());
+    }
+
+    #[test]
+    fn test_channel_post_signature_verifies_real_publisher() {
+        let identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let mut post = ChannelPostMessage {
+            publisher_onion: identity.to_onion_address(),
+            channel_type: ChannelType::Public,
+            post_id: Uuid::new_v4(),
+            content: "Hello!".into(),
+            created_at: 1_700_000_000,
+            signature: String::new(),
+        };
+        sign_post(&identity, &mut post);
+
+        assert!(post.verify_signature(), "Genuine signature should verify");
+    }
+
+    #[test]
+    fn test_channel_post_signature_rejects_publisher_spoof() {
+        // Alice signs; an attacker rewrites publisher_onion to Bob's address.
+        let alice = crate::crypto::IdentityKeypair::generate().unwrap();
+        let bob = crate::crypto::IdentityKeypair::generate().unwrap();
+
+        let mut post = ChannelPostMessage {
+            publisher_onion: alice.to_onion_address(),
+            channel_type: ChannelType::Public,
+            post_id: Uuid::new_v4(),
+            content: "I am Bob, trust me".into(),
+            created_at: 1_700_000_000,
+            signature: String::new(),
+        };
+        sign_post(&alice, &mut post);
+        post.publisher_onion = bob.to_onion_address();
+
+        assert!(!post.verify_signature(), "Spoofed publisher_onion must not verify");
+    }
+
+    #[test]
+    fn test_channel_post_signature_rejects_tampered_content() {
+        let identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let mut post = ChannelPostMessage {
+            publisher_onion: identity.to_onion_address(),
+            channel_type: ChannelType::Public,
+            post_id: Uuid::new_v4(),
+            content: "original".into(),
+            created_at: 1_700_000_000,
+            signature: String::new(),
+        };
+        sign_post(&identity, &mut post);
+        post.content = "tampered".into();
+
+        assert!(!post.verify_signature(), "Tampered content must invalidate signature");
+    }
+
+    #[test]
+    fn test_channel_post_signature_rejects_malformed_signature() {
+        let identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let post = ChannelPostMessage {
+            publisher_onion: identity.to_onion_address(),
+            channel_type: ChannelType::Public,
+            post_id: Uuid::new_v4(),
+            content: "hello".into(),
+            created_at: 1_700_000_000,
+            signature: "not-base64!!!".into(),
+        };
+        assert!(!post.verify_signature(), "Garbage signature must not verify");
     }
 
     #[test]

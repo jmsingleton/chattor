@@ -1,22 +1,17 @@
-use crate::error::{Result, ChattorError};
-use crate::crypto::{IdentityKeypair, PreKeyBundle};
+use crate::error::Result;
+use crate::crypto::IdentityKeypair;
 use crate::protocol::message::*;
-use crate::db::Database;
 use base64::Engine;
 
-/// Handles friend request protocol
-#[allow(dead_code)]
-pub struct FriendRequestHandler {
-    db: Database,
-}
+/// Friend request protocol helpers (message construction + signature validation).
+///
+/// The actual database persistence and X3DH-bundle generation paths live in
+/// `main.rs::handle_incoming_message` and `main.rs::handle_accept_friend_request`
+/// because they need access to the live `App` state (identity, onion address,
+/// queue, presence). This struct only carries pure functions.
+pub struct FriendRequestHandler;
 
-#[allow(dead_code)]
 impl FriendRequestHandler {
-    /// Create new handler
-    pub fn new(db: Database) -> Self {
-        FriendRequestHandler { db }
-    }
-
     /// Create friend request message
     pub fn create_request(
         identity: &IdentityKeypair,
@@ -43,12 +38,17 @@ impl FriendRequestHandler {
         })
     }
 
-    /// Validate received friend request
-    pub fn validate_request(&self, request: &FriendRequestMessage) -> Result<bool> {
+    /// Validate received friend request: verify Ed25519 signature against the
+    /// pubkey embedded in the sender's v3 .onion address, and check the
+    /// timestamp is within a 5-minute window.
+    ///
+    /// Returns Ok(true) if the request is authentic, Ok(false) if forged,
+    /// stale, or malformed.
+    pub fn validate_request(request: &FriendRequestMessage) -> Result<bool> {
         // Check timestamp (within 5 minutes)
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs() as i64;
 
         let age = (now - request.timestamp).abs();
@@ -91,116 +91,6 @@ impl FriendRequestHandler {
         }
     }
 
-    /// Store friend request in database
-    pub fn store_request(&self, request: &FriendRequestMessage) -> Result<i64> {
-        let conn = self.db.connection();
-
-        conn.execute(
-            "INSERT INTO friend_requests (from_onion, friend_code, received_at, status)
-             VALUES (?1, ?2, ?3, 'pending')",
-            (
-                &request.from_onion,
-                &request.from_friendcode,
-                request.timestamp,
-            ),
-        ).map_err(|e| ChattorError::Database(format!("Failed to store request: {}", e)))?;
-
-        let id = conn.last_insert_rowid();
-        Ok(id)
-    }
-
-    /// Create friend request accept message with PreKey bundle
-    pub fn create_accept_message(
-        &self,
-        identity: &IdentityKeypair,
-        own_onion: &str,
-        peer_onion: &str,
-    ) -> Result<FriendRequestAcceptMessage> {
-        // Generate a dedicated X25519 Signal identity keypair for X3DH
-        let signal_identity = libsignal_protocol::vxeddsa::gen_keypair();
-        let signal_identity_public_raw = libsignal_protocol::utils::decode_public_key(&signal_identity.public)
-            .map_err(|_| ChattorError::Crypto("Failed to decode signal identity public key".into()))?;
-        let (bundle, _private_material) = PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
-
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
-        // Sign message
-        let data = format!("{}{}{}", own_onion, peer_onion, timestamp);
-        let signature = identity.sign(data.as_bytes());
-        let signature_base64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
-
-        // Serialize bundle to JSON then base64
-        let bundle_json = serde_json::to_string(&bundle)
-            .map_err(|e| ChattorError::Crypto(format!("Failed to serialize bundle: {}", e)))?;
-
-        Ok(FriendRequestAcceptMessage {
-            from_onion: own_onion.to_string(),
-            to_onion: peer_onion.to_string(),
-            signal_prekey_bundle: bundle_json,
-            timestamp,
-            signature: signature_base64,
-        })
-    }
-
-    /// Handle accept message - initialize session
-    ///
-    /// NOTE: This currently only stores the friend in the database.
-    /// Real session initialization requires the local identity keypair to perform
-    /// X3DH key exchange via `SignalSession::from_prekey_bundle_real()`.
-    /// The caller in main.rs handles session establishment directly.
-    pub fn handle_accept(&self, accept: &FriendRequestAcceptMessage) -> Result<()> {
-        // Add friend to database
-        let conn = self.db.connection();
-        conn.execute(
-            "INSERT INTO friends (onion_address, display_name, added_at, status)
-             VALUES (?1, ?2, ?3, 'active')",
-            (
-                &accept.from_onion,
-                &accept.from_onion[..10], // Use first 10 chars as name
-                accept.timestamp,
-            ),
-        ).map_err(|e| ChattorError::Database(format!("Failed to add friend: {}", e)))?;
-
-        Ok(())
-    }
-
-    /// Accept friend request
-    pub fn accept_request(&self, request_id: i64, identity: &IdentityKeypair) -> Result<FriendRequestAcceptMessage> {
-        let conn = self.db.connection();
-
-        // Get request details
-        let (from_onion, own_onion): (String, String) = conn.query_row(
-            "SELECT from_onion, 'bob.onion' FROM friend_requests WHERE id = ?1",
-            [request_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(|e| ChattorError::Database(format!("Request not found: {}", e)))?;
-
-        // Update request status
-        conn.execute(
-            "UPDATE friend_requests SET status = 'accepted' WHERE id = ?1",
-            [request_id],
-        ).map_err(|e| ChattorError::Database(format!("Failed to update request: {}", e)))?;
-
-        // Add friend
-        conn.execute(
-            "INSERT INTO friends (onion_address, display_name, added_at, status)
-             VALUES (?1, ?2, ?3, 'active')",
-            (
-                &from_onion,
-                &from_onion[..10],
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64,
-            ),
-        ).map_err(|e| ChattorError::Database(format!("Failed to add friend: {}", e)))?;
-
-        // Create accept message
-        self.create_accept_message(identity, &own_onion, &from_onion)
-    }
 }
 
 #[cfg(test)]
@@ -233,11 +123,7 @@ mod tests {
 
         let request = FriendRequestHandler::create_request(&identity, &onion, friend_code).unwrap();
 
-        let temp_db = tempfile::NamedTempFile::new().unwrap();
-        let db = crate::db::Database::open(temp_db.path()).unwrap();
-        let handler = FriendRequestHandler::new(db);
-
-        assert!(handler.validate_request(&request).unwrap());
+        assert!(FriendRequestHandler::validate_request(&request).unwrap());
     }
 
     #[test]
@@ -252,30 +138,33 @@ mod tests {
         let other_identity = crate::crypto::IdentityKeypair::generate().unwrap();
         request.from_onion = other_identity.to_onion_address();
 
-        let temp_db = tempfile::NamedTempFile::new().unwrap();
-        let db = crate::db::Database::open(temp_db.path()).unwrap();
-        let handler = FriendRequestHandler::new(db);
-
-        assert!(!handler.validate_request(&request).unwrap());
+        assert!(!FriendRequestHandler::validate_request(&request).unwrap());
     }
 
     #[test]
-    fn test_accept_friend_request() {
-        let temp_db = tempfile::NamedTempFile::new().unwrap();
-        let db = crate::db::Database::open(temp_db.path()).unwrap();
-
-        let handler = FriendRequestHandler::new(db);
+    fn test_validate_request_rejects_stale_timestamp() {
         let identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let onion = identity.to_onion_address();
+        let friend_code = "happy-1234-tiger-5678";
 
-        let accept = handler.create_accept_message(
-            &identity,
-            "bob.onion",
-            "alice.onion"
-        ).unwrap();
+        let mut request = FriendRequestHandler::create_request(&identity, &onion, friend_code).unwrap();
+        request.timestamp -= 600; // 10 minutes ago
 
-        assert_eq!(accept.from_onion, "bob.onion");
-        assert_eq!(accept.to_onion, "alice.onion");
-        assert!(accept.signal_prekey_bundle.len() > 0);
-        assert!(accept.signature.len() > 0);
+        // The signature was over the original timestamp, so backdating breaks
+        // both the freshness check and the signature check.
+        assert!(!FriendRequestHandler::validate_request(&request).unwrap());
     }
+
+    #[test]
+    fn test_validate_request_rejects_malformed_signature() {
+        let identity = crate::crypto::IdentityKeypair::generate().unwrap();
+        let onion = identity.to_onion_address();
+        let friend_code = "happy-1234-tiger-5678";
+
+        let mut request = FriendRequestHandler::create_request(&identity, &onion, friend_code).unwrap();
+        request.signature = "not-valid-base64!!!".to_string();
+
+        assert!(!FriendRequestHandler::validate_request(&request).unwrap());
+    }
+
 }

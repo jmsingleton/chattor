@@ -296,14 +296,14 @@ async fn main() -> Result<()> {
         let channel_subscriptions = db::queries::get_channel_subscriptions(&app_lock.db).unwrap_or_default();
 
         let (channel_posts, channel_post_read_counts) = if let AppState::ViewingChannel {
-            ref channel_type, is_own, ..
+            ref publisher_onion, ref channel_type, is_own, ..
         } = &app_state {
-            let channel_id = if *is_own {
-                if channel_type == "public" { 1 } else { 2 }
-            } else {
-                0 // remote posts stored with channel_id 0
-            };
-            let posts = db::queries::get_channel_posts(&app_lock.db, channel_id, 100).unwrap_or_default();
+            // The feed is keyed by (publisher_onion, channel_type). For our
+            // own channels, publisher_onion is already set to our address by
+            // the action handler; for foreign feeds, it's the peer's address.
+            let posts = db::queries::get_channel_posts(
+                &app_lock.db, publisher_onion, channel_type, 100
+            ).unwrap_or_default();
             let mut counts = std::collections::HashMap::new();
             if *is_own {
                 for post in &posts {
@@ -594,24 +594,32 @@ async fn main() -> Result<()> {
                         Some(AppAction::PublishChannelPost(content, channel_type)) => {
                             let app_lock = app.lock().await;
                             let own_onion = app_lock.onion_address.clone().unwrap_or_default();
-                            let channel_id = if channel_type == "public" { 1 } else { 2 };
                             let post_id = uuid::Uuid::new_v4().to_string();
                             let now = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
+                                .unwrap_or_default()
                                 .as_secs() as i64;
 
-                            // Sign the post
+                            // Sign the post. Bytes signed must be reproducible
+                            // by subscribers from the wire fields alone, so we
+                            // sign `post_id || content || created_at`.
                             let sign_data = format!("{}{}{}", post_id, content, now);
-                            let signature = base64::engine::general_purpose::STANDARD.encode(app_lock.identity.as_ref().expect("identity set during init").sign(sign_data.as_bytes()).to_bytes());
+                            let signature = base64::engine::general_purpose::STANDARD.encode(
+                                app_lock.identity.as_ref()
+                                    .expect("identity set during init")
+                                    .sign(sign_data.as_bytes()).to_bytes()
+                            );
 
-                            // Store locally
+                            // Store locally under our own onion + channel_type.
                             db::queries::store_channel_post(
-                                &app_lock.db, channel_id, &content, &post_id, now, &signature
+                                &app_lock.db, &own_onion, &channel_type,
+                                &content, &post_id, now, &signature
                             ).ok();
 
-                            // Enforce retention
-                            db::queries::enforce_channel_retention(&app_lock.db, channel_id).ok();
+                            // Enforce retention for this feed.
+                            db::queries::enforce_channel_retention(
+                                &app_lock.db, &own_onion, &channel_type
+                            ).ok();
 
                             // Push to online subscribers
                             let channel_type_enum = if channel_type == "public" {
@@ -1013,11 +1021,34 @@ async fn try_send_direct(
 async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMessage, presence: &presence::PresenceMap) -> Result<()> {
     match &incoming.message {
         protocol::message::Message::FriendRequest(req) => {
+            // Verify the Ed25519 signature before persisting anything. The
+            // pubkey is derived from the sender's v3 .onion address, so a
+            // forged from_onion (or any tampering with friend_code/timestamp)
+            // fails verification.
+            match protocol::friend_request::FriendRequestHandler::validate_request(req) {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::warn!(
+                        from_onion = %req.from_onion,
+                        "rejected friend request: invalid signature or stale timestamp"
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        from_onion = %req.from_onion,
+                        error = %e,
+                        "rejected friend request: validation error"
+                    );
+                    return Ok(());
+                }
+            }
+
             // Store incoming friend request in database
             let conn = app.db.connection();
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs() as i64;
 
             conn.execute(
@@ -1028,7 +1059,7 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 format!("Failed to save friend request: {}", e)
             ))?;
 
-            eprintln!("Received friend request from {}", req.from_onion);
+            tracing::info!(from_onion = %req.from_onion, "received friend request");
         }
         protocol::message::Message::FriendRequestAccept(accept) => {
             handle_incoming_accept(app, accept)?;
@@ -1246,19 +1277,55 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             eprintln!("Unsubscribed: {} from {} channel", unsub.subscriber_onion, channel_type);
         }
         protocol::message::Message::ChannelPost(post) => {
-            // Store remote post (channel_id 0 for remote posts)
+            let channel_type_str = match post.channel_type {
+                protocol::message::ChannelType::Public => "public",
+                protocol::message::ChannelType::FriendsOnly => "friends_only",
+            };
+
+            // Friends-only enforcement: a non-friend publisher cannot push to
+            // our friends-only feed view. (Note: this is symmetric with the
+            // sync-request check below — both gates close the same hole.)
+            if channel_type_str == "friends_only"
+                && db::queries::find_friend_by_onion(&app.db, &post.publisher_onion)?.is_none()
+            {
+                tracing::warn!(
+                    publisher = %post.publisher_onion,
+                    "dropped friends-only channel post from non-friend"
+                );
+                return Ok(());
+            }
+
+            // Authenticity: Ed25519 signature over post_id||content||created_at
+            // must verify against the publisher's onion-derived pubkey.
+            if !post.verify_signature() {
+                tracing::warn!(
+                    publisher = %post.publisher_onion,
+                    post_id = %post.post_id,
+                    "rejected channel post: invalid signature"
+                );
+                return Ok(());
+            }
+
+            // Store per-publisher, per-channel-type — no more channel_id=0
+            // bucket.
             db::queries::store_channel_post(
-                &app.db, 0, &post.content, &post.post_id.to_string(),
+                &app.db, &post.publisher_onion, channel_type_str,
+                &post.content, &post.post_id.to_string(),
                 post.created_at, &post.signature,
             )?;
 
-            // Send read receipt back to publisher
+            // Bound foreign feeds the same way as our own (100-post cap).
+            db::queries::enforce_channel_retention(
+                &app.db, &post.publisher_onion, channel_type_str
+            ).ok();
+
+            // Send read receipt back to publisher.
             let receipt = protocol::message::ChannelPostReceiptMessage {
                 post_id: post.post_id,
                 reader_onion: app.onion_address.clone().unwrap_or_default(),
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs() as i64,
             };
             let receipt_msg = protocol::message::Message::ChannelPostReceipt(receipt);
@@ -1277,12 +1344,14 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
                 return Ok(());
             }
 
-            let channel_id = if channel_type_str == "public" { 1 } else { 2 };
-            let posts = db::queries::get_channel_posts_since(&app.db, channel_id, req.since_timestamp)?;
+            let own_onion = app.onion_address.clone().unwrap_or_default();
+            let posts = db::queries::get_channel_posts_since(
+                &app.db, &own_onion, channel_type_str, req.since_timestamp
+            )?;
 
             let post_messages: Vec<protocol::message::ChannelPostMessage> = posts.into_iter().map(|p| {
                 protocol::message::ChannelPostMessage {
-                    publisher_onion: app.onion_address.clone().unwrap_or_default(),
+                    publisher_onion: own_onion.clone(),
                     channel_type: req.channel_type.clone(),
                     post_id: uuid::Uuid::parse_str(&p.post_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
                     content: p.content,
@@ -1294,7 +1363,7 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             if !post_messages.is_empty() {
                 let response = protocol::message::Message::ChannelSyncResponse(
                     protocol::message::ChannelSyncResponseMessage {
-                        publisher_onion: app.onion_address.clone().unwrap_or_default(),
+                        publisher_onion: own_onion,
                         channel_type: req.channel_type.clone(),
                         posts: post_messages,
                     }
@@ -1303,17 +1372,58 @@ async fn handle_incoming_message(app: &App, incoming: net::listener::IncomingMes
             }
         }
         protocol::message::Message::ChannelSyncResponse(resp) => {
-            for post in &resp.posts {
-                db::queries::store_channel_post(
-                    &app.db, 0, &post.content, &post.post_id.to_string(),
-                    post.created_at, &post.signature,
-                )?;
-            }
-            // Update sync time
             let channel_type_str = match resp.channel_type {
                 protocol::message::ChannelType::Public => "public",
                 protocol::message::ChannelType::FriendsOnly => "friends_only",
             };
+
+            // The envelope-level publisher_onion identifies whose feed this
+            // batch belongs to. Friends-only feeds shouldn't reach us from
+            // non-friends; drop the whole batch if so.
+            if channel_type_str == "friends_only"
+                && db::queries::find_friend_by_onion(&app.db, &resp.publisher_onion)?.is_none()
+            {
+                tracing::warn!(
+                    publisher = %resp.publisher_onion,
+                    "dropped friends-only sync response from non-friend"
+                );
+                return Ok(());
+            }
+
+            for post in &resp.posts {
+                // The wrapped post must claim the same publisher (defense
+                // against a friend forwarding posts attributed to another
+                // user), AND its signature must verify under that publisher's
+                // pubkey. Individual bad posts are skipped; valid ones still
+                // land.
+                if post.publisher_onion != resp.publisher_onion {
+                    tracing::warn!(
+                        envelope = %resp.publisher_onion,
+                        claimed = %post.publisher_onion,
+                        "dropped post: publisher mismatch in sync response"
+                    );
+                    continue;
+                }
+                if !post.verify_signature() {
+                    tracing::warn!(
+                        publisher = %post.publisher_onion,
+                        post_id = %post.post_id,
+                        "dropped post: invalid signature in sync response"
+                    );
+                    continue;
+                }
+                db::queries::store_channel_post(
+                    &app.db, &post.publisher_onion, channel_type_str,
+                    &post.content, &post.post_id.to_string(),
+                    post.created_at, &post.signature,
+                )?;
+            }
+
+            // Bound the publisher's feed and update the sync watermark.
+            db::queries::enforce_channel_retention(
+                &app.db, &resp.publisher_onion, channel_type_str
+            ).ok();
+
             let max_time = resp.posts.iter().map(|p| p.created_at).max().unwrap_or(0);
             if max_time > 0 {
                 db::queries::update_subscription_sync_time(

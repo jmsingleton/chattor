@@ -359,13 +359,17 @@ pub fn activate_ephemeral_timers(db: &Database, conversation_id: i64) -> Result<
 
 // === Phase 3: Broadcast channel queries ===
 
-/// A channel post for display
+/// A channel post for display. A post belongs to the `(publisher_onion,
+/// channel_type)` tuple — local posts have `publisher_onion == own_onion`,
+/// foreign posts have the remote peer's address.
 #[derive(Debug, Clone)]
 pub struct ChannelPost {
     #[allow(dead_code)]
     pub id: i64,
+    #[allow(dead_code)] // surfaced in Phase B (sender-on-post UI)
+    pub publisher_onion: String,
     #[allow(dead_code)]
-    pub channel_id: i64,
+    pub channel_type: String,
     pub content: String,
     pub post_id: String,
     pub created_at: i64,
@@ -405,42 +409,51 @@ pub fn initialize_channels(db: &Database) -> Result<()> {
     Ok(())
 }
 
-/// Store a channel post (dedup via post_id UNIQUE)
+/// Store a channel post (dedup via post_id UNIQUE).
+/// `channel_type` is "public" or "friends_only".
 pub fn store_channel_post(
     db: &Database,
-    channel_id: i64,
+    publisher_onion: &str,
+    channel_type: &str,
     content: &str,
     post_id: &str,
     created_at: i64,
     signature: &str,
 ) -> Result<()> {
     db.connection().execute(
-        "INSERT OR IGNORE INTO channel_posts (channel_id, content, post_id, created_at, signature)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![channel_id, content, post_id, created_at, signature],
+        "INSERT OR IGNORE INTO channel_posts
+            (publisher_onion, channel_type, content, post_id, created_at, signature)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![publisher_onion, channel_type, content, post_id, created_at, signature],
     ).map_err(|e| ChattorError::Database(format!("Failed to store channel post: {}", e)))?;
     Ok(())
 }
 
-/// Get posts for a channel, newest first
-pub fn get_channel_posts(db: &Database, channel_id: i64, limit: usize) -> Result<Vec<ChannelPost>> {
+/// Get posts for a channel `(publisher_onion, channel_type)`, newest first.
+pub fn get_channel_posts(
+    db: &Database,
+    publisher_onion: &str,
+    channel_type: &str,
+    limit: usize,
+) -> Result<Vec<ChannelPost>> {
     let conn = db.connection();
     let mut stmt = conn.prepare(
-        "SELECT id, channel_id, content, post_id, created_at, signature
+        "SELECT id, publisher_onion, channel_type, content, post_id, created_at, signature
          FROM channel_posts
-         WHERE channel_id = ?1
+         WHERE publisher_onion = ?1 AND channel_type = ?2
          ORDER BY created_at DESC, id DESC
-         LIMIT ?2"
+         LIMIT ?3"
     ).map_err(|e| ChattorError::Database(format!("Failed to prepare channel posts query: {}", e)))?;
 
-    let posts = stmt.query_map(params![channel_id, limit as i64], |row| {
+    let posts = stmt.query_map(params![publisher_onion, channel_type, limit as i64], |row| {
         Ok(ChannelPost {
             id: row.get(0)?,
-            channel_id: row.get(1)?,
-            content: row.get(2)?,
-            post_id: row.get(3)?,
-            created_at: row.get(4)?,
-            signature: row.get(5)?,
+            publisher_onion: row.get(1)?,
+            channel_type: row.get(2)?,
+            content: row.get(3)?,
+            post_id: row.get(4)?,
+            created_at: row.get(5)?,
+            signature: row.get(6)?,
         })
     }).map_err(|e| ChattorError::Database(format!("Failed to query channel posts: {}", e)))?
     .collect::<std::result::Result<Vec<_>, _>>()
@@ -449,14 +462,22 @@ pub fn get_channel_posts(db: &Database, channel_id: i64, limit: usize) -> Result
     Ok(posts)
 }
 
-/// Delete oldest posts if count exceeds 100
-pub fn enforce_channel_retention(db: &Database, channel_id: i64) -> Result<i64> {
+/// Delete oldest posts if count exceeds 100, per (publisher_onion, channel_type).
+/// This keeps both our own feeds and each subscribed publisher's feed bounded.
+pub fn enforce_channel_retention(
+    db: &Database,
+    publisher_onion: &str,
+    channel_type: &str,
+) -> Result<i64> {
     let deleted = db.connection().execute(
-        "DELETE FROM channel_posts WHERE channel_id = ?1 AND id NOT IN (
-            SELECT id FROM channel_posts WHERE channel_id = ?1
-            ORDER BY created_at DESC, id DESC LIMIT 100
-        )",
-        params![channel_id],
+        "DELETE FROM channel_posts
+         WHERE publisher_onion = ?1 AND channel_type = ?2
+           AND id NOT IN (
+             SELECT id FROM channel_posts
+             WHERE publisher_onion = ?1 AND channel_type = ?2
+             ORDER BY created_at DESC, id DESC LIMIT 100
+         )",
+        params![publisher_onion, channel_type],
     ).map_err(|e| ChattorError::Database(format!("Failed to enforce retention: {}", e)))? as i64;
     Ok(deleted)
 }
@@ -575,25 +596,33 @@ pub fn get_channel_post_read_count(db: &Database, post_id: &str) -> Result<i64> 
     Ok(count)
 }
 
-/// Get posts from a channel since a timestamp (for sync responses)
-pub fn get_channel_posts_since(db: &Database, channel_id: i64, since: i64) -> Result<Vec<ChannelPost>> {
+/// Get posts from a channel since a timestamp (for sync responses).
+/// `publisher_onion` is the channel owner — typically the local user's onion
+/// when responding to a peer's sync request.
+pub fn get_channel_posts_since(
+    db: &Database,
+    publisher_onion: &str,
+    channel_type: &str,
+    since: i64,
+) -> Result<Vec<ChannelPost>> {
     let conn = db.connection();
     let mut stmt = conn.prepare(
-        "SELECT id, channel_id, content, post_id, created_at, signature
+        "SELECT id, publisher_onion, channel_type, content, post_id, created_at, signature
          FROM channel_posts
-         WHERE channel_id = ?1 AND created_at > ?2
+         WHERE publisher_onion = ?1 AND channel_type = ?2 AND created_at > ?3
          ORDER BY created_at ASC
          LIMIT 100"
     ).map_err(|e| ChattorError::Database(format!("Failed to prepare posts since query: {}", e)))?;
 
-    let posts = stmt.query_map(params![channel_id, since], |row| {
+    let posts = stmt.query_map(params![publisher_onion, channel_type, since], |row| {
         Ok(ChannelPost {
             id: row.get(0)?,
-            channel_id: row.get(1)?,
-            content: row.get(2)?,
-            post_id: row.get(3)?,
-            created_at: row.get(4)?,
-            signature: row.get(5)?,
+            publisher_onion: row.get(1)?,
+            channel_type: row.get(2)?,
+            content: row.get(3)?,
+            post_id: row.get(4)?,
+            created_at: row.get(5)?,
+            signature: row.get(6)?,
         })
     }).map_err(|e| ChattorError::Database(format!("Failed to query posts since: {}", e)))?
     .collect::<std::result::Result<Vec<_>, _>>()
@@ -937,14 +966,33 @@ mod tests {
         let db = Database::open(temp.path()).unwrap();
         initialize_channels(&db).unwrap();
 
-        store_channel_post(&db, 1, "Hello world!", "post-1", 1000, "sig1").unwrap();
-        store_channel_post(&db, 1, "Second post", "post-2", 2000, "sig2").unwrap();
+        let me = "me.onion";
+        store_channel_post(&db, me, "public", "Hello world!", "post-1", 1000, "sig1").unwrap();
+        store_channel_post(&db, me, "public", "Second post", "post-2", 2000, "sig2").unwrap();
 
-        let posts = get_channel_posts(&db, 1, 50).unwrap();
+        let posts = get_channel_posts(&db, me, "public", 50).unwrap();
         assert_eq!(posts.len(), 2);
         // Newest first
         assert_eq!(posts[0].content, "Second post");
         assert_eq!(posts[1].content, "Hello world!");
+    }
+
+    #[test]
+    fn test_channel_posts_isolated_per_publisher() {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+        initialize_channels(&db).unwrap();
+
+        store_channel_post(&db, "alice.onion", "public", "from alice", "p-a", 1000, "siga").unwrap();
+        store_channel_post(&db, "bob.onion", "public", "from bob", "p-b", 1000, "sigb").unwrap();
+
+        let alice_feed = get_channel_posts(&db, "alice.onion", "public", 50).unwrap();
+        let bob_feed = get_channel_posts(&db, "bob.onion", "public", 50).unwrap();
+
+        assert_eq!(alice_feed.len(), 1);
+        assert_eq!(alice_feed[0].content, "from alice");
+        assert_eq!(bob_feed.len(), 1);
+        assert_eq!(bob_feed[0].content, "from bob");
     }
 
     #[test]
@@ -953,10 +1001,10 @@ mod tests {
         let db = Database::open(temp.path()).unwrap();
         initialize_channels(&db).unwrap();
 
-        store_channel_post(&db, 1, "Hello!", "post-1", 1000, "sig1").unwrap();
-        store_channel_post(&db, 1, "Hello!", "post-1", 1000, "sig1").unwrap(); // dupe
+        store_channel_post(&db, "me.onion", "public", "Hello!", "post-1", 1000, "sig1").unwrap();
+        store_channel_post(&db, "me.onion", "public", "Hello!", "post-1", 1000, "sig1").unwrap(); // dupe
 
-        let posts = get_channel_posts(&db, 1, 50).unwrap();
+        let posts = get_channel_posts(&db, "me.onion", "public", 50).unwrap();
         assert_eq!(posts.len(), 1);
     }
 
@@ -966,20 +1014,43 @@ mod tests {
         let db = Database::open(temp.path()).unwrap();
         initialize_channels(&db).unwrap();
 
-        // Insert 105 posts
+        let pub_o = "me.onion";
         for i in 0..105 {
             store_channel_post(
-                &db, 1, &format!("Post {}", i),
+                &db, pub_o, "public", &format!("Post {}", i),
                 &format!("post-{}", i), i as i64, "sig"
             ).unwrap();
         }
 
-        enforce_channel_retention(&db, 1).unwrap();
+        enforce_channel_retention(&db, pub_o, "public").unwrap();
 
-        let posts = get_channel_posts(&db, 1, 200).unwrap();
+        let posts = get_channel_posts(&db, pub_o, "public", 200).unwrap();
         assert_eq!(posts.len(), 100);
         // Oldest remaining should be post 5 (0-4 deleted)
         assert_eq!(posts[99].post_id, "post-5");
+    }
+
+    #[test]
+    fn test_channel_retention_per_publisher() {
+        // Retention runs per-publisher: filling alice's feed doesn't evict bob's.
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+        initialize_channels(&db).unwrap();
+
+        for i in 0..150 {
+            store_channel_post(
+                &db, "alice.onion", "public", &format!("a{}", i),
+                &format!("alice-{}", i), i as i64, "sig"
+            ).unwrap();
+        }
+        store_channel_post(&db, "bob.onion", "public", "only", "bob-1", 1, "sig").unwrap();
+
+        enforce_channel_retention(&db, "alice.onion", "public").unwrap();
+
+        let alice = get_channel_posts(&db, "alice.onion", "public", 200).unwrap();
+        let bob = get_channel_posts(&db, "bob.onion", "public", 200).unwrap();
+        assert_eq!(alice.len(), 100);
+        assert_eq!(bob.len(), 1, "bob's feed must not be touched by alice's retention");
     }
 
     #[test]
@@ -1055,11 +1126,15 @@ mod tests {
         let db = Database::open(temp.path()).unwrap();
         initialize_channels(&db).unwrap();
 
+        let me = "me.onion";
         for i in 0..5 {
-            store_channel_post(&db, 1, &format!("Post {}", i), &format!("post-{}", i), (1000 + i) as i64, "sig").unwrap();
+            store_channel_post(
+                &db, me, "public", &format!("Post {}", i),
+                &format!("post-{}", i), (1000 + i) as i64, "sig"
+            ).unwrap();
         }
 
-        let posts = get_channel_posts_since(&db, 1, 1002).unwrap();
+        let posts = get_channel_posts_since(&db, me, "public", 1002).unwrap();
         assert_eq!(posts.len(), 2); // posts 3 and 4
         assert_eq!(posts[0].post_id, "post-3");
         assert_eq!(posts[1].post_id, "post-4");

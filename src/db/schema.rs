@@ -1,5 +1,5 @@
 /// SQL schema for chattor database
-pub const SCHEMA_VERSION: i32 = 9;
+pub const SCHEMA_VERSION: i32 = 10;
 
 pub const CREATE_TABLES: &str = r#"
 -- Schema version tracking
@@ -131,14 +131,18 @@ CREATE TABLE IF NOT EXISTS channels (
     created_at INTEGER NOT NULL
 );
 
+-- Channel posts. A "channel" is identified by (publisher_onion, channel_type),
+-- not by an integer FK — this lets us store many publishers' feeds in one
+-- table without lumping them into a shared bucket. The `channels` table still
+-- exists as a registry of our own channels but is no longer referenced here.
 CREATE TABLE IF NOT EXISTS channel_posts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    channel_id INTEGER NOT NULL,
+    publisher_onion TEXT NOT NULL,
+    channel_type TEXT NOT NULL,
     content TEXT NOT NULL,
     post_id TEXT NOT NULL UNIQUE,
     created_at INTEGER NOT NULL,
-    signature TEXT NOT NULL,
-    FOREIGN KEY (channel_id) REFERENCES channels(id)
+    signature TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS channel_subscribers (
@@ -166,7 +170,8 @@ CREATE TABLE IF NOT EXISTS channel_post_receipts (
     UNIQUE(post_id, reader_onion)
 );
 
-CREATE INDEX IF NOT EXISTS idx_channel_posts_channel ON channel_posts(channel_id);
+CREATE INDEX IF NOT EXISTS idx_channel_posts_publisher_type
+    ON channel_posts(publisher_onion, channel_type);
 CREATE INDEX IF NOT EXISTS idx_channel_posts_post_id ON channel_posts(post_id);
 CREATE INDEX IF NOT EXISTS idx_channel_posts_created ON channel_posts(created_at);
 CREATE INDEX IF NOT EXISTS idx_channel_subs_onion ON channel_subscribers(subscriber_onion);
@@ -187,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_schema_version_defined() {
-        assert_eq!(SCHEMA_VERSION, 9);
+        assert_eq!(SCHEMA_VERSION, 10);
     }
 
     #[test]

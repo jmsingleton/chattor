@@ -237,21 +237,22 @@ fn test_channel_post_flow() {
     // Initialize channels (creates Public and Friends Only channels)
     chattor::db::queries::initialize_channels(&db).unwrap();
 
-    // Publish posts to public channel (channel_id = 1)
+    // Publish posts to the public channel for this user.
+    let me = "me.onion";
     for i in 0..5 {
         chattor::db::queries::store_channel_post(
-            &db, 1, &format!("Post {}", i),
+            &db, me, "public", &format!("Post {}", i),
             &format!("post-{}", i), (1000 + i) as i64, "sig"
         ).unwrap();
     }
 
     // Retrieve posts (newest first)
-    let posts = chattor::db::queries::get_channel_posts(&db, 1, 50).unwrap();
+    let posts = chattor::db::queries::get_channel_posts(&db, me, "public", 50).unwrap();
     assert_eq!(posts.len(), 5);
     assert_eq!(posts[0].content, "Post 4"); // newest first
 
     // Get posts since timestamp (oldest first, for sync)
-    let since_posts = chattor::db::queries::get_channel_posts_since(&db, 1, 1002).unwrap();
+    let since_posts = chattor::db::queries::get_channel_posts_since(&db, me, "public", 1002).unwrap();
     assert_eq!(since_posts.len(), 2); // posts 3 and 4 (created_at > 1002)
 
     // Subscriber management
@@ -282,16 +283,16 @@ fn test_channel_post_flow() {
     let count = chattor::db::queries::get_channel_post_read_count(&db, "post-1").unwrap();
     assert_eq!(count, 2);
 
-    // Retention enforcement
+    // Retention enforcement (per publisher_onion + channel_type)
     for i in 5..110 {
         chattor::db::queries::store_channel_post(
-            &db, 1, &format!("Post {}", i),
+            &db, me, "public", &format!("Post {}", i),
             &format!("post-{}", i), (1000 + i) as i64, "sig"
         ).unwrap();
     }
-    let deleted = chattor::db::queries::enforce_channel_retention(&db, 1).unwrap();
+    let deleted = chattor::db::queries::enforce_channel_retention(&db, me, "public").unwrap();
     assert!(deleted > 0);
-    let remaining = chattor::db::queries::get_channel_posts(&db, 1, 200).unwrap();
+    let remaining = chattor::db::queries::get_channel_posts(&db, me, "public", 200).unwrap();
     assert_eq!(remaining.len(), 100);
 }
 
