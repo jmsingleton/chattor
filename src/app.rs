@@ -74,7 +74,15 @@ impl App {
         })
     }
 
-    /// Initialize Tor client and hidden service
+    /// Initialize Tor client and hidden service.
+    ///
+    /// Idempotent: a second call after a successful init returns early at
+    /// the `tor_client.is_some()` guard. A *retry* after a failed init runs
+    /// the bootstrap again — but the background-task spawns are gated
+    /// separately on `incoming_message_rx.is_none()` so we never double-spawn
+    /// the listener / queue tick / rate-limiter GC, even on the (currently
+    /// impossible, but defended-against-future-bugs) path where one of those
+    /// runs but a later step errors out.
     pub async fn init_tor(&mut self) -> Result<()> {
         if self.tor_client.is_some() {
             return Ok(()); // Already initialized
@@ -92,40 +100,46 @@ impl App {
         // Persist the .onion address in database
         crate::db::queries::set_app_setting(&self.db, "onion_address", &onion_address)?;
 
-        // Spawn Tor rendezvous listener for incoming connections
-        let (msg_tx, msg_rx) = tokio::sync::mpsc::channel(100);
-        tokio::spawn(async move {
-            if let Err(e) = crate::net::listener::listen_for_tor_connections(rend_requests, msg_tx).await {
-                tracing::error!(error = %e, "tor listener task error");
-            }
-        });
-        self.incoming_message_rx = Some(msg_rx);
-
-        // Spawn queue processor task (sends ProcessQueue command every 30 seconds)
-        let (queue_cmd_tx, queue_cmd_rx) = tokio::sync::mpsc::channel(10);
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                if queue_cmd_tx.send(QueueCommand::ProcessQueue).await.is_err() {
-                    break; // Channel closed, app shutting down
+        // Background tasks are spawned exactly once across the lifetime of
+        // this App. `incoming_message_rx` is None until the first spawn and
+        // Some forever after; we use it as the guard for all three tasks.
+        if self.incoming_message_rx.is_none() {
+            // Spawn Tor rendezvous listener for incoming connections
+            let (msg_tx, msg_rx) = tokio::sync::mpsc::channel(100);
+            tokio::spawn(async move {
+                if let Err(e) = crate::net::listener::listen_for_tor_connections(rend_requests, msg_tx).await {
+                    tracing::error!(error = %e, "tor listener task error");
                 }
-            }
-        });
-        self.queue_command_rx = Some(queue_cmd_rx);
+            });
+            self.incoming_message_rx = Some(msg_rx);
 
-        // Spawn rate-limiter GC. Bounds HashMap memory by evicting buckets
-        // idle past BUCKET_IDLE_TTL (1 hour). Fires every 10 minutes — well
-        // below the TTL so we never lose track of a peer who has paused.
-        let limiter = Arc::clone(&self.inbound_rate_limiter);
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
-                let evicted = limiter.gc_idle();
-                if evicted > 0 {
-                    tracing::debug!(evicted, "rate-limiter idle buckets pruned");
+            // Spawn queue processor task (sends ProcessQueue command every 30 seconds)
+            let (queue_cmd_tx, queue_cmd_rx) = tokio::sync::mpsc::channel(10);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    if queue_cmd_tx.send(QueueCommand::ProcessQueue).await.is_err() {
+                        break; // Channel closed, app shutting down
+                    }
                 }
-            }
-        });
+            });
+            self.queue_command_rx = Some(queue_cmd_rx);
+
+            // Spawn rate-limiter GC. Bounds HashMap memory by evicting
+            // buckets idle past BUCKET_IDLE_TTL (1 hour). Fires every 10
+            // minutes — well below the TTL so we never lose track of a
+            // peer who has paused.
+            let limiter = Arc::clone(&self.inbound_rate_limiter);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+                    let evicted = limiter.gc_idle();
+                    if evicted > 0 {
+                        tracing::debug!(evicted, "rate-limiter idle buckets pruned");
+                    }
+                }
+            });
+        }
 
         // Store in app state
         let client = Arc::new(client);

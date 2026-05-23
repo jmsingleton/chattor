@@ -308,6 +308,11 @@ pub fn delete_friend(db: &Database, friend_id: i64) -> Result<()> {
         // accepted is also stale.
         conn.execute("DELETE FROM friend_requests WHERE from_onion = ?1", params![o])
             .map_err(|e| ChattorError::Database(format!("Failed to delete pending friend requests: {}", e)))?;
+        // Read receipts they sent us for our own channel posts — drop them
+        // too, so the friend's onion stops appearing in our seen-by counts
+        // after the delete.
+        conn.execute("DELETE FROM channel_post_receipts WHERE reader_onion = ?1", params![o])
+            .map_err(|e| ChattorError::Database(format!("Failed to delete channel post receipts: {}", e)))?;
         conn.execute(
             "DELETE FROM app_settings WHERE key LIKE ?1 OR key LIKE ?2",
             params![format!("prekey_%:{}", o), format!("signal_identity_secret:{}", o)],
@@ -1318,6 +1323,7 @@ mod tests {
              VALUES (?1, 'fc', 1, 'pending')",
             params![alice_onion],
         ).unwrap();
+        store_channel_post_receipt(&db, "our-post-1", &alice_onion, 1).unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, 'x')",
             params![format!("prekey_identity:{}", alice_onion)],
@@ -1342,6 +1348,7 @@ mod tests {
         let suber_count: i64 = conn.query_row("SELECT COUNT(*) FROM channel_subscribers WHERE subscriber_onion = ?1", params![alice_onion], |r| r.get(0)).unwrap();
         let post_count: i64 = conn.query_row("SELECT COUNT(*) FROM channel_posts WHERE publisher_onion = ?1", params![alice_onion], |r| r.get(0)).unwrap();
         let req_count: i64 = conn.query_row("SELECT COUNT(*) FROM friend_requests WHERE from_onion = ?1", params![alice_onion], |r| r.get(0)).unwrap();
+        let receipt_count: i64 = conn.query_row("SELECT COUNT(*) FROM channel_post_receipts WHERE reader_onion = ?1", params![alice_onion], |r| r.get(0)).unwrap();
         let prekey_count: i64 = conn.query_row("SELECT COUNT(*) FROM app_settings WHERE key LIKE ?1", params![format!("prekey_%:{}", alice_onion)], |r| r.get(0)).unwrap();
 
         assert_eq!(friend_count, 0);
@@ -1353,6 +1360,7 @@ mod tests {
         assert_eq!(suber_count, 0);
         assert_eq!(post_count, 0);
         assert_eq!(req_count, 0);
+        assert_eq!(receipt_count, 0);
         assert_eq!(prekey_count, 0);
 
         // Bob is intact.

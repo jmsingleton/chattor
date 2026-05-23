@@ -66,16 +66,24 @@ impl RateLimiter {
         }
     }
 
-    /// Drop buckets that haven't been touched for `BUCKET_IDLE_TTL`. Bounds
-    /// memory under churn — an adversary churning through onions would
-    /// otherwise grow the HashMap once per unique peer for the lifetime of
-    /// the process. Returns the number of buckets evicted so the caller
-    /// can log if it likes.
+    /// `gc_idle` with the production TTL — see `gc_idle_with_ttl`.
     pub fn gc_idle(&self) -> usize {
+        self.gc_idle_with_ttl(BUCKET_IDLE_TTL)
+    }
+
+    /// Drop buckets whose `last_refill` is older than `ttl`. Bounds memory
+    /// under churn — an adversary churning through onions would otherwise
+    /// grow the HashMap once per unique peer for the lifetime of the
+    /// process. Returns the number of buckets evicted.
+    ///
+    /// Production code calls `gc_idle()`; tests use this entry point with a
+    /// short TTL so they can actually exercise the eviction path without
+    /// sleeping an hour.
+    pub fn gc_idle_with_ttl(&self, ttl: std::time::Duration) -> usize {
         let now = Instant::now();
         let mut buckets = self.buckets.lock().unwrap();
         let before = buckets.len();
-        buckets.retain(|_, bucket| now.duration_since(bucket.last_refill) < BUCKET_IDLE_TTL);
+        buckets.retain(|_, bucket| now.duration_since(bucket.last_refill) < ttl);
         before - buckets.len()
     }
 
@@ -147,6 +155,39 @@ mod tests {
         for _ in 0..10 {
             limiter.gc_idle();
         }
+        assert_eq!(limiter.bucket_count(), 1);
+    }
+
+    #[test]
+    fn test_gc_actually_evicts_after_elapsed_ttl() {
+        // The TTL is injectable via gc_idle_with_ttl so we can exercise
+        // the eviction predicate in milliseconds rather than the 1-hour
+        // production window. Before this hook, the retain branch had no
+        // test coverage — a refactor that broke it would still pass CI.
+        let limiter = RateLimiter::new(5, 20);
+        limiter.check("alice");
+        limiter.check("bob");
+        assert_eq!(limiter.bucket_count(), 2);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // With a 1ms TTL, both buckets are now "idle".
+        let evicted = limiter.gc_idle_with_ttl(std::time::Duration::from_millis(1));
+        assert_eq!(evicted, 2);
+        assert_eq!(limiter.bucket_count(), 0);
+    }
+
+    #[test]
+    fn test_gc_partial_eviction_under_short_ttl() {
+        // Stage a bucket, wait, then add a second. With a TTL between
+        // the two ages, only the older bucket evicts.
+        let limiter = RateLimiter::new(5, 20);
+        limiter.check("old");
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        limiter.check("new");
+
+        let evicted = limiter.gc_idle_with_ttl(std::time::Duration::from_millis(20));
+        assert_eq!(evicted, 1);
         assert_eq!(limiter.bucket_count(), 1);
     }
 

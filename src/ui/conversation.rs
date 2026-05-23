@@ -187,15 +187,29 @@ fn render_messages(
     // Without this, a single long message would count as 1 logical line
     // even though it wraps to many on-screen rows, and the scrollbar would
     // disappear while content was clearly cut off.
+    //
+    // The width we count at must match the width we render at: if we count
+    // assuming a reserved scrollbar column but then render full-width on
+    // no-overflow, the count is one column narrower than the rendered
+    // wrap point and we'd briefly show a scrollbar at exactly-fit widths.
+    // Compute the would-be visual count first, decide overflow, *then*
+    // fix the text-area width.
     let paragraph_all = Paragraph::new(lines).wrap(Wrap { trim: false });
     let viewport_h = area.height as usize;
-    let text_area_width = area.width.saturating_sub(1); // leave room for scrollbar
-    let visual_total = paragraph_all.line_count(text_area_width);
-    let has_overflow = visual_total > viewport_h;
+    let full_width_visual = paragraph_all.line_count(area.width);
+    let has_overflow = full_width_visual > viewport_h;
     let text_area = if has_overflow {
-        Rect { width: text_area_width, ..area }
+        Rect { width: area.width.saturating_sub(1), ..area }
     } else {
         area
+    };
+    // When overflow is true the rendered width is narrower, which may push
+    // a borderline message into one more wrapped row — recompute against
+    // the actual render width so the scrollbar position is accurate.
+    let visual_total = if has_overflow {
+        paragraph_all.line_count(text_area.width)
+    } else {
+        full_width_visual
     };
 
     // Scrolling lives in visual-row space. The viewport sticks to the

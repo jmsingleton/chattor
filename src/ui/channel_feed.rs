@@ -123,17 +123,22 @@ fn render_posts(
     }
 
     // Scroll + scrollbar in visual-row space. Mirrors the conversation
-    // view: `Paragraph::line_count` accounts for soft-wrap so long posts
-    // don't count as a single line just because they're a single Span.
+    // view: count visual rows at the *would-be-rendered* width — see the
+    // conversation comment for why the width has to match the render path
+    // exactly to avoid a spurious scrollbar at exactly-fit terminal sizes.
     let paragraph_all = Paragraph::new(lines).wrap(Wrap { trim: false });
     let viewport_h = inner.height as usize;
-    let text_area_width = inner.width.saturating_sub(1);
-    let visual_total = paragraph_all.line_count(text_area_width);
-    let has_overflow = visual_total > viewport_h;
+    let full_width_visual = paragraph_all.line_count(inner.width);
+    let has_overflow = full_width_visual > viewport_h;
     let text_area = if has_overflow {
-        Rect { width: text_area_width, ..inner }
+        Rect { width: inner.width.saturating_sub(1), ..inner }
     } else {
         inner
+    };
+    let visual_total = if has_overflow {
+        paragraph_all.line_count(text_area.width)
+    } else {
+        full_width_visual
     };
 
     let max_scroll = visual_total.saturating_sub(viewport_h);
