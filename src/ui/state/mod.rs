@@ -1,4 +1,5 @@
 mod adding_friend;
+mod ephemeral;
 mod friend_requests;
 mod identity;
 mod normal;
@@ -113,41 +114,7 @@ impl AppState {
 
             AppState::ViewingMyIdentity { .. } => self.handle_viewing_my_identity_key(key),
 
-            AppState::SettingEphemeral {
-                conversation_id,
-                selected_idx,
-            } => match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if *selected_idx > 0 {
-                        *selected_idx -= 1;
-                    }
-                    Ok(None)
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if *selected_idx < 4 {
-                        *selected_idx += 1;
-                    }
-                    Ok(None)
-                }
-                KeyCode::Enter => {
-                    let conv_id = *conversation_id;
-                    let ttl = match *selected_idx {
-                        0 => None,
-                        1 => Some(300),
-                        2 => Some(3600),
-                        3 => Some(86400),
-                        4 => Some(604800),
-                        _ => None,
-                    };
-                    *self = AppState::default();
-                    Ok(Some(AppAction::SetEphemeralTtl(conv_id, ttl)))
-                }
-                KeyCode::Esc => {
-                    *self = AppState::default();
-                    Ok(None)
-                }
-                _ => Ok(None),
-            },
+            AppState::SettingEphemeral { .. } => self.handle_setting_ephemeral_key(key),
 
             AppState::ViewingChannel {
                 input,
