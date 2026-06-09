@@ -1,6 +1,7 @@
 mod channels;
 mod friends;
 mod messaging;
+mod system;
 
 use crate::app::App;
 use crate::presence::PresenceMap;
@@ -66,8 +67,8 @@ pub async fn dispatch(
 ) -> RpcResponse {
     let id = req.id.clone();
     match req.method.as_str() {
-        "status" => handle_status(id, app).await,
-        "identity" => handle_identity(id, app).await,
+        "status" => system::handle_status(id, app).await,
+        "identity" => system::handle_identity(id, app).await,
         "friends_list" => friends::handle_friends_list(id, app, presence).await,
         "friends_add" => friends::handle_friends_add(id, app, &req.params).await,
         "friends_requests" => friends::handle_friends_requests(id, app).await,
@@ -80,53 +81,9 @@ pub async fn dispatch(
         "channels_subscribe" => channels::handle_channels_subscribe(id, app, &req.params).await,
         "channels_feed" => channels::handle_channels_feed(id, app, &req.params).await,
         "ephemeral_set" => messaging::handle_ephemeral_set(id, app, &req.params).await,
-        "notifications_toggle" => handle_notifications_toggle(id, app).await,
+        "notifications_toggle" => system::handle_notifications_toggle(id, app).await,
         _ => RpcResponse::error(id, -32601, format!("Method not found: {}", req.method)),
     }
-}
-
-// ---------------------------------------------------------------------------
-// Handler implementations
-// ---------------------------------------------------------------------------
-
-async fn handle_status(id: Option<Value>, app: &Arc<Mutex<App>>) -> RpcResponse {
-    let app = app.lock().await;
-    RpcResponse::success(
-        id,
-        serde_json::json!({
-            "daemon": true,
-            "tor_connected": app.tor_client.is_some(),
-            "onion_address": app.onion_address.as_deref().unwrap_or(""),
-        }),
-    )
-}
-
-async fn handle_identity(id: Option<Value>, app: &Arc<Mutex<App>>) -> RpcResponse {
-    let app = app.lock().await;
-    let onion = app.onion_address.as_deref().unwrap_or("");
-    let friend_code = if !onion.is_empty() {
-        crate::protocol::friend_code::onion_to_friend_code(onion).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    RpcResponse::success(
-        id,
-        serde_json::json!({
-            "friend_code": friend_code,
-            "onion_address": onion,
-        }),
-    )
-}
-
-async fn handle_notifications_toggle(id: Option<Value>, app: &Arc<Mutex<App>>) -> RpcResponse {
-    let app = app.lock().await;
-    let new_state = crate::notifications::toggle(&app.db);
-    RpcResponse::success(
-        id,
-        serde_json::json!({
-            "enabled": new_state,
-        }),
-    )
 }
 
 #[cfg(test)]
