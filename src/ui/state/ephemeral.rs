@@ -48,3 +48,86 @@ impl AppState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn test_ephemeral_selection() {
+        let mut state = AppState::SettingEphemeral {
+            conversation_id: 42,
+            selected_idx: 0,
+        };
+        // Down twice to select "1 hour" (index 2)
+        state
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10)
+            .unwrap();
+        state
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10)
+            .unwrap();
+        match &state {
+            AppState::SettingEphemeral { selected_idx, .. } => {
+                assert_eq!(*selected_idx, 2);
+            }
+            _ => panic!("Expected SettingEphemeral state"),
+        }
+        // Enter to confirm
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .unwrap();
+        assert_eq!(action, Some(AppAction::SetEphemeralTtl(42, Some(3600))));
+        assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn test_ephemeral_escape() {
+        let mut state = AppState::SettingEphemeral {
+            conversation_id: 42,
+            selected_idx: 2,
+        };
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let action = state.handle_key(key, 10).unwrap();
+        assert!(action.is_none());
+        assert!(matches!(state, AppState::Normal { .. }));
+    }
+
+    #[test]
+    fn vim_jk_in_ephemeral_settings() {
+        let mut state = AppState::SettingEphemeral {
+            conversation_id: 42,
+            selected_idx: 0,
+        };
+
+        // j moves down
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10)
+            .unwrap();
+        if let AppState::SettingEphemeral { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 1);
+        } else {
+            panic!("Wrong state");
+        }
+
+        // j again
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10)
+            .unwrap();
+        if let AppState::SettingEphemeral { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 2);
+        } else {
+            panic!("Wrong state");
+        }
+
+        // k moves up
+        state
+            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 10)
+            .unwrap();
+        if let AppState::SettingEphemeral { selected_idx, .. } = &state {
+            assert_eq!(*selected_idx, 1);
+        } else {
+            panic!("Wrong state");
+        }
+    }
+}

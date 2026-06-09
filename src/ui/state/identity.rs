@@ -33,7 +33,27 @@ impl AppState {
                 }
                 _ => Ok(None),
             },
-            _ => unreachable!("handle_viewing_my_identity_key requires AppState::ViewingMyIdentity"),
+            _ => {
+                unreachable!("handle_viewing_my_identity_key requires AppState::ViewingMyIdentity")
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn identity_escape() {
+        let mut state = AppState::ViewingMyIdentity {
+            friend_code: "test-code".to_string(),
+            onion_address: "test.onion".to_string(),
+            copied_field: None,
+        };
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        state.handle_key(key, 10).unwrap();
+        assert!(matches!(state, AppState::Normal { .. }));
     }
 }

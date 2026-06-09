@@ -72,3 +72,36 @@ impl AppState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn adding_friend_enter_sends() {
+        let mut state = AppState::AddingFriend {
+            input: "friend.onion".to_string(),
+            cursor: 12,
+            error: None,
+        };
+        let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let action = state.handle_key(key, 10).unwrap();
+        assert_eq!(
+            action,
+            Some(AppAction::SendFriendRequest("friend.onion".to_string()))
+        );
+    }
+
+    #[test]
+    fn adding_friend_escape_returns_to_normal() {
+        let mut state = AppState::AddingFriend {
+            input: "test".to_string(),
+            cursor: 4,
+            error: None,
+        };
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        state.handle_key(key, 10).unwrap();
+        assert!(matches!(state, AppState::Normal { .. }));
+    }
+}
