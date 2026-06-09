@@ -1,5 +1,6 @@
 mod adding_friend;
 mod friend_requests;
+mod identity;
 mod normal;
 
 use crate::error::Result;
@@ -110,31 +111,7 @@ impl AppState {
                 self.handle_viewing_friend_request_key(key)
             }
 
-            AppState::ViewingMyIdentity {
-                ref onion_address,
-                ref friend_code,
-                ref mut copied_field,
-            } => match key.code {
-                KeyCode::Char('i') | KeyCode::Esc => {
-                    *self = AppState::default();
-                    Ok(None)
-                }
-                KeyCode::Char('o') | KeyCode::Char('1') => {
-                    if !onion_address.starts_with('(')
-                        && crate::ui::copy_to_clipboard(onion_address)
-                    {
-                        *copied_field = Some("onion".into());
-                    }
-                    Ok(None)
-                }
-                KeyCode::Char('c') | KeyCode::Char('2') => {
-                    if !friend_code.starts_with('(') && crate::ui::copy_to_clipboard(friend_code) {
-                        *copied_field = Some("code".into());
-                    }
-                    Ok(None)
-                }
-                _ => Ok(None),
-            },
+            AppState::ViewingMyIdentity { .. } => self.handle_viewing_my_identity_key(key),
 
             AppState::SettingEphemeral {
                 conversation_id,
