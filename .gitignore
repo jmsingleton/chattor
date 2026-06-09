@@ -40,3 +40,6 @@ website/.astro/
 # Git worktrees & Claude
 /.worktrees/
 /.claude/
+
+# graphify generated knowledge-graph artifacts
+/graphify-out/
