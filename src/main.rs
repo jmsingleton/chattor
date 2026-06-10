@@ -904,48 +904,44 @@ async fn run_tui(
                                     )
                                     .ok();
 
-                                    // Encrypt the message using Signal session
+                                    // Encrypt the message using the session facade
                                     let encrypted_msg = {
-                                        let store = crypto::SessionStore::new(&app_lock.db);
-                                        let session = store.load_session(&peer_onion);
-                                        match session {
-                                            Ok(Some(mut session)) => {
-                                                let payload = protocol::message::PlaintextPayload {
-                                                    content: content.clone(),
-                                                    sent_at: std::time::SystemTime::now()
-                                                        .duration_since(std::time::UNIX_EPOCH)
-                                                        .unwrap_or_default()
-                                                        .as_secs()
-                                                        as i64,
-                                                    message_type: "text".to_string(),
-                                                    ephemeral_ttl: conv_ttl,
-                                                };
-                                                let plaintext = serde_json::to_vec(&payload).ok();
-                                                match plaintext {
-                                                    Some(pt) => match session.encrypt(&pt) {
-                                                        Ok((header, ciphertext, is_prekey)) => {
-                                                            store.store_session(&session).ok();
-                                                            Some(protocol::message::TextMessage {
-                                                                    from_onion: own_onion.clone(),
-                                                                    to_onion: peer_onion.clone(),
-                                                                    signal_header: base64::engine::general_purpose::STANDARD.encode(&header),
-                                                                    signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
-                                                                    signal_type: if is_prekey {
-                                                                        protocol::message::SignalMessageType::PrekeyMessage
-                                                                    } else {
-                                                                        protocol::message::SignalMessageType::Message
-                                                                    },
-                                                                    timestamp: payload.sent_at,
-                                                                    message_id: uuid::Uuid::parse_str(&msg_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
-                                                                    x3dh_init: None,
-                                                                })
-                                                        }
-                                                        Err(_) => None,
-                                                    },
-                                                    None => None,
-                                                }
-                                            }
-                                            _ => None,
+                                        let payload = protocol::message::PlaintextPayload {
+                                            content: content.clone(),
+                                            sent_at: std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap_or_default()
+                                                .as_secs()
+                                                as i64,
+                                            message_type: "text".to_string(),
+                                            ephemeral_ttl: conv_ttl,
+                                        };
+                                        match serde_json::to_vec(&payload).ok().and_then(|pt| {
+                                            crypto::SessionManager::new(&app_lock.db)
+                                                .encrypt_for(&peer_onion, &pt)
+                                                .ok()
+                                                .flatten()
+                                        }) {
+                                            Some(oc) => Some(protocol::message::TextMessage {
+                                                from_onion: own_onion.clone(),
+                                                to_onion: peer_onion.clone(),
+                                                signal_header:
+                                                    base64::engine::general_purpose::STANDARD
+                                                        .encode(&oc.header),
+                                                signal_ciphertext:
+                                                    base64::engine::general_purpose::STANDARD
+                                                        .encode(&oc.ciphertext),
+                                                signal_type: if oc.is_prekey {
+                                                    protocol::message::SignalMessageType::PrekeyMessage
+                                                } else {
+                                                    protocol::message::SignalMessageType::Message
+                                                },
+                                                timestamp: payload.sent_at,
+                                                message_id: uuid::Uuid::parse_str(&msg_id)
+                                                    .unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                                                x3dh_init: None,
+                                            }),
+                                            None => None,
                                         }
                                     };
 

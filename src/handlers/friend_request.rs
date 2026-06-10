@@ -70,8 +70,6 @@ pub async fn handle_send_friend_request(app: &App, peer_input: &str) -> Result<S
 
 /// Handle accepting a friend request
 pub fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
-    use crate::crypto::PreKeyBundle;
-
     // Get our .onion address
     let own_onion = app
         .onion_address
@@ -88,20 +86,13 @@ pub fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
         )
         .map_err(|e| error::ChattorError::Database(format!("Failed to load request: {}", e)))?;
 
-    // Generate PreKey bundle for the accept message.
-    // Generate a dedicated X25519 Signal identity keypair for X3DH.
-    // This is separate from the Ed25519 identity used for friend request signing.
     let identity = app
         .identity
         .as_ref()
         .ok_or_else(|| error::ChattorError::Crypto("Identity not initialized".into()))?;
-    let signal_identity = libsignal_protocol::vxeddsa::gen_keypair();
-    let signal_identity_public_raw =
-        libsignal_protocol::utils::decode_public_key(&signal_identity.public).map_err(|_| {
-            error::ChattorError::Crypto("Failed to decode signal identity public key".into())
-        })?;
-    let (bundle, private_keys) =
-        PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
+
+    // Generate PreKey bundle and persist all private material via the facade.
+    let bundle = crate::crypto::SessionManager::new(&app.db).create_accept_bundle(&from_onion)?;
 
     // Create accept message (inline to avoid Database clone issue)
     let timestamp = std::time::SystemTime::now()
@@ -125,71 +116,6 @@ pub fn handle_accept_friend_request(app: &App, request_id: i64) -> Result<()> {
         signature: base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
         ed25519_pubkey: Some(identity.public_key_base64()),
     };
-
-    // Store PreKey private material so we can create the Signal session later
-    // when the peer sends their first PreKey message. We do NOT create the
-    // session here — the shared secret requires the peer's ephemeral key,
-    // which is embedded in their first encrypted message.
-    let identity_b64 =
-        base64::engine::general_purpose::STANDARD.encode(private_keys.identity_secret);
-    let spk_b64 =
-        base64::engine::general_purpose::STANDARD.encode(private_keys.signed_prekey_secret);
-    conn.execute(
-        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
-        (&format!("prekey_identity:{}", from_onion), &identity_b64),
-    )
-    .map_err(|e| {
-        error::ChattorError::Database(format!("Failed to store PreKey identity material: {}", e))
-    })?;
-    conn.execute(
-        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
-        (&format!("prekey_spk:{}", from_onion), &spk_b64),
-    )
-    .map_err(|e| {
-        error::ChattorError::Database(format!("Failed to store PreKey SPK material: {}", e))
-    })?;
-    if let Some(opk_secret) = private_keys.prekey_secret {
-        let opk_b64 = base64::engine::general_purpose::STANDARD.encode(opk_secret);
-        conn.execute(
-            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
-            (&format!("prekey_opk:{}", from_onion), &opk_b64),
-        )
-        .map_err(|e| {
-            error::ChattorError::Database(format!("Failed to store PreKey OPK material: {}", e))
-        })?;
-    }
-    // Also store the Signal identity secret for the initiator side
-    // (needed when handle_incoming_accept creates the session)
-    let signal_secret_b64 =
-        base64::engine::general_purpose::STANDARD.encode(signal_identity.secret);
-    conn.execute(
-        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
-        (
-            &format!("signal_identity_secret:{}", from_onion),
-            &signal_secret_b64,
-        ),
-    )
-    .map_err(|e| {
-        error::ChattorError::Database(format!("Failed to store Signal identity secret: {}", e))
-    })?;
-
-    // Store creation timestamp for TTL cleanup
-    conn.execute(
-        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
-        (
-            &format!("prekey_created_at:{}", from_onion),
-            &format!(
-                "{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs()
-            ),
-        ),
-    )
-    .map_err(|e| {
-        error::ChattorError::Database(format!("Failed to store PreKey timestamp: {}", e))
-    })?;
 
     // Add friend to database
     let timestamp = std::time::SystemTime::now()
@@ -254,7 +180,7 @@ pub fn handle_incoming_accept(
     app: &App,
     accept: &protocol::message::FriendRequestAcceptMessage,
 ) -> Result<()> {
-    use crate::crypto::{PreKeyBundle, PreKeyPrivateMaterial, SessionStore, SignalSession};
+    use crate::crypto::PreKeyBundle;
 
     // Deserialize the remote peer's PreKey bundle from the accept message
     let bundle: PreKeyBundle = serde_json::from_str(&accept.signal_prekey_bundle).map_err(|e| {
@@ -303,138 +229,38 @@ pub fn handle_incoming_accept(
         )));
     }
 
-    // Verify PreKeyBundle VXEdDSA signature (self-consistency check)
-    if !bundle.verify_signature()? {
-        return Err(error::ChattorError::Crypto(format!(
-            "Accept message from {} has invalid PreKeyBundle VXEdDSA signature",
-            accept.from_onion
-        )));
-    }
-
-    // Load our Signal identity secret that was stored when we sent the friend request.
-    // We are the original requester; the acceptor sent us their PreKey bundle.
-    // We need our Signal identity to perform X3DH as initiator.
-    //
-    // When we sent the friend request, we didn't have the peer's .onion yet.
-    // But when we ACCEPTED a friend request from them (handle_accept_friend_request),
-    // we stored signal_identity_secret:<peer_onion>. However, in the case where
-    // we are the REQUESTER receiving an accept, we need to generate a new Signal
-    // identity now (the requester didn't pre-store one because the accept contains the bundle).
-    let signal_identity_secret: [u8; 32] = {
-        // Check if we stored a signal identity secret for this peer
-        let key = format!("signal_identity_secret:{}", accept.from_onion);
-        match app.db.connection().query_row(
-            "SELECT value FROM app_settings WHERE key = ?1",
-            [&key],
-            |row| row.get::<_, String>(0),
-        ) {
-            Ok(b64) => {
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(&b64)
-                    .map_err(|e| {
-                        error::ChattorError::Crypto(format!(
-                            "Failed to decode stored Signal identity secret: {}",
-                            e
-                        ))
-                    })?;
-                bytes.try_into().map_err(|_| {
-                    error::ChattorError::Crypto(
-                        "Stored Signal identity secret has wrong length".into(),
-                    )
-                })?
-            }
-            Err(_) => {
-                // Generate a fresh Signal identity for this X3DH exchange
-                let kp = libsignal_protocol::vxeddsa::gen_keypair();
-                kp.secret
-            }
-        }
-    };
-
-    let _identity = app
-        .identity
-        .as_ref()
-        .ok_or_else(|| error::ChattorError::Crypto("Identity not initialized".into()))?;
-    let dummy_private = PreKeyPrivateMaterial {
-        identity_secret: [0u8; 32],
-        signed_prekey_secret: [0u8; 32],
-        prekey_secret: None,
-    };
-    let (session, _ad, ephemeral_public) = SignalSession::from_prekey_bundle_real(
-        accept.from_onion.clone(),
-        &bundle,
-        &dummy_private,
-        &signal_identity_secret,
-    )?;
-
-    // Compute our identity public key for the X3DH init data
-    let our_identity_encoded = libsignal_protocol::vxeddsa::gen_pubkey(&signal_identity_secret);
-
-    // Store session
-    let store = SessionStore::new(&app.db);
-    store.store_session(&session)?;
-
-    // Queue a handshake PreKey message to trigger the peer's session creation.
-    // Without this, the acceptor can't send messages because they deferred
-    // session creation until our first PreKey message arrives.
+    // Verify VXEdDSA bundle signature, establish session, and encrypt the handshake
+    // PreKey message via the facade.
     let own_onion = app
         .onion_address
         .as_ref()
         .ok_or_else(|| error::ChattorError::Tor("Tor not initialized".into()))?;
-    {
-        let mut session = store.load_session(&accept.from_onion)?.ok_or_else(|| {
-            error::ChattorError::Crypto("Session just stored but not found".into())
-        })?;
+    let hs = crate::crypto::SessionManager::new(&app.db)
+        .establish_from_accept(&accept.from_onion, &bundle)?;
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
 
-        let handshake = protocol::message::PlaintextPayload {
-            content: String::new(),
-            sent_at: now,
-            message_type: "handshake".to_string(),
-            ephemeral_ttl: None,
-        };
-        let plaintext = serde_json::to_vec(&handshake)
-            .map_err(|e| error::ChattorError::Crypto(format!("Handshake serialize: {}", e)))?;
-
-        let (header, ciphertext, is_prekey) = session.encrypt(&plaintext)?;
-        store.store_session(&session)?; // persist updated ratchet state
-
-        // Build X3DH init data for the PreKey message so Bob can run x3dh_responder
-        let x3dh_init = if is_prekey {
-            Some(protocol::message::X3DHInitData {
-                sender_identity_key: base64::engine::general_purpose::STANDARD
-                    .encode(our_identity_encoded),
-                sender_ephemeral_key: base64::engine::general_purpose::STANDARD
-                    .encode(ephemeral_public),
-            })
+    let handshake_msg = protocol::message::Message::TextMessage(protocol::message::TextMessage {
+        from_onion: own_onion.clone(),
+        to_onion: accept.from_onion.clone(),
+        signal_header: base64::engine::general_purpose::STANDARD.encode(&hs.header),
+        signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&hs.ciphertext),
+        signal_type: if hs.is_prekey {
+            protocol::message::SignalMessageType::PrekeyMessage
         } else {
-            None
-        };
+            protocol::message::SignalMessageType::Message
+        },
+        timestamp: now,
+        message_id: uuid::Uuid::new_v4(),
+        x3dh_init: hs.x3dh_init,
+    });
 
-        let handshake_msg =
-            protocol::message::Message::TextMessage(protocol::message::TextMessage {
-                from_onion: own_onion.clone(),
-                to_onion: accept.from_onion.clone(),
-                signal_header: base64::engine::general_purpose::STANDARD.encode(&header),
-                signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&ciphertext),
-                signal_type: if is_prekey {
-                    protocol::message::SignalMessageType::PrekeyMessage
-                } else {
-                    protocol::message::SignalMessageType::Message
-                },
-                timestamp: now,
-                message_id: uuid::Uuid::new_v4(),
-                x3dh_init,
-            });
-
-        app.message_queue
-            .enqueue(&app.db, &accept.from_onion, &handshake_msg, "high")?;
-        eprintln!("Queued handshake PreKey message to {}", accept.from_onion);
-    }
+    app.message_queue
+        .enqueue(&app.db, &accept.from_onion, &handshake_msg, "high")?;
+    eprintln!("Queued handshake PreKey message to {}", accept.from_onion);
 
     // Add as friend
     let conn = app.db.connection();

@@ -1,5 +1,4 @@
 use crate::app::App;
-use crate::crypto;
 use crate::db;
 use crate::error;
 use crate::error::Result;
@@ -7,7 +6,6 @@ use crate::net;
 use crate::notifications;
 use crate::presence;
 use crate::protocol;
-use base64::Engine;
 use std::sync::Arc;
 
 use super::friend_request::handle_incoming_accept;
@@ -110,191 +108,18 @@ pub async fn handle_incoming_message(
         protocol::message::Message::TextMessage(text_msg) => {
             let from_onion = &text_msg.from_onion;
             let msg_id = text_msg.message_id.to_string();
-            let is_prekey =
-                text_msg.signal_type == protocol::message::SignalMessageType::PrekeyMessage;
 
-            // Decode header and ciphertext from wire format
-            let store = crypto::SessionStore::new(&app.db);
-            let header = base64::engine::general_purpose::STANDARD
-                .decode(&text_msg.signal_header)
-                .map_err(|e| {
-                    error::ChattorError::Crypto(format!("Failed to decode header: {}", e))
-                })?;
-            let ciphertext = base64::engine::general_purpose::STANDARD
-                .decode(&text_msg.signal_ciphertext)
-                .map_err(|e| {
-                    error::ChattorError::Crypto(format!("Failed to decode ciphertext: {}", e))
-                })?;
-
-            let payload = match store.load_session(from_onion)? {
-                Some(mut session) => {
-                    let plaintext = session.decrypt(&header, &ciphertext)?;
-                    store.store_session(&session)?;
-                    serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
-                        .map_err(|e| {
-                            error::ChattorError::Crypto(format!("Failed to parse payload: {}", e))
-                        })?
-                }
-                None if is_prekey => {
-                    // No session yet — create one from stored PreKey private material.
-                    // This happens when we accepted a friend request (stored our private
-                    // keys) and the peer sends their first message as a PreKey message.
-
-                    // Extract X3DH init data from the message
-                    let x3dh_init = text_msg.x3dh_init.as_ref().ok_or_else(|| {
-                        error::ChattorError::Crypto(format!(
-                            "PreKey message from {} missing X3DH init data",
+            let payload =
+                match crate::crypto::SessionManager::new(&app.db).decrypt_incoming(text_msg)? {
+                    Some(p) => p,
+                    None => {
+                        eprintln!(
+                            "No session for {} and not a PreKey message, cannot decrypt",
                             from_onion
-                        ))
-                    })?;
-
-                    let alice_identity_bytes = base64::engine::general_purpose::STANDARD
-                        .decode(&x3dh_init.sender_identity_key)
-                        .map_err(|e| {
-                            error::ChattorError::Crypto(format!(
-                                "Failed to decode sender identity key: {}",
-                                e
-                            ))
-                        })?;
-                    let alice_identity_public: [u8; 33] =
-                        alice_identity_bytes.try_into().map_err(|_| {
-                            error::ChattorError::Crypto(
-                                "Sender identity key has wrong length (expected 33)".into(),
-                            )
-                        })?;
-
-                    let alice_ephemeral_bytes = base64::engine::general_purpose::STANDARD
-                        .decode(&x3dh_init.sender_ephemeral_key)
-                        .map_err(|e| {
-                            error::ChattorError::Crypto(format!(
-                                "Failed to decode sender ephemeral key: {}",
-                                e
-                            ))
-                        })?;
-                    let alice_ephemeral_public: [u8; 33] =
-                        alice_ephemeral_bytes.try_into().map_err(|_| {
-                            error::ChattorError::Crypto(
-                                "Sender ephemeral key has wrong length (expected 33)".into(),
-                            )
-                        })?;
-
-                    // Load all stored PreKey private material
-                    let conn = app.db.connection();
-                    let identity_b64: String = conn
-                        .query_row(
-                            "SELECT value FROM app_settings WHERE key = ?1",
-                            [&format!("prekey_identity:{}", from_onion)],
-                            |row| row.get(0),
-                        )
-                        .map_err(|_| {
-                            error::ChattorError::Crypto(format!(
-                                "No stored PreKey identity material for {}",
-                                from_onion
-                            ))
-                        })?;
-                    let spk_b64: String = conn
-                        .query_row(
-                            "SELECT value FROM app_settings WHERE key = ?1",
-                            [&format!("prekey_spk:{}", from_onion)],
-                            |row| row.get(0),
-                        )
-                        .map_err(|_| {
-                            error::ChattorError::Crypto(format!(
-                                "No stored PreKey SPK material for {}",
-                                from_onion
-                            ))
-                        })?;
-                    let opk_b64: Option<String> = conn
-                        .query_row(
-                            "SELECT value FROM app_settings WHERE key = ?1",
-                            [&format!("prekey_opk:{}", from_onion)],
-                            |row| row.get(0),
-                        )
-                        .ok();
-
-                    let identity_secret: [u8; 32] = base64::engine::general_purpose::STANDARD
-                        .decode(&identity_b64)
-                        .map_err(|e| {
-                            error::ChattorError::Crypto(format!(
-                                "Failed to decode PreKey identity: {}",
-                                e
-                            ))
-                        })?
-                        .try_into()
-                        .map_err(|_| {
-                            error::ChattorError::Crypto(
-                                "PreKey identity secret has wrong length".into(),
-                            )
-                        })?;
-                    let signed_prekey_secret: [u8; 32] = base64::engine::general_purpose::STANDARD
-                        .decode(&spk_b64)
-                        .map_err(|e| {
-                            error::ChattorError::Crypto(format!(
-                                "Failed to decode PreKey SPK: {}",
-                                e
-                            ))
-                        })?
-                        .try_into()
-                        .map_err(|_| {
-                            error::ChattorError::Crypto("PreKey SPK secret has wrong length".into())
-                        })?;
-                    let prekey_secret: Option<[u8; 32]> = opk_b64
-                        .map(|b64| {
-                            let bytes = base64::engine::general_purpose::STANDARD
-                                .decode(&b64)
-                                .map_err(|e| {
-                                    error::ChattorError::Crypto(format!(
-                                        "Failed to decode PreKey OPK: {}",
-                                        e
-                                    ))
-                                })?;
-                            bytes.try_into().map_err(|_| {
-                                error::ChattorError::Crypto("PreKey OPK has wrong length".into())
-                            })
-                        })
-                        .transpose()?;
-
-                    let private_material = crypto::PreKeyPrivateMaterial {
-                        identity_secret,
-                        signed_prekey_secret,
-                        prekey_secret,
-                    };
-
-                    let (mut session, _ad) = crypto::SignalSession::from_prekey_message_real(
-                        from_onion.clone(),
-                        &private_material,
-                        &alice_identity_public,
-                        &alice_ephemeral_public,
-                    )?;
-
-                    let plaintext = session.decrypt(&header, &ciphertext)?;
-                    store.store_session(&session)?;
-
-                    // Clean up stored PreKey material (session is now established)
-                    conn.execute(
-                        "DELETE FROM app_settings WHERE key LIKE ?1",
-                        [&format!("prekey_%:{}", from_onion)],
-                    )
-                    .ok();
-                    conn.execute(
-                        "DELETE FROM app_settings WHERE key = ?1",
-                        [&format!("signal_identity_secret:{}", from_onion)],
-                    )
-                    .ok();
-
-                    serde_json::from_slice::<protocol::message::PlaintextPayload>(&plaintext)
-                        .map_err(|e| {
-                            error::ChattorError::Crypto(format!("Failed to parse payload: {}", e))
-                        })?
-                }
-                None => {
-                    eprintln!(
-                        "No session for {} and not a PreKey message, cannot decrypt",
-                        from_onion
-                    );
-                    return Ok(());
-                }
-            };
+                        );
+                        return Ok(());
+                    }
+                };
 
             // Handshake messages are session-establishment only — don't display
             if payload.message_type == "handshake" {

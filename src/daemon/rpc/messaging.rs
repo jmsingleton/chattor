@@ -67,55 +67,21 @@ pub(super) async fn handle_send_message(
         )
         .ok();
 
-        // Encrypt with Signal Protocol
-        let store = crate::crypto::SessionStore::new(&app.db);
-        match store.load_session(&peer_onion) {
-            Ok(Some(mut session)) => {
-                let payload = crate::protocol::message::PlaintextPayload {
-                    content: message.clone(),
-                    sent_at: now,
-                    message_type: "text".to_string(),
-                    ephemeral_ttl: ttl,
-                };
-                let plaintext = match serde_json::to_vec(&payload) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return RpcResponse::error(id, -32000, format!("Serialize error: {}", e))
-                    }
-                };
-
-                let (header, ciphertext, is_prekey) = match session.encrypt(&plaintext) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        return RpcResponse::error(id, -32000, format!("Encrypt error: {}", e))
-                    }
-                };
-                if let Err(e) = store.store_session(&session) {
-                    return RpcResponse::error(id, -32000, format!("Session store error: {}", e));
-                }
-
-                use base64::Engine;
-                let msg = crate::protocol::message::Message::TextMessage(
-                    crate::protocol::message::TextMessage {
-                        from_onion: own_onion,
-                        to_onion: peer_onion.clone(),
-                        signal_header: base64::engine::general_purpose::STANDARD.encode(&header),
-                        signal_ciphertext: base64::engine::general_purpose::STANDARD
-                            .encode(&ciphertext),
-                        signal_type: if is_prekey {
-                            crate::protocol::message::SignalMessageType::PrekeyMessage
-                        } else {
-                            crate::protocol::message::SignalMessageType::Message
-                        },
-                        timestamp: now,
-                        message_id: msg_id,
-                        x3dh_init: None,
-                    },
-                );
-
-                let pool = app.connection_pool.as_ref().map(Arc::clone);
-                (msg, msg_id, pool)
-            }
+        // Encrypt with Signal Protocol via the session facade
+        let payload = crate::protocol::message::PlaintextPayload {
+            content: message.clone(),
+            sent_at: now,
+            message_type: "text".to_string(),
+            ephemeral_ttl: ttl,
+        };
+        let plaintext = match serde_json::to_vec(&payload) {
+            Ok(p) => p,
+            Err(e) => return RpcResponse::error(id, -32000, format!("Serialize error: {}", e)),
+        };
+        let oc = match crate::crypto::SessionManager::new(&app.db)
+            .encrypt_for(&peer_onion, &plaintext)
+        {
+            Ok(Some(oc)) => oc,
             Ok(None) => {
                 return RpcResponse::error(
                     id,
@@ -123,8 +89,28 @@ pub(super) async fn handle_send_message(
                     format!("No encryption session with {}", peer_onion),
                 )
             }
-            Err(e) => return RpcResponse::error(id, -32000, format!("Session load error: {}", e)),
-        }
+            Err(e) => return RpcResponse::error(id, -32000, format!("Encrypt error: {}", e)),
+        };
+
+        use base64::Engine;
+        let msg =
+            crate::protocol::message::Message::TextMessage(crate::protocol::message::TextMessage {
+                from_onion: own_onion,
+                to_onion: peer_onion.clone(),
+                signal_header: base64::engine::general_purpose::STANDARD.encode(&oc.header),
+                signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&oc.ciphertext),
+                signal_type: if oc.is_prekey {
+                    crate::protocol::message::SignalMessageType::PrekeyMessage
+                } else {
+                    crate::protocol::message::SignalMessageType::Message
+                },
+                timestamp: now,
+                message_id: msg_id,
+                x3dh_init: None,
+            });
+
+        let pool = app.connection_pool.as_ref().map(Arc::clone);
+        (msg, msg_id, pool)
     };
     // Lock released here
 
