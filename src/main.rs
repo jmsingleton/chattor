@@ -925,15 +925,20 @@ async fn run_tui(
                                             Some(oc) => Some(protocol::message::TextMessage {
                                                 from_onion: own_onion.clone(),
                                                 to_onion: peer_onion.clone(),
-                                                signal_header: base64::engine::general_purpose::STANDARD.encode(&oc.header),
-                                                signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&oc.ciphertext),
+                                                signal_header:
+                                                    base64::engine::general_purpose::STANDARD
+                                                        .encode(&oc.header),
+                                                signal_ciphertext:
+                                                    base64::engine::general_purpose::STANDARD
+                                                        .encode(&oc.ciphertext),
                                                 signal_type: if oc.is_prekey {
                                                     protocol::message::SignalMessageType::PrekeyMessage
                                                 } else {
                                                     protocol::message::SignalMessageType::Message
                                                 },
                                                 timestamp: payload.sent_at,
-                                                message_id: uuid::Uuid::parse_str(&msg_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                                                message_id: uuid::Uuid::parse_str(&msg_id)
+                                                    .unwrap_or_else(|_| uuid::Uuid::new_v4()),
                                                 x3dh_init: None,
                                             }),
                                             None => None,

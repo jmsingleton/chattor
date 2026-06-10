@@ -3,7 +3,8 @@ use crate::db::Database;
 use crate::error::{ChattorError, Result};
 use base64::Engine as _;
 
-const B64: base64::engine::general_purpose::GeneralPurpose = base64::engine::general_purpose::STANDARD;
+const B64: base64::engine::general_purpose::GeneralPurpose =
+    base64::engine::general_purpose::STANDARD;
 
 /// Typed accessor for X3DH establishment material persisted in `app_settings`.
 /// Owns the key-string format so it lives in exactly one place.
@@ -35,7 +36,10 @@ impl<'a> PreKeyStore<'a> {
         ) {
             Ok(v) => Ok(Some(v)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(ChattorError::Database(format!("PreKeyStore get failed: {}", e))),
+            Err(e) => Err(ChattorError::Database(format!(
+                "PreKeyStore get failed: {}",
+                e
+            ))),
         }
     }
 
@@ -139,7 +143,8 @@ impl<'a> PreKeyStore<'a> {
             .filter_map(|(key, ts_str)| {
                 let ts: u64 = ts_str.parse().ok()?;
                 if now.saturating_sub(ts) > max_age_secs {
-                    key.strip_prefix("prekey_created_at:").map(|s| s.to_string())
+                    key.strip_prefix("prekey_created_at:")
+                        .map(|s| s.to_string())
                 } else {
                     None
                 }
@@ -176,12 +181,17 @@ mod tests {
     fn test_store_and_load() {
         let (db, _t) = temp_db();
         let store = PreKeyStore::new(&db);
-        store.store("peer.onion", &material(true), &[9u8; 32], 1000).unwrap();
+        store
+            .store("peer.onion", &material(true), &[9u8; 32], 1000)
+            .unwrap();
         let loaded = store.load("peer.onion").unwrap().unwrap();
         assert_eq!(loaded.identity_secret, [1u8; 32]);
         assert_eq!(loaded.signed_prekey_secret, [2u8; 32]);
         assert_eq!(loaded.prekey_secret, Some([3u8; 32]));
-        assert_eq!(store.load_signal_identity_secret("peer.onion").unwrap(), Some([9u8; 32]));
+        assert_eq!(
+            store.load_signal_identity_secret("peer.onion").unwrap(),
+            Some([9u8; 32])
+        );
     }
 
     #[test]
@@ -189,14 +199,19 @@ mod tests {
         let (db, _t) = temp_db();
         let store = PreKeyStore::new(&db);
         assert!(store.load("nobody.onion").unwrap().is_none());
-        assert!(store.load_signal_identity_secret("nobody.onion").unwrap().is_none());
+        assert!(store
+            .load_signal_identity_secret("nobody.onion")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
     fn test_store_without_opk() {
         let (db, _t) = temp_db();
         let store = PreKeyStore::new(&db);
-        store.store("peer.onion", &material(false), &[9u8; 32], 1000).unwrap();
+        store
+            .store("peer.onion", &material(false), &[9u8; 32], 1000)
+            .unwrap();
         let loaded = store.load("peer.onion").unwrap().unwrap();
         assert_eq!(loaded.prekey_secret, None);
     }
@@ -205,23 +220,32 @@ mod tests {
     fn test_delete_is_idempotent() {
         let (db, _t) = temp_db();
         let store = PreKeyStore::new(&db);
-        store.store("peer.onion", &material(true), &[9u8; 32], 1000).unwrap();
+        store
+            .store("peer.onion", &material(true), &[9u8; 32], 1000)
+            .unwrap();
         store.delete("peer.onion").unwrap();
         store.delete("peer.onion").unwrap();
         assert!(store.load("peer.onion").unwrap().is_none());
-        assert!(store.load_signal_identity_secret("peer.onion").unwrap().is_none());
+        assert!(store
+            .load_signal_identity_secret("peer.onion")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
     fn test_cleanup_stale() {
         let (db, _t) = temp_db();
         let store = PreKeyStore::new(&db);
-        store.store("old.onion", &material(true), &[9u8; 32], 0).unwrap();
+        store
+            .store("old.onion", &material(true), &[9u8; 32], 0)
+            .unwrap();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        store.store("new.onion", &material(true), &[8u8; 32], now).unwrap();
+        store
+            .store("new.onion", &material(true), &[8u8; 32], now)
+            .unwrap();
         let cleaned = store.cleanup_stale(60).unwrap();
         assert_eq!(cleaned, 1);
         assert!(store.load("old.onion").unwrap().is_none());

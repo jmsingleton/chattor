@@ -78,7 +78,9 @@ pub(super) async fn handle_send_message(
             Ok(p) => p,
             Err(e) => return RpcResponse::error(id, -32000, format!("Serialize error: {}", e)),
         };
-        let oc = match crate::crypto::SessionManager::new(&app.db).encrypt_for(&peer_onion, &plaintext) {
+        let oc = match crate::crypto::SessionManager::new(&app.db)
+            .encrypt_for(&peer_onion, &plaintext)
+        {
             Ok(Some(oc)) => oc,
             Ok(None) => {
                 return RpcResponse::error(
@@ -91,20 +93,21 @@ pub(super) async fn handle_send_message(
         };
 
         use base64::Engine;
-        let msg = crate::protocol::message::Message::TextMessage(crate::protocol::message::TextMessage {
-            from_onion: own_onion,
-            to_onion: peer_onion.clone(),
-            signal_header: base64::engine::general_purpose::STANDARD.encode(&oc.header),
-            signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&oc.ciphertext),
-            signal_type: if oc.is_prekey {
-                crate::protocol::message::SignalMessageType::PrekeyMessage
-            } else {
-                crate::protocol::message::SignalMessageType::Message
-            },
-            timestamp: now,
-            message_id: msg_id,
-            x3dh_init: None,
-        });
+        let msg =
+            crate::protocol::message::Message::TextMessage(crate::protocol::message::TextMessage {
+                from_onion: own_onion,
+                to_onion: peer_onion.clone(),
+                signal_header: base64::engine::general_purpose::STANDARD.encode(&oc.header),
+                signal_ciphertext: base64::engine::general_purpose::STANDARD.encode(&oc.ciphertext),
+                signal_type: if oc.is_prekey {
+                    crate::protocol::message::SignalMessageType::PrekeyMessage
+                } else {
+                    crate::protocol::message::SignalMessageType::Message
+                },
+                timestamp: now,
+                message_id: msg_id,
+                x3dh_init: None,
+            });
 
         let pool = app.connection_pool.as_ref().map(Arc::clone);
         (msg, msg_id, pool)

@@ -109,18 +109,17 @@ pub async fn handle_incoming_message(
             let from_onion = &text_msg.from_onion;
             let msg_id = text_msg.message_id.to_string();
 
-            let payload = match crate::crypto::SessionManager::new(&app.db)
-                .decrypt_incoming(text_msg)?
-            {
-                Some(p) => p,
-                None => {
-                    eprintln!(
-                        "No session for {} and not a PreKey message, cannot decrypt",
-                        from_onion
-                    );
-                    return Ok(());
-                }
-            };
+            let payload =
+                match crate::crypto::SessionManager::new(&app.db).decrypt_incoming(text_msg)? {
+                    Some(p) => p,
+                    None => {
+                        eprintln!(
+                            "No session for {} and not a PreKey message, cannot decrypt",
+                            from_onion
+                        );
+                        return Ok(());
+                    }
+                };
 
             // Handshake messages are session-establishment only — don't display
             if payload.message_type == "handshake" {

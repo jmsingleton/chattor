@@ -8,9 +8,9 @@
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use chattor::crypto::{
-    IdentityKeypair, PreKeyBundle, PreKeyPrivateMaterial, SessionStore, SignalSession,
-};
+use chattor::crypto::session_store::SessionStore;
+use chattor::crypto::signal::{PreKeyPrivateMaterial, SignalSession};
+use chattor::crypto::{IdentityKeypair, PreKeyBundle};
 use chattor::db::queries::{get_app_setting, set_app_setting};
 use chattor::db::Database;
 use chattor::net::queue::MessageQueue;

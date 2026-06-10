@@ -6,7 +6,8 @@ use crate::error::{ChattorError, Result};
 use crate::protocol::message::{PlaintextPayload, SignalMessageType, TextMessage, X3DHInitData};
 use base64::Engine as _;
 
-const B64: base64::engine::general_purpose::GeneralPurpose = base64::engine::general_purpose::STANDARD;
+const B64: base64::engine::general_purpose::GeneralPurpose =
+    base64::engine::general_purpose::STANDARD;
 
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
@@ -86,16 +87,23 @@ impl<'a> SessionManager<'a> {
                     })?
                     .try_into()
                     .map_err(|_| {
-                        ChattorError::Crypto("Sender identity key has wrong length (expected 33)".into())
+                        ChattorError::Crypto(
+                            "Sender identity key has wrong length (expected 33)".into(),
+                        )
                     })?;
                 let alice_ephemeral_public: [u8; 33] = B64
                     .decode(&x3dh_init.sender_ephemeral_key)
                     .map_err(|e| {
-                        ChattorError::Crypto(format!("Failed to decode sender ephemeral key: {}", e))
+                        ChattorError::Crypto(format!(
+                            "Failed to decode sender ephemeral key: {}",
+                            e
+                        ))
                     })?
                     .try_into()
                     .map_err(|_| {
-                        ChattorError::Crypto("Sender ephemeral key has wrong length (expected 33)".into())
+                        ChattorError::Crypto(
+                            "Sender ephemeral key has wrong length (expected 33)".into(),
+                        )
                     })?;
 
                 let prekey_store = PreKeyStore::new(self.db);
@@ -129,20 +137,29 @@ impl<'a> SessionManager<'a> {
     /// private material, and return the bundle for the accept message.
     pub fn create_accept_bundle(&self, peer: &str) -> Result<PreKeyBundle> {
         let signal_identity = libsignal_protocol::vxeddsa::gen_keypair();
-        let signal_identity_public_raw =
-            libsignal_protocol::utils::decode_public_key(&signal_identity.public).map_err(|_| {
-                ChattorError::Crypto("Failed to decode signal identity public key".into())
-            })?;
+        let signal_identity_public_raw = libsignal_protocol::utils::decode_public_key(
+            &signal_identity.public,
+        )
+        .map_err(|_| ChattorError::Crypto("Failed to decode signal identity public key".into()))?;
         let (bundle, private_keys) =
             PreKeyBundle::generate_real(&signal_identity.secret, &signal_identity_public_raw)?;
-        PreKeyStore::new(self.db).store(peer, &private_keys, &signal_identity.secret, now_secs())?;
+        PreKeyStore::new(self.db).store(
+            peer,
+            &private_keys,
+            &signal_identity.secret,
+            now_secs(),
+        )?;
         Ok(bundle)
     }
 
     /// Initiator side: verify the bundle's VXEdDSA self-signature, establish a session
     /// (loading or generating our signal identity secret), store it, and encrypt the
     /// handshake PreKey message. Returns its crypto fields (with x3dh_init).
-    pub fn establish_from_accept(&self, peer: &str, bundle: &PreKeyBundle) -> Result<OutgoingCrypto> {
+    pub fn establish_from_accept(
+        &self,
+        peer: &str,
+        bundle: &PreKeyBundle,
+    ) -> Result<OutgoingCrypto> {
         if !bundle.verify_signature()? {
             return Err(ChattorError::Crypto(format!(
                 "PreKeyBundle from {} has invalid VXEdDSA signature",
@@ -236,7 +253,9 @@ mod tests {
         let bob = "bob.onion";
 
         // 1. Bob accepts: generates a bundle and persists his material.
-        let bundle = SessionManager::new(&bob_db).create_accept_bundle(alice).unwrap();
+        let bundle = SessionManager::new(&bob_db)
+            .create_accept_bundle(alice)
+            .unwrap();
         assert!(PreKeyStore::new(&bob_db).load(alice).unwrap().is_some());
 
         // 2. Alice receives the accept bundle: establishes a session + handshake.
@@ -264,17 +283,25 @@ mod tests {
             ephemeral_ttl: None,
         })
         .unwrap();
-        let oc = SessionManager::new(&alice_db).encrypt_for(bob, &pt).unwrap().unwrap();
+        let oc = SessionManager::new(&alice_db)
+            .encrypt_for(bob, &pt)
+            .unwrap()
+            .unwrap();
         assert!(oc.x3dh_init.is_none());
         let msg = text_msg(alice, bob, &oc);
-        let got = SessionManager::new(&bob_db).decrypt_incoming(&msg).unwrap().unwrap();
+        let got = SessionManager::new(&bob_db)
+            .decrypt_incoming(&msg)
+            .unwrap()
+            .unwrap();
         assert_eq!(got.content, "hello bob");
     }
 
     #[test]
     fn test_encrypt_for_no_session_returns_none() {
         let (db, _t) = temp_db();
-        let result = SessionManager::new(&db).encrypt_for("stranger.onion", b"hi").unwrap();
+        let result = SessionManager::new(&db)
+            .encrypt_for("stranger.onion", b"hi")
+            .unwrap();
         assert!(result.is_none());
     }
 
