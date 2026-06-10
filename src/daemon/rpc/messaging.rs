@@ -251,3 +251,71 @@ pub(super) async fn handle_ephemeral_set(
         Err(e) => RpcResponse::error(id, -32000, format!("{}", e)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::rpc::{dispatch, RpcRequest};
+
+    fn test_app() -> (Arc<Mutex<App>>, tempfile::TempDir, tempfile::TempDir) {
+        let temp_config = tempfile::tempdir().unwrap();
+        let temp_data = tempfile::tempdir().unwrap();
+        let settings = crate::config::Settings {
+            config_dir: temp_config.path().to_path_buf(),
+            data_dir: temp_data.path().to_path_buf(),
+            db_path: temp_data.path().join("test.db"),
+            debug: false,
+            tor_socks_port: 9050,
+        };
+        let app = App::new_with_settings(settings, None).unwrap();
+        (Arc::new(Mutex::new(app)), temp_config, temp_data)
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_recv_messages_empty() {
+        let (app, _c, _d) = test_app();
+        let presence = crate::presence::new_presence_map();
+
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "recv_messages".into(),
+            params: serde_json::json!({}),
+        };
+        let resp = dispatch(&req, &app, &presence).await;
+        assert!(resp.error.is_none());
+        assert_eq!(resp.result.unwrap(), Value::Array(vec![]));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_send_message_missing_params() {
+        let (app, _c, _d) = test_app();
+        let presence = crate::presence::new_presence_map();
+
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "send_message".into(),
+            params: serde_json::json!({}),
+        };
+        let resp = dispatch(&req, &app, &presence).await;
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_ephemeral_set_missing_params() {
+        let (app, _c, _d) = test_app();
+        let presence = crate::presence::new_presence_map();
+
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "ephemeral_set".into(),
+            params: serde_json::json!({}),
+        };
+        let resp = dispatch(&req, &app, &presence).await;
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+}

@@ -224,3 +224,57 @@ pub(super) async fn handle_channels_feed(
         .collect();
     RpcResponse::success(id, Value::Array(list))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::rpc::{dispatch, RpcRequest};
+
+    fn test_app() -> (Arc<Mutex<App>>, tempfile::TempDir, tempfile::TempDir) {
+        let temp_config = tempfile::tempdir().unwrap();
+        let temp_data = tempfile::tempdir().unwrap();
+        let settings = crate::config::Settings {
+            config_dir: temp_config.path().to_path_buf(),
+            data_dir: temp_data.path().to_path_buf(),
+            db_path: temp_data.path().join("test.db"),
+            debug: false,
+            tor_socks_port: 9050,
+        };
+        let app = App::new_with_settings(settings, None).unwrap();
+        (Arc::new(Mutex::new(app)), temp_config, temp_data)
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_channels_list() {
+        let (app, _c, _d) = test_app();
+        let presence = crate::presence::new_presence_map();
+
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "channels_list".into(),
+            params: Value::Null,
+        };
+        let resp = dispatch(&req, &app, &presence).await;
+        assert!(resp.error.is_none());
+        let list = resp.result.unwrap();
+        // Should have at least the two own channels (public + friends_only)
+        assert!(list.as_array().unwrap().len() >= 2);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_channels_feed_empty() {
+        let (app, _c, _d) = test_app();
+        let presence = crate::presence::new_presence_map();
+
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "channels_feed".into(),
+            params: serde_json::json!({"channel_id": 1}),
+        };
+        let resp = dispatch(&req, &app, &presence).await;
+        assert!(resp.error.is_none());
+        assert_eq!(resp.result.unwrap(), Value::Array(vec![]));
+    }
+}

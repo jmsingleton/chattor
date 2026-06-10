@@ -164,3 +164,55 @@ pub(super) async fn handle_friends_reject(
         Err(e) => RpcResponse::error(id, -32000, format!("{}", e)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::rpc::{dispatch, RpcRequest};
+
+    fn test_app() -> (Arc<Mutex<App>>, tempfile::TempDir, tempfile::TempDir) {
+        let temp_config = tempfile::tempdir().unwrap();
+        let temp_data = tempfile::tempdir().unwrap();
+        let settings = crate::config::Settings {
+            config_dir: temp_config.path().to_path_buf(),
+            data_dir: temp_data.path().to_path_buf(),
+            db_path: temp_data.path().join("test.db"),
+            debug: false,
+            tor_socks_port: 9050,
+        };
+        let app = App::new_with_settings(settings, None).unwrap();
+        (Arc::new(Mutex::new(app)), temp_config, temp_data)
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_friends_list_empty() {
+        let (app, _c, _d) = test_app();
+        let presence = crate::presence::new_presence_map();
+
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "friends_list".into(),
+            params: Value::Null,
+        };
+        let resp = dispatch(&req, &app, &presence).await;
+        assert!(resp.error.is_none());
+        assert_eq!(resp.result.unwrap(), Value::Array(vec![]));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_friends_requests_empty() {
+        let (app, _c, _d) = test_app();
+        let presence = crate::presence::new_presence_map();
+
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "friends_requests".into(),
+            params: Value::Null,
+        };
+        let resp = dispatch(&req, &app, &presence).await;
+        assert!(resp.error.is_none());
+        assert_eq!(resp.result.unwrap(), Value::Array(vec![]));
+    }
+}

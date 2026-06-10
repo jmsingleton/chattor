@@ -46,3 +46,78 @@ pub(super) async fn handle_notifications_toggle(
         }),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::rpc::{dispatch, RpcRequest};
+
+    fn test_app() -> (Arc<Mutex<App>>, tempfile::TempDir, tempfile::TempDir) {
+        let temp_config = tempfile::tempdir().unwrap();
+        let temp_data = tempfile::tempdir().unwrap();
+        let settings = crate::config::Settings {
+            config_dir: temp_config.path().to_path_buf(),
+            data_dir: temp_data.path().to_path_buf(),
+            db_path: temp_data.path().join("test.db"),
+            debug: false,
+            tor_socks_port: 9050,
+        };
+        let app = App::new_with_settings(settings, None).unwrap();
+        (Arc::new(Mutex::new(app)), temp_config, temp_data)
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_status() {
+        let (app, _c, _d) = test_app();
+        let presence = crate::presence::new_presence_map();
+
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "status".into(),
+            params: Value::Null,
+        };
+        let resp = dispatch(&req, &app, &presence).await;
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        assert_eq!(result["daemon"], true);
+        assert_eq!(result["tor_connected"], false);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_identity() {
+        let (app, _c, _d) = test_app();
+        let presence = crate::presence::new_presence_map();
+
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "identity".into(),
+            params: Value::Null,
+        };
+        let resp = dispatch(&req, &app, &presence).await;
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        // No Tor = empty onion_address
+        assert_eq!(result["onion_address"], "");
+        assert_eq!(result["friend_code"], "");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_notifications_toggle() {
+        let (app, _c, _d) = test_app();
+        let presence = crate::presence::new_presence_map();
+
+        // Default is enabled, toggle should disable
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "notifications_toggle".into(),
+            params: Value::Null,
+        };
+        let resp = dispatch(&req, &app, &presence).await;
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        assert_eq!(result["enabled"], false);
+    }
+}
