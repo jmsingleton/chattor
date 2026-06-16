@@ -376,10 +376,14 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize, theme: &Theme)
 pub fn render_subscribe_channel_modal(
     f: &mut Frame,
     input: &mut TextInput,
+    channel_type: &str,
     error: Option<&str>,
     theme: &Theme,
 ) {
-    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 40, 50, 12);
+    use ratatui::style::Modifier;
+    use ratatui::text::{Line, Span};
+
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 40, 50, 13);
     f.render_widget(Clear, area);
 
     let block = Block::default()
@@ -392,30 +396,65 @@ pub fn render_subscribe_channel_modal(
         .direction(Direction::Vertical)
         .margin(2)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(1),
+            Constraint::Length(1), // prompt
+            Constraint::Length(3), // input
+            Constraint::Length(1), // channel-type selector
+            Constraint::Length(1), // help/error
+            Constraint::Length(1), // controls
         ])
         .split(area);
 
-    let prompt = Paragraph::new("Enter publisher's .onion address:");
+    let prompt = Paragraph::new("Enter publisher's .onion or friend code:");
     f.render_widget(prompt, chunks[0]);
 
     input.render(f, chunks[1], true, theme);
 
+    let public_active = channel_type == "public";
+    let active_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let inactive_style = Style::default().fg(theme.fg_dim);
+    let selector = Line::from(vec![
+        Span::styled("Channel:  ", Style::default().fg(theme.fg_dim)),
+        Span::styled(
+            if public_active {
+                "\u{25b8} Public"
+            } else {
+                "  Public"
+            },
+            if public_active {
+                active_style
+            } else {
+                inactive_style
+            },
+        ),
+        Span::raw("    "),
+        Span::styled(
+            if public_active {
+                "  Friends-only"
+            } else {
+                "\u{25b8} Friends-only"
+            },
+            if public_active {
+                inactive_style
+            } else {
+                active_style
+            },
+        ),
+    ]);
+    f.render_widget(Paragraph::new(selector), chunks[2]);
+
     let help = if let Some(err) = error {
         Paragraph::new(err).style(Style::default().fg(theme.error))
     } else {
-        Paragraph::new("Subscribes to their public channel")
-            .style(Style::default().fg(theme.fg_dim))
+        Paragraph::new("[Tab] switch channel type").style(Style::default().fg(theme.fg_dim))
     };
-    f.render_widget(help, chunks[2]);
+    f.render_widget(help, chunks[3]);
 
     let controls = Paragraph::new("[Enter] Subscribe    [Esc] Cancel")
         .alignment(Alignment::Center)
         .style(Style::default().fg(theme.fg_dim));
-    f.render_widget(controls, chunks[3]);
+    f.render_widget(controls, chunks[4]);
 
     f.render_widget(block, area);
 }

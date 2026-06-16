@@ -1090,7 +1090,7 @@ async fn run_tui(
 
                             drop(app_lock);
                         }
-                        Some(AppAction::SubscribeToChannel(publisher_onion)) => {
+                        Some(AppAction::SubscribeToChannel(publisher_onion, channel_type)) => {
                             let app_lock = app.lock().await;
                             let own_onion = app_lock.onion_address.clone().unwrap_or_default();
 
@@ -1098,15 +1098,21 @@ async fn run_tui(
                             db::queries::add_channel_subscription(
                                 &app_lock.db,
                                 &publisher_onion,
-                                "public",
+                                &channel_type,
                             )
                             .ok();
+
+                            let wire_channel_type = if channel_type == "public" {
+                                protocol::message::ChannelType::Public
+                            } else {
+                                protocol::message::ChannelType::FriendsOnly
+                            };
 
                             // Send subscribe message to publisher
                             let sub_msg = protocol::message::Message::ChannelSubscribe(
                                 protocol::message::ChannelSubscribeMessage {
                                     subscriber_onion: own_onion,
-                                    channel_type: protocol::message::ChannelType::Public,
+                                    channel_type: wire_channel_type,
                                     timestamp: std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap_or_default()

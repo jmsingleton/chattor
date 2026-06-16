@@ -225,9 +225,19 @@ pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) 
         AppState::SettingEphemeral { selected_idx, .. } => {
             crate::ui::modals::render_ephemeral_modal(f, *selected_idx, &ctx.theme);
         }
-        AppState::SubscribingToChannel { input, error } => {
+        AppState::SubscribingToChannel {
+            input,
+            channel_type,
+            error,
+        } => {
             let err = error.clone();
-            crate::ui::modals::render_subscribe_channel_modal(f, input, err.as_deref(), &ctx.theme);
+            crate::ui::modals::render_subscribe_channel_modal(
+                f,
+                input,
+                channel_type,
+                err.as_deref(),
+                &ctx.theme,
+            );
         }
         _ => {}
     }
@@ -352,7 +362,9 @@ fn format_footer_spans<'a>(state: &AppState, theme: &'a Theme) -> Vec<Span<'a>> 
         ],
         AppState::ViewingChannel { is_own: true, .. } => vec![("Enter", "Post"), ("Esc", "Back")],
         AppState::ViewingChannel { .. } => vec![("Esc", "Back")],
-        AppState::SubscribingToChannel { .. } => vec![("Enter", "Subscribe"), ("Esc", "Cancel")],
+        AppState::SubscribingToChannel { .. } => {
+            vec![("Tab", "Type"), ("Enter", "Subscribe"), ("Esc", "Cancel")]
+        }
     };
 
     let mut spans = vec![Span::raw("  ")];

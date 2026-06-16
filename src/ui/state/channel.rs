@@ -89,14 +89,29 @@ impl AppState {
         key: KeyEvent,
     ) -> Result<Option<AppAction>> {
         match self {
-            AppState::SubscribingToChannel { input, error } => match key.code {
+            AppState::SubscribingToChannel {
+                input,
+                channel_type,
+                error,
+            } => match key.code {
+                KeyCode::Tab => {
+                    *channel_type = if channel_type == "public" {
+                        "friends_only".to_string()
+                    } else {
+                        "public".to_string()
+                    };
+                    Ok(None)
+                }
                 KeyCode::Enter => {
                     let text = input.text().trim().to_string();
                     if text.is_empty() {
                         *error = Some("Please enter a channel address".to_string());
                         Ok(None)
                     } else {
-                        Ok(Some(AppAction::SubscribeToChannel(text)))
+                        Ok(Some(AppAction::SubscribeToChannel(
+                            text,
+                            channel_type.clone(),
+                        )))
                     }
                 }
                 KeyCode::Esc => {
@@ -125,6 +140,7 @@ mod tests {
             input: Box::new(
                 crate::ui::widgets::text_input::TextInput::single_line("").with_text(text),
             ),
+            channel_type: "public".to_string(),
             error: None,
         }
     }
@@ -152,7 +168,51 @@ mod tests {
             .unwrap();
         assert_eq!(
             action,
-            Some(AppAction::SubscribeToChannel("peer.onion".to_string()))
+            Some(AppAction::SubscribeToChannel(
+                "peer.onion".to_string(),
+                "public".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_subscribing_tab_toggles_channel_type() {
+        let mut state = subscribing("peer.onion");
+        state
+            .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), 10, 0)
+            .unwrap();
+        match &state {
+            AppState::SubscribingToChannel { channel_type, .. } => {
+                assert_eq!(channel_type, "friends_only")
+            }
+            _ => panic!("Expected SubscribingToChannel state"),
+        }
+        state
+            .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), 10, 0)
+            .unwrap();
+        match &state {
+            AppState::SubscribingToChannel { channel_type, .. } => {
+                assert_eq!(channel_type, "public")
+            }
+            _ => panic!("Expected SubscribingToChannel state"),
+        }
+    }
+
+    #[test]
+    fn test_subscribing_friends_only_submit() {
+        let mut state = subscribing("peer.onion");
+        state
+            .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), 10, 0)
+            .unwrap();
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
+            .unwrap();
+        assert_eq!(
+            action,
+            Some(AppAction::SubscribeToChannel(
+                "peer.onion".to_string(),
+                "friends_only".to_string()
+            ))
         );
     }
 

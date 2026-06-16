@@ -99,6 +99,7 @@ pub enum AppState {
     },
     SubscribingToChannel {
         input: Box<crate::ui::widgets::text_input::TextInput>,
+        channel_type: String, // "public" or "friends_only"
         error: Option<String>,
     },
 }
@@ -127,7 +128,7 @@ pub enum AppAction {
     ViewMyIdentity,
     ViewFriendRequests,
     PublishChannelPost(String, String), // (content, channel_type)
-    SubscribeToChannel(String),         // publisher .onion address
+    SubscribeToChannel(String, String), // (publisher .onion or friend code, channel_type)
     SelectSubscription(usize),          // index into cached subscriptions
     ViewOwnChannel(String),             // channel_type ("public" or "friends_only")
     ToggleNotifications,

@@ -119,9 +119,10 @@ impl AppState {
                             *self = AppState::SubscribingToChannel {
                                 input: Box::new(
                                     crate::ui::widgets::text_input::TextInput::single_line(
-                                        "Publisher's .onion address",
+                                        "Publisher's .onion or friend code",
                                     ),
                                 ),
+                                channel_type: "public".to_string(),
                                 error: None,
                             };
                             Ok(None)
