@@ -88,6 +88,18 @@ pub fn friend_code_to_onion(code: &str) -> Result<String> {
     pubkey_to_onion(&pubkey)
 }
 
+/// Resolve a subscribe/add target that may be either a raw `.onion` address or
+/// a 32-word friend code. `.onion` inputs pass through unchanged; anything else
+/// is treated as a friend code and converted.
+pub fn resolve_onion_or_friend_code(input: &str) -> Result<String> {
+    let trimmed = input.trim();
+    if trimmed.ends_with(".onion") {
+        Ok(trimmed.to_string())
+    } else {
+        friend_code_to_onion(trimmed)
+    }
+}
+
 /// Validate that a string looks like a friend code (32 words from our word list).
 #[allow(dead_code)]
 pub fn validate_friend_code(code: &str) -> Result<()> {
@@ -315,6 +327,24 @@ mod tests {
         let upper = code.to_uppercase();
         let recovered = friend_code_to_onion(&upper).unwrap();
         assert_eq!(onion, recovered);
+    }
+
+    #[test]
+    fn resolve_passes_through_onion() {
+        let onion = pubkey_to_onion(&[0u8; 32]).unwrap();
+        assert_eq!(resolve_onion_or_friend_code(&onion).unwrap(), onion);
+    }
+
+    #[test]
+    fn resolve_converts_friend_code() {
+        let onion = pubkey_to_onion(&[0u8; 32]).unwrap();
+        let code = onion_to_friend_code(&onion).unwrap();
+        assert_eq!(resolve_onion_or_friend_code(&code).unwrap(), onion);
+    }
+
+    #[test]
+    fn resolve_rejects_garbage() {
+        assert!(resolve_onion_or_friend_code("not a real code").is_err());
     }
 
     #[test]

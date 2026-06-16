@@ -1090,7 +1090,27 @@ async fn run_tui(
 
                             drop(app_lock);
                         }
-                        Some(AppAction::SubscribeToChannel(publisher_onion, channel_type)) => {
+                        Some(AppAction::SubscribeToChannel(target, channel_type)) => {
+                            let publisher_onion =
+                                match protocol::friend_code::resolve_onion_or_friend_code(&target) {
+                                    Ok(onion) => onion,
+                                    Err(_) => {
+                                        app_state = AppState::SubscribingToChannel {
+                                            input: Box::new(
+                                                crate::ui::widgets::text_input::TextInput::single_line(
+                                                    "Publisher's .onion or friend code",
+                                                )
+                                                .with_text(&target),
+                                            ),
+                                            channel_type,
+                                            error: Some(
+                                                "Invalid .onion address or friend code".to_string(),
+                                            ),
+                                        };
+                                        continue;
+                                    }
+                                };
+
                             let app_lock = app.lock().await;
                             let own_onion = app_lock.onion_address.clone().unwrap_or_default();
 
