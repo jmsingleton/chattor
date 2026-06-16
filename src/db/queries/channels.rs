@@ -51,6 +51,7 @@ pub fn initialize_channels(db: &Database) -> Result<()> {
 }
 
 /// Store a channel post (dedup via post_id UNIQUE)
+#[allow(clippy::too_many_arguments)]
 pub fn store_channel_post(
     db: &Database,
     channel_id: i64,
@@ -58,13 +59,64 @@ pub fn store_channel_post(
     post_id: &str,
     created_at: i64,
     signature: &str,
+    publisher_onion: Option<&str>,
+    channel_type: Option<&str>,
 ) -> Result<()> {
-    db.connection().execute(
-        "INSERT OR IGNORE INTO channel_posts (channel_id, content, post_id, created_at, signature)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![channel_id, content, post_id, created_at, signature],
-    ).map_err(|e| ChattorError::Database(format!("Failed to store channel post: {}", e)))?;
+    db.connection()
+        .execute(
+            "INSERT OR IGNORE INTO channel_posts
+            (channel_id, content, post_id, created_at, signature, publisher_onion, channel_type)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                channel_id,
+                content,
+                post_id,
+                created_at,
+                signature,
+                publisher_onion,
+                channel_type
+            ],
+        )
+        .map_err(|e| ChattorError::Database(format!("Failed to store channel post: {}", e)))?;
     Ok(())
+}
+
+/// Posts from one remote publisher, newest first (subscription feed view).
+#[allow(dead_code)]
+pub fn get_publisher_channel_posts(
+    db: &Database,
+    publisher_onion: &str,
+    limit: usize,
+) -> Result<Vec<ChannelPost>> {
+    let conn = db.connection();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, channel_id, content, post_id, created_at, signature
+         FROM channel_posts
+         WHERE channel_id = 0 AND publisher_onion = ?1
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?2",
+        )
+        .map_err(|e| {
+            ChattorError::Database(format!("Failed to prepare publisher posts query: {}", e))
+        })?;
+
+    let posts = stmt
+        .query_map(params![publisher_onion, limit as i64], |row| {
+            Ok(ChannelPost {
+                id: row.get(0)?,
+                channel_id: row.get(1)?,
+                content: row.get(2)?,
+                post_id: row.get(3)?,
+                created_at: row.get(4)?,
+                signature: row.get(5)?,
+            })
+        })
+        .map_err(|e| ChattorError::Database(format!("Failed to query publisher posts: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| ChattorError::Database(format!("Failed to collect publisher posts: {}", e)))?;
+
+    Ok(posts)
 }
 
 /// Get posts for a channel, newest first
@@ -387,8 +439,8 @@ mod tests {
         let db = Database::open(temp.path()).unwrap();
         initialize_channels(&db).unwrap();
 
-        store_channel_post(&db, 1, "Hello world!", "post-1", 1000, "sig1").unwrap();
-        store_channel_post(&db, 1, "Second post", "post-2", 2000, "sig2").unwrap();
+        store_channel_post(&db, 1, "Hello world!", "post-1", 1000, "sig1", None, None).unwrap();
+        store_channel_post(&db, 1, "Second post", "post-2", 2000, "sig2", None, None).unwrap();
 
         let posts = get_channel_posts(&db, 1, 50).unwrap();
         assert_eq!(posts.len(), 2);
@@ -403,8 +455,8 @@ mod tests {
         let db = Database::open(temp.path()).unwrap();
         initialize_channels(&db).unwrap();
 
-        store_channel_post(&db, 1, "Hello!", "post-1", 1000, "sig1").unwrap();
-        store_channel_post(&db, 1, "Hello!", "post-1", 1000, "sig1").unwrap(); // dupe
+        store_channel_post(&db, 1, "Hello!", "post-1", 1000, "sig1", None, None).unwrap();
+        store_channel_post(&db, 1, "Hello!", "post-1", 1000, "sig1", None, None).unwrap(); // dupe
 
         let posts = get_channel_posts(&db, 1, 50).unwrap();
         assert_eq!(posts.len(), 1);
@@ -425,6 +477,8 @@ mod tests {
                 &format!("post-{}", i),
                 i as i64,
                 "sig",
+                None,
+                None,
             )
             .unwrap();
         }
@@ -518,6 +572,8 @@ mod tests {
                 &format!("post-{}", i),
                 (1000 + i) as i64,
                 "sig",
+                None,
+                None,
             )
             .unwrap();
         }
@@ -551,5 +607,50 @@ mod tests {
         let db = Database::open(temp.path()).unwrap();
         let counts = get_channel_post_read_counts_batch(&db, &[]).unwrap();
         assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn test_publisher_channel_posts_filtered() {
+        let temp = NamedTempFile::new().unwrap();
+        let db = Database::open(temp.path()).unwrap();
+        initialize_channels(&db).unwrap();
+
+        // Insert a sentinel channel with id=0 for remote (subscriber-side) posts.
+        // In production, FK enforcement is off so channel_id=0 works without this row;
+        // but the bundled SQLCipher in tests enforces FKs, so we seed it explicitly.
+        db.connection()
+            .execute(
+                "INSERT OR IGNORE INTO channels (id, channel_type, created_at) VALUES (0, 'remote', 0)",
+                [],
+            )
+            .unwrap();
+
+        store_channel_post(
+            &db,
+            0,
+            "from alice",
+            "post-a1",
+            100,
+            "sig",
+            Some("alice.onion"),
+            Some("public"),
+        )
+        .unwrap();
+        store_channel_post(
+            &db,
+            0,
+            "from bob",
+            "post-b1",
+            200,
+            "sig",
+            Some("bob.onion"),
+            Some("public"),
+        )
+        .unwrap();
+        store_channel_post(&db, 1, "my own", "post-me", 300, "sig", None, None).unwrap();
+
+        let posts = get_publisher_channel_posts(&db, "alice.onion", 100).unwrap();
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].content, "from alice");
     }
 }

@@ -278,6 +278,8 @@ fn test_channel_post_flow() {
             &format!("post-{}", i),
             (1000 + i) as i64,
             "sig",
+            None,
+            None,
         )
         .unwrap();
     }
@@ -329,6 +331,8 @@ fn test_channel_post_flow() {
             &format!("post-{}", i),
             (1000 + i) as i64,
             "sig",
+            None,
+            None,
         )
         .unwrap();
     }

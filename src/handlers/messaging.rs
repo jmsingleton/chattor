@@ -222,6 +222,10 @@ pub async fn handle_incoming_message(
         }
         protocol::message::Message::ChannelPost(post) => {
             // Store remote post (channel_id 0 for remote posts)
+            let ct = match post.channel_type {
+                protocol::message::ChannelType::Public => "public",
+                protocol::message::ChannelType::FriendsOnly => "friends_only",
+            };
             db::queries::store_channel_post(
                 &app.db,
                 0,
@@ -229,6 +233,8 @@ pub async fn handle_incoming_message(
                 &post.post_id.to_string(),
                 post.created_at,
                 &post.signature,
+                Some(&post.publisher_onion),
+                Some(ct),
             )?;
 
             // Send read receipt back to publisher
@@ -290,6 +296,10 @@ pub async fn handle_incoming_message(
         }
         protocol::message::Message::ChannelSyncResponse(resp) => {
             for post in &resp.posts {
+                let ct = match post.channel_type {
+                    protocol::message::ChannelType::Public => "public",
+                    protocol::message::ChannelType::FriendsOnly => "friends_only",
+                };
                 db::queries::store_channel_post(
                     &app.db,
                     0,
@@ -297,6 +307,8 @@ pub async fn handle_incoming_message(
                     &post.post_id.to_string(),
                     post.created_at,
                     &post.signature,
+                    Some(&post.publisher_onion),
+                    Some(ct),
                 )?;
             }
             // Update sync time
