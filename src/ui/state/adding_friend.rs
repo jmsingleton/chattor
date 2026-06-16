@@ -37,7 +37,7 @@ mod tests {
 
     fn adding(text: &str) -> AppState {
         AppState::AddingFriend {
-            input: TextInput::single_line("").with_text(text),
+            input: Box::new(TextInput::single_line("").with_text(text)),
             error: None,
         }
     }

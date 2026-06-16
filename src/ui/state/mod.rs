@@ -19,7 +19,7 @@ pub enum AppState {
         scroll_offset: usize,
     },
     AddingFriend {
-        input: crate::ui::widgets::text_input::TextInput,
+        input: Box<crate::ui::widgets::text_input::TextInput>,
         error: Option<String>,
     },
     ViewingFriendRequests {
@@ -157,7 +157,7 @@ mod tests {
 
         // From AddingFriend
         let mut state = AppState::AddingFriend {
-            input: crate::ui::widgets::text_input::TextInput::single_line(""),
+            input: Box::new(crate::ui::widgets::text_input::TextInput::single_line("")),
             error: None,
         };
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);

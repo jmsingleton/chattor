@@ -50,6 +50,7 @@ impl TextInput {
         self.textarea.lines().join("\n")
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.textarea.lines().iter().all(|l| l.is_empty())
     }
@@ -71,7 +72,7 @@ impl TextInput {
         self.textarea.set_style(Style::default().fg(theme.input_fg));
         self.textarea
             .set_placeholder_style(Style::default().fg(theme.input_placeholder));
-        f.render_widget(self.textarea.widget(), area);
+        f.render_widget(&self.textarea, area);
     }
 }
 
