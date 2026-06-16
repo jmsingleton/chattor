@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::Style,
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
     Frame,
@@ -9,7 +9,7 @@ use crate::ui::theme::Theme;
 
 /// Render "Add Friend" modal
 pub fn render_add_friend_modal(f: &mut Frame, input: &str, error: Option<&str>, theme: &Theme) {
-    let area = centered_rect(60, 40, f.size());
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 40, 50, 12);
 
     // Clear background
     f.render_widget(Clear, area);
@@ -70,7 +70,7 @@ pub fn render_friend_request_modal(
     friend_code: &str,
     theme: &Theme,
 ) {
-    let area = centered_rect(60, 50, f.size());
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 50, 54, 14);
 
     f.render_widget(Clear, area);
 
@@ -127,7 +127,7 @@ pub fn render_friend_request_list(
     use ratatui::text::{Line, Span};
     use ratatui::widgets::{List, ListItem};
 
-    let area = centered_rect(60, 50, f.size());
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 50, 50, 12);
     f.render_widget(Clear, area);
 
     let title = format!(" Friend Requests ({} pending) ", requests.len());
@@ -221,7 +221,7 @@ pub fn render_identity_modal(
 ) {
     use ratatui::style::Modifier;
 
-    let area = centered_rect(70, 70, f.size());
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 70, 70, 58, 16);
 
     // Clear area first
     f.render_widget(Clear, area);
@@ -323,7 +323,7 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize, theme: &Theme)
     use ratatui::text::{Line, Span};
     use ratatui::widgets::{List, ListItem};
 
-    let area = centered_rect(50, 40, f.size());
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 50, 40, 30, 11);
     f.render_widget(Clear, area);
 
     let block = Block::default()
@@ -386,7 +386,7 @@ pub fn render_subscribe_channel_modal(
     error: Option<&str>,
     theme: &Theme,
 ) {
-    let area = centered_rect(60, 40, f.size());
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 40, 50, 12);
 
     f.render_widget(Clear, area);
 
@@ -433,25 +433,4 @@ pub fn render_subscribe_channel_modal(
     f.render_widget(controls, chunks[3]);
 
     f.render_widget(block, area);
-}
-
-/// Helper to center a rect
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }

@@ -8,6 +8,9 @@ use ratatui::{
     Frame,
 };
 
+const MIN_WIDTH: u16 = 60;
+const MIN_HEIGHT: u16 = 16;
+
 /// Data needed for rendering (populated by main loop before render)
 pub struct RenderContext {
     pub friends: Vec<FriendEntry>,
@@ -30,6 +33,35 @@ pub struct RenderContext {
 
 /// Render the application UI based on current state
 pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
+    let size = f.size();
+    if size.width < MIN_WIDTH || size.height < MIN_HEIGHT {
+        let lines = vec![
+            Line::from(Span::styled(
+                "Terminal too small",
+                Style::default()
+                    .fg(ctx.theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                format!(
+                    "Need at least {}x{} (current {}x{})",
+                    MIN_WIDTH, MIN_HEIGHT, size.width, size.height
+                ),
+                Style::default().fg(ctx.theme.fg_dim),
+            )),
+        ];
+        let para = Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center);
+        let y = size.height.saturating_sub(2) / 2;
+        let centered = ratatui::layout::Rect {
+            x: size.x,
+            y: size.y + y,
+            width: size.width,
+            height: 2.min(size.height),
+        };
+        f.render_widget(para, centered);
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -309,4 +341,62 @@ fn format_footer_spans<'a>(state: &AppState, theme: &'a Theme) -> Vec<Span<'a>> 
         ));
     }
     spans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    pub(crate) fn test_ctx() -> RenderContext {
+        RenderContext {
+            friends: vec![],
+            messages: vec![],
+            own_onion: None,
+            friend_code: None,
+            tor_connected: false,
+            pending_request_count: 0,
+            conversation_ephemeral_ttl: None,
+            channel_subscriptions: vec![],
+            channel_posts: vec![],
+            channel_post_read_counts: Default::default(),
+            theme: Theme::preset("dark"),
+            presence: Default::default(),
+            status_flash: None,
+            continued_offline: false,
+        }
+    }
+
+    fn buffer_text(terminal: &ratatui::Terminal<ratatui::backend::TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn tiny_terminal_renders_guard_instead_of_app() {
+        let backend = ratatui::backend::TestBackend::new(40, 10);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let app_state = AppState::default();
+        terminal
+            .draw(|f| render_app(f, &app_state, &test_ctx()))
+            .unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Terminal too small"));
+        assert!(!text.contains("chattor")); // header must not render
+    }
+
+    #[test]
+    fn normal_terminal_renders_app() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let app_state = AppState::default();
+        terminal
+            .draw(|f| render_app(f, &app_state, &test_ctx()))
+            .unwrap();
+        assert!(buffer_text(&terminal).contains("chattor"));
+    }
 }

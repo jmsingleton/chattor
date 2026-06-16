@@ -8,6 +8,7 @@ pub mod modals;
 pub mod sidebar;
 pub mod state;
 pub mod theme;
+pub mod widgets;
 
 pub use app_ui::{render_app, RenderContext};
 pub use bootstrap::{
