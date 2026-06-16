@@ -15,7 +15,7 @@ pub fn render_sidebar(
     f: &mut Frame,
     area: Rect,
     friends: &[FriendEntry],
-    selected_idx: Option<usize>,
+    selected: Option<crate::ui::SidebarSelection>,
     focused: bool,
     pending_request_count: i64,
     presence: &std::collections::HashMap<String, (bool, bool)>,
@@ -25,7 +25,7 @@ pub fn render_sidebar(
         f,
         area,
         friends,
-        selected_idx,
+        selected,
         focused,
         pending_request_count,
         &[],
@@ -40,7 +40,7 @@ pub fn render_sidebar_with_channels(
     f: &mut Frame,
     area: Rect,
     friends: &[FriendEntry],
-    selected_idx: Option<usize>,
+    selected: Option<crate::ui::SidebarSelection>,
     focused: bool,
     pending_request_count: i64,
     channel_subscriptions: &[ChannelSubscription],
@@ -65,13 +65,13 @@ pub fn render_sidebar_with_channels(
         f,
         sidebar_chunks[0],
         friends,
-        selected_idx,
+        selected,
         focused,
         pending_request_count,
         presence,
         theme,
     );
-    render_channels_section(f, sidebar_chunks[1], channel_subscriptions, theme);
+    render_channels_section(f, sidebar_chunks[1], channel_subscriptions, selected, theme);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -79,7 +79,7 @@ fn render_friends_list(
     f: &mut Frame,
     area: Rect,
     friends: &[FriendEntry],
-    selected_idx: Option<usize>,
+    selected: Option<crate::ui::SidebarSelection>,
     focused: bool,
     pending_request_count: i64,
     presence: &std::collections::HashMap<String, (bool, bool)>,
@@ -102,7 +102,7 @@ fn render_friends_list(
         .iter()
         .enumerate()
         .map(|(i, friend)| {
-            let is_selected = selected_idx == Some(i);
+            let is_selected = selected == Some(crate::ui::SidebarSelection::Friend(i));
             let arrow = if is_selected { "▸ " } else { "  " };
             let name = friend.display();
 
@@ -160,9 +160,27 @@ fn render_channels_section(
     f: &mut Frame,
     area: Rect,
     subscriptions: &[ChannelSubscription],
+    selected: Option<crate::ui::SidebarSelection>,
     theme: &Theme,
 ) {
+    use crate::ui::SidebarSelection as Sel;
+
     let mut items: Vec<ListItem> = Vec::new();
+
+    let entry = |label: String, is_selected: bool| {
+        let arrow = if is_selected { "\u{25b8} " } else { "  " };
+        let style = if is_selected {
+            Style::default()
+                .fg(theme.sidebar_selected_fg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.fg)
+        };
+        ListItem::new(Line::from(vec![Span::styled(
+            format!("{}{}", arrow, label),
+            style,
+        )]))
+    };
 
     // My channels header
     items.push(ListItem::new(Line::from(vec![Span::styled(
@@ -171,14 +189,14 @@ fn render_channels_section(
             .fg(theme.sidebar_channel_header)
             .add_modifier(Modifier::BOLD),
     )])));
-    items.push(ListItem::new(Line::from(vec![Span::styled(
-        "    Public",
-        Style::default().fg(theme.fg),
-    )])));
-    items.push(ListItem::new(Line::from(vec![Span::styled(
-        "    Friends",
-        Style::default().fg(theme.fg),
-    )])));
+    items.push(entry(
+        "  Public".to_string(),
+        selected == Some(Sel::OwnPublic),
+    ));
+    items.push(entry(
+        "  Friends".to_string(),
+        selected == Some(Sel::OwnFriends),
+    ));
 
     // Subscriptions
     if !subscriptions.is_empty() {
@@ -189,17 +207,17 @@ fn render_channels_section(
                 .add_modifier(Modifier::BOLD),
         )])));
 
-        for sub in subscriptions {
+        for (i, sub) in subscriptions.iter().enumerate() {
             let name = crate::ui::input::truncate_display_dots(&sub.publisher_onion, 8);
             let ch_label = if sub.channel_type == "public" {
                 "pub"
             } else {
                 "fri"
             };
-            items.push(ListItem::new(Line::from(vec![Span::styled(
-                format!("    {} [{}]", name, ch_label),
-                Style::default().fg(theme.fg),
-            )])));
+            items.push(entry(
+                format!("  {} [{}]", name, ch_label),
+                selected == Some(Sel::Subscription(i)),
+            ));
         }
     }
 

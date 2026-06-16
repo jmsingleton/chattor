@@ -588,30 +588,36 @@ async fn run_tui(
                 db::queries::get_channel_subscriptions(&app_lock.db).unwrap_or_default();
 
             let (channel_posts, channel_post_read_counts) = if let AppState::ViewingChannel {
+                ref publisher_onion,
                 ref channel_type,
                 is_own,
                 ..
             } = &app_state
             {
-                let channel_id = if *is_own {
-                    if channel_type == "public" {
-                        1
-                    } else {
-                        2
+                if *is_own {
+                    let channel_id = if channel_type == "public" { 1 } else { 2 };
+                    let posts = db::queries::get_channel_posts(&app_lock.db, channel_id, 100)
+                        .unwrap_or_default();
+                    let mut counts = std::collections::HashMap::new();
+                    if !posts.is_empty() {
+                        let post_ids: Vec<&str> =
+                            posts.iter().map(|p| p.post_id.as_str()).collect();
+                        counts = db::queries::get_channel_post_read_counts_batch(
+                            &app_lock.db,
+                            &post_ids,
+                        )
+                        .unwrap_or_default();
                     }
+                    (posts, counts)
                 } else {
-                    0 // remote posts stored with channel_id 0
-                };
-                let posts = db::queries::get_channel_posts(&app_lock.db, channel_id, 100)
+                    let posts = db::queries::get_publisher_channel_posts(
+                        &app_lock.db,
+                        publisher_onion,
+                        100,
+                    )
                     .unwrap_or_default();
-                let mut counts = std::collections::HashMap::new();
-                if *is_own && !posts.is_empty() {
-                    let post_ids: Vec<&str> = posts.iter().map(|p| p.post_id.as_str()).collect();
-                    counts =
-                        db::queries::get_channel_post_read_counts_batch(&app_lock.db, &post_ids)
-                            .unwrap_or_default();
+                    (posts, std::collections::HashMap::new())
                 }
-                (posts, counts)
             } else {
                 (Vec::new(), std::collections::HashMap::new())
             };
@@ -661,7 +667,11 @@ async fn run_tui(
                     dirty = true; // Any key press invalidates cached state
                     let was_setting_ephemeral =
                         matches!(app_state, AppState::SettingEphemeral { .. });
-                    match app_state.handle_key(key, cached_friend_count)? {
+                    match app_state.handle_key(
+                        key,
+                        cached_friend_count,
+                        cached_channel_subs.len(),
+                    )? {
                         Some(AppAction::SendFriendRequest(code)) => {
                             let app_lock = app.lock().await;
 
@@ -874,7 +884,7 @@ async fn run_tui(
 
                             if let AppState::Normal {
                                 conversation_id: Some(conv_id),
-                                selected_friend_idx: Some(idx),
+                                selected: Some(crate::ui::SidebarSelection::Friend(idx)),
                                 ..
                             } = &app_state
                             {
@@ -1111,23 +1121,25 @@ async fn run_tui(
                             drop(app_lock);
                             app_state = AppState::default();
                         }
-                        Some(AppAction::SelectChannel(publisher_onion, channel_type, is_own)) => {
-                            app_state = AppState::ViewingChannel {
-                                publisher_onion,
-                                channel_type,
-                                is_own,
-                                input: String::new(),
-                                cursor: 0,
-                                scroll_offset: 0,
-                            };
+                        Some(AppAction::SelectSubscription(idx)) => {
+                            if let Some(sub) = cached_channel_subs.get(idx) {
+                                app_state = AppState::ViewingChannel {
+                                    publisher_onion: sub.publisher_onion.clone(),
+                                    channel_type: sub.channel_type.clone(),
+                                    is_own: false,
+                                    input: String::new(),
+                                    cursor: 0,
+                                    scroll_offset: 0,
+                                };
+                            }
                         }
-                        Some(AppAction::ViewOwnChannel) => {
+                        Some(AppAction::ViewOwnChannel(channel_type)) => {
                             let app_lock = app.lock().await;
                             let own_onion = app_lock.onion_address.clone().unwrap_or_default();
                             drop(app_lock);
                             app_state = AppState::ViewingChannel {
                                 publisher_onion: own_onion,
-                                channel_type: "public".to_string(),
+                                channel_type,
                                 is_own: true,
                                 input: String::new(),
                                 cursor: 0,
@@ -1179,7 +1191,7 @@ async fn run_tui(
                     if let AppState::Normal {
                         input_focused: true,
                         ref input,
-                        selected_friend_idx: Some(idx),
+                        selected: Some(crate::ui::SidebarSelection::Friend(idx)),
                         ..
                     } = &app_state
                     {

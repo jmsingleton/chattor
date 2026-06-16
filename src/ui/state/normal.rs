@@ -1,4 +1,4 @@
-use super::{AppAction, AppState};
+use super::{AppAction, AppState, SidebarSelection};
 use crate::error::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -7,10 +7,11 @@ impl AppState {
         &mut self,
         key: KeyEvent,
         friend_count: usize,
+        sub_count: usize,
     ) -> Result<Option<AppAction>> {
         match self {
             AppState::Normal {
-                selected_friend_idx,
+                selected,
                 conversation_id,
                 input,
                 cursor,
@@ -125,61 +126,48 @@ impl AppState {
                             };
                             Ok(None)
                         }
-                        KeyCode::Char('p') => Ok(Some(AppAction::ViewOwnChannel)),
+                        KeyCode::Char('p') => {
+                            Ok(Some(AppAction::ViewOwnChannel("public".to_string())))
+                        }
                         KeyCode::Char('n') => Ok(Some(AppAction::ToggleNotifications)),
                         KeyCode::Tab => {
-                            if selected_friend_idx.is_none() {
-                                *selected_friend_idx = Some(0);
+                            if selected.is_none() {
+                                *selected = Some(SidebarSelection::first(friend_count));
                             }
                             Ok(None)
                         }
-                        KeyCode::Up => {
-                            if let Some(idx) = selected_friend_idx {
-                                if *idx > 0 {
-                                    *idx -= 1;
-                                    *scroll_offset = 0;
-                                }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if let Some(s) = selected {
+                                *s = s.prev(friend_count, sub_count);
+                                *scroll_offset = 0;
                             }
                             Ok(None)
                         }
-                        KeyCode::Down => {
-                            if let Some(idx) = selected_friend_idx {
-                                if *idx + 1 < friend_count {
-                                    *idx += 1;
-                                    *scroll_offset = 0;
-                                }
-                            }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            *selected = Some(match selected {
+                                Some(s) => s.next(friend_count, sub_count),
+                                None => SidebarSelection::first(friend_count),
+                            });
+                            *scroll_offset = 0;
                             Ok(None)
                         }
-                        KeyCode::Char('k') => {
-                            // Vim-style up navigation
-                            if let Some(idx) = selected_friend_idx {
-                                if *idx > 0 {
-                                    *idx -= 1;
-                                    *scroll_offset = 0;
-                                }
-                            }
-                            Ok(None)
-                        }
-                        KeyCode::Char('j') => {
-                            // Vim-style down navigation
-                            if let Some(idx) = selected_friend_idx {
-                                if *idx + 1 < friend_count {
-                                    *idx += 1;
-                                    *scroll_offset = 0;
-                                }
-                            }
-                            Ok(None)
-                        }
-                        KeyCode::Enter => {
-                            if let Some(idx) = *selected_friend_idx {
+                        KeyCode::Enter => match *selected {
+                            Some(SidebarSelection::Friend(idx)) => {
                                 *input_focused = true;
                                 *scroll_offset = 0;
                                 Ok(Some(AppAction::SelectFriend(idx)))
-                            } else {
-                                Ok(None)
                             }
-                        }
+                            Some(SidebarSelection::OwnPublic) => {
+                                Ok(Some(AppAction::ViewOwnChannel("public".to_string())))
+                            }
+                            Some(SidebarSelection::OwnFriends) => {
+                                Ok(Some(AppAction::ViewOwnChannel("friends_only".to_string())))
+                            }
+                            Some(SidebarSelection::Subscription(idx)) => {
+                                Ok(Some(AppAction::SelectSubscription(idx)))
+                            }
+                            None => Ok(None),
+                        },
                         KeyCode::PageUp => {
                             *scroll_offset = scroll_offset.saturating_add(10);
                             Ok(None)
@@ -206,7 +194,7 @@ mod tests {
     fn normal_nav_mode_quit() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert_eq!(action, Some(AppAction::Quit));
     }
 
@@ -214,7 +202,7 @@ mod tests {
     fn normal_nav_mode_add_friend() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert!(action.is_none());
         assert!(matches!(state, AppState::AddingFriend { .. }));
     }
@@ -223,14 +211,14 @@ mod tests {
     fn normal_nav_mode_view_identity() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert_eq!(action, Some(AppAction::ViewMyIdentity));
     }
 
     #[test]
     fn normal_nav_mode_arrow_selects_friend() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(1),
+            selected: Some(SidebarSelection::Friend(1)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -238,13 +226,10 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
-        state.handle_key(key, 10).unwrap();
+        state.handle_key(key, 10, 0).unwrap();
         match &state {
-            AppState::Normal {
-                selected_friend_idx,
-                ..
-            } => {
-                assert_eq!(*selected_friend_idx, Some(0));
+            AppState::Normal { selected, .. } => {
+                assert_eq!(*selected, Some(SidebarSelection::Friend(0)));
             }
             _ => panic!("Expected Normal state"),
         }
@@ -253,7 +238,7 @@ mod tests {
     #[test]
     fn normal_enter_selects_friend_and_focuses_input() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -261,7 +246,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert_eq!(action, Some(AppAction::SelectFriend(0)));
         match &state {
             AppState::Normal { input_focused, .. } => {
@@ -274,7 +259,7 @@ mod tests {
     #[test]
     fn input_focused_typing() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -282,10 +267,10 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
@@ -299,7 +284,7 @@ mod tests {
     #[test]
     fn input_focused_enter_sends_message() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: "hello".to_string(),
             cursor: 5,
@@ -307,7 +292,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert_eq!(action, Some(AppAction::SendMessage("hello".to_string())));
         match &state {
             AppState::Normal { input, cursor, .. } => {
@@ -321,7 +306,7 @@ mod tests {
     #[test]
     fn input_focused_escape_unfocuses() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: "draft".to_string(),
             cursor: 5,
@@ -329,7 +314,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        state.handle_key(key, 10).unwrap();
+        state.handle_key(key, 10, 0).unwrap();
         match &state {
             AppState::Normal { input_focused, .. } => {
                 assert!(!input_focused);
@@ -341,7 +326,7 @@ mod tests {
     #[test]
     fn input_focused_backspace() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: "hi".to_string(),
             cursor: 2,
@@ -349,7 +334,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
-        state.handle_key(key, 10).unwrap();
+        state.handle_key(key, 10, 0).unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
                 assert_eq!(input, "h");
@@ -363,13 +348,10 @@ mod tests {
     fn tab_initializes_friend_selection() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
-        state.handle_key(key, 10).unwrap();
+        state.handle_key(key, 10, 0).unwrap();
         match &state {
-            AppState::Normal {
-                selected_friend_idx,
-                ..
-            } => {
-                assert_eq!(*selected_friend_idx, Some(0));
+            AppState::Normal { selected, .. } => {
+                assert_eq!(*selected, Some(SidebarSelection::Friend(0)));
             }
             _ => panic!("Expected Normal state"),
         }
@@ -379,14 +361,14 @@ mod tests {
     fn normal_nav_mode_view_friend_requests() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert_eq!(action, Some(AppAction::ViewFriendRequests));
     }
 
     #[test]
     fn empty_enter_in_input_does_nothing() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -394,7 +376,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert!(action.is_none());
         match &state {
             AppState::Normal { input, .. } => {
@@ -407,7 +389,7 @@ mod tests {
     #[test]
     fn input_focused_emoji_typing() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -418,10 +400,11 @@ mod tests {
             .handle_key(
                 KeyEvent::new(KeyCode::Char('\u{1F600}'), KeyModifiers::NONE),
                 10,
+                0,
             )
             .unwrap();
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
@@ -431,7 +414,7 @@ mod tests {
             _ => panic!("Expected Normal state"),
         }
         state
-            .handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
@@ -443,37 +426,43 @@ mod tests {
     }
 
     #[test]
-    fn down_arrow_bounded_by_friend_count() {
+    fn down_arrow_crosses_from_friends_into_channels() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(2),
+            selected: Some(SidebarSelection::Friend(2)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
             input_focused: false,
             scroll_offset: 0,
         };
-        // With 3 friends (indices 0,1,2), down from index 2 should stay at 2
+        // With 3 friends (indices 0,1,2), down from index 2 enters channels
         let key = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
-        state.handle_key(key, 3).unwrap();
+        state.handle_key(key, 3, 0).unwrap();
         match &state {
-            AppState::Normal {
-                selected_friend_idx,
-                ..
-            } => {
-                assert_eq!(*selected_friend_idx, Some(2));
+            AppState::Normal { selected, .. } => {
+                assert_eq!(*selected, Some(SidebarSelection::OwnPublic));
             }
             _ => panic!("Expected Normal state"),
         }
+    }
+
+    #[test]
+    fn down_arrow_advances_within_friends() {
+        let mut state = AppState::Normal {
+            selected: Some(SidebarSelection::Friend(2)),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
         // With 5 friends, down from 2 should go to 3
         state
-            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 5)
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 5, 0)
             .unwrap();
         match &state {
-            AppState::Normal {
-                selected_friend_idx,
-                ..
-            } => {
-                assert_eq!(*selected_friend_idx, Some(3));
+            AppState::Normal { selected, .. } => {
+                assert_eq!(*selected, Some(SidebarSelection::Friend(3)));
             }
             _ => panic!("Expected Normal state"),
         }
@@ -482,7 +471,7 @@ mod tests {
     #[test]
     fn page_up_increases_scroll_offset() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: Some(1),
             input: String::new(),
             cursor: 0,
@@ -490,7 +479,7 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), 1)
+            .handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), 1, 0)
             .unwrap();
         match &state {
             AppState::Normal { scroll_offset, .. } => {
@@ -503,7 +492,7 @@ mod tests {
     #[test]
     fn page_down_decreases_scroll_offset() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: Some(1),
             input: String::new(),
             cursor: 0,
@@ -511,7 +500,7 @@ mod tests {
             scroll_offset: 20,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), 1)
+            .handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), 1, 0)
             .unwrap();
         match &state {
             AppState::Normal { scroll_offset, .. } => {
@@ -524,7 +513,7 @@ mod tests {
     #[test]
     fn page_down_does_not_underflow() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: Some(1),
             input: String::new(),
             cursor: 0,
@@ -532,7 +521,7 @@ mod tests {
             scroll_offset: 5,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), 1)
+            .handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), 1, 0)
             .unwrap();
         match &state {
             AppState::Normal { scroll_offset, .. } => {
@@ -545,7 +534,7 @@ mod tests {
     #[test]
     fn page_up_works_while_input_focused() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: Some(1),
             input: "typing...".to_string(),
             cursor: 9,
@@ -553,7 +542,7 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), 1)
+            .handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), 1, 0)
             .unwrap();
         match &state {
             AppState::Normal {
@@ -571,7 +560,7 @@ mod tests {
     #[test]
     fn scroll_resets_on_friend_change() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: Some(1),
             input: String::new(),
             cursor: 0,
@@ -580,15 +569,15 @@ mod tests {
         };
         // Move down to next friend
         state
-            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 5)
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 5, 0)
             .unwrap();
         match &state {
             AppState::Normal {
                 scroll_offset,
-                selected_friend_idx,
+                selected,
                 ..
             } => {
-                assert_eq!(*selected_friend_idx, Some(1));
+                assert_eq!(*selected, Some(SidebarSelection::Friend(1)));
                 assert_eq!(*scroll_offset, 0); // reset on conversation change
             }
             _ => panic!("Expected Normal state"),
@@ -600,7 +589,7 @@ mod tests {
     #[test]
     fn ctrl_a_moves_to_start() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: "hello".to_string(),
             cursor: 5,
@@ -608,7 +597,11 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL), 10)
+            .handle_key(
+                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+                10,
+                0,
+            )
             .unwrap();
         match &state {
             AppState::Normal { cursor, .. } => assert_eq!(*cursor, 0),
@@ -619,7 +612,7 @@ mod tests {
     #[test]
     fn ctrl_e_moves_to_end() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: "hello".to_string(),
             cursor: 0,
@@ -627,7 +620,11 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL), 10)
+            .handle_key(
+                KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+                10,
+                0,
+            )
             .unwrap();
         match &state {
             AppState::Normal { cursor, .. } => assert_eq!(*cursor, 5),
@@ -638,7 +635,7 @@ mod tests {
     #[test]
     fn ctrl_w_deletes_word_backward() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: "hello world".to_string(),
             cursor: 11,
@@ -646,7 +643,11 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL), 10)
+            .handle_key(
+                KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+                10,
+                0,
+            )
             .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
@@ -660,7 +661,7 @@ mod tests {
     #[test]
     fn ctrl_u_deletes_to_start() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: "hello world".to_string(),
             cursor: 6,
@@ -668,7 +669,11 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), 10)
+            .handle_key(
+                KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+                10,
+                0,
+            )
             .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
@@ -682,7 +687,7 @@ mod tests {
     #[test]
     fn delete_key_forward_deletes() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: "hello".to_string(),
             cursor: 0,
@@ -690,7 +695,7 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
             AppState::Normal { input, cursor, .. } => {
@@ -704,7 +709,7 @@ mod tests {
     #[test]
     fn home_key_moves_to_start() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: "hello".to_string(),
             cursor: 5,
@@ -712,7 +717,7 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
             AppState::Normal { cursor, .. } => assert_eq!(*cursor, 0),
@@ -723,7 +728,7 @@ mod tests {
     #[test]
     fn end_key_moves_to_end() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: "hello".to_string(),
             cursor: 0,
@@ -731,7 +736,7 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
             AppState::Normal { cursor, .. } => assert_eq!(*cursor, 5),
@@ -744,7 +749,7 @@ mod tests {
     #[test]
     fn vim_j_navigates_down() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -752,14 +757,11 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 5)
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 5, 0)
             .unwrap();
         match &state {
-            AppState::Normal {
-                selected_friend_idx,
-                ..
-            } => {
-                assert_eq!(*selected_friend_idx, Some(1));
+            AppState::Normal { selected, .. } => {
+                assert_eq!(*selected, Some(SidebarSelection::Friend(1)));
             }
             _ => panic!("Expected Normal state"),
         }
@@ -768,7 +770,7 @@ mod tests {
     #[test]
     fn vim_k_navigates_up() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(2),
+            selected: Some(SidebarSelection::Friend(2)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -776,23 +778,20 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 5)
+            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 5, 0)
             .unwrap();
         match &state {
-            AppState::Normal {
-                selected_friend_idx,
-                ..
-            } => {
-                assert_eq!(*selected_friend_idx, Some(1));
+            AppState::Normal { selected, .. } => {
+                assert_eq!(*selected, Some(SidebarSelection::Friend(1)));
             }
             _ => panic!("Expected Normal state"),
         }
     }
 
     #[test]
-    fn vim_j_bounded_by_friend_count() {
+    fn vim_j_crosses_from_last_friend_into_channels() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(2),
+            selected: Some(SidebarSelection::Friend(2)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -800,14 +799,11 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 3)
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 3, 0)
             .unwrap();
         match &state {
-            AppState::Normal {
-                selected_friend_idx,
-                ..
-            } => {
-                assert_eq!(*selected_friend_idx, Some(2)); // stays at last
+            AppState::Normal { selected, .. } => {
+                assert_eq!(*selected, Some(SidebarSelection::OwnPublic)); // enters channels
             }
             _ => panic!("Expected Normal state"),
         }
@@ -816,7 +812,7 @@ mod tests {
     #[test]
     fn vim_k_bounded_at_zero() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -824,14 +820,11 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 5)
+            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 5, 0)
             .unwrap();
         match &state {
-            AppState::Normal {
-                selected_friend_idx,
-                ..
-            } => {
-                assert_eq!(*selected_friend_idx, Some(0)); // stays at first
+            AppState::Normal { selected, .. } => {
+                assert_eq!(*selected, Some(SidebarSelection::Friend(0))); // stays at first
             }
             _ => panic!("Expected Normal state"),
         }
@@ -840,7 +833,7 @@ mod tests {
     #[test]
     fn vim_j_resets_scroll_offset() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -848,15 +841,15 @@ mod tests {
             scroll_offset: 30,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 5)
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 5, 0)
             .unwrap();
         match &state {
             AppState::Normal {
                 scroll_offset,
-                selected_friend_idx,
+                selected,
                 ..
             } => {
-                assert_eq!(*selected_friend_idx, Some(1));
+                assert_eq!(*selected, Some(SidebarSelection::Friend(1)));
                 assert_eq!(*scroll_offset, 0);
             }
             _ => panic!("Expected Normal state"),
@@ -866,7 +859,7 @@ mod tests {
     #[test]
     fn vim_jk_not_active_when_input_focused() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -874,7 +867,7 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 5)
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 5, 0)
             .unwrap();
         match &state {
             AppState::Normal { input, .. } => {
@@ -887,7 +880,7 @@ mod tests {
     #[test]
     fn test_ephemeral_hotkey_with_conversation() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: Some(1),
             input: String::new(),
             cursor: 0,
@@ -895,7 +888,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert!(action.is_none());
         match &state {
             AppState::SettingEphemeral {
@@ -912,7 +905,7 @@ mod tests {
     #[test]
     fn test_ephemeral_hotkey_without_conversation() {
         let mut state = AppState::Normal {
-            selected_friend_idx: Some(0),
+            selected: Some(SidebarSelection::Friend(0)),
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -920,7 +913,7 @@ mod tests {
             scroll_offset: 0,
         };
         let key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert!(action.is_none());
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -929,16 +922,75 @@ mod tests {
     fn test_view_own_channel_hotkey() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
-        assert_eq!(action, Some(AppAction::ViewOwnChannel));
+        let action = state.handle_key(key, 10, 0).unwrap();
+        assert_eq!(
+            action,
+            Some(AppAction::ViewOwnChannel("public".to_string()))
+        );
     }
 
     #[test]
     fn test_subscribe_channel_hotkey() {
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert!(action.is_none());
         assert!(matches!(state, AppState::SubscribingToChannel { .. }));
+    }
+
+    #[test]
+    fn nav_continues_past_friends_into_channels() {
+        let mut state = AppState::Normal {
+            selected: Some(SidebarSelection::Friend(1)),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        state
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 2, 1)
+            .unwrap();
+        match &state {
+            AppState::Normal { selected, .. } => {
+                assert_eq!(*selected, Some(SidebarSelection::OwnPublic))
+            }
+            _ => panic!("Expected Normal"),
+        }
+    }
+
+    #[test]
+    fn enter_on_own_public_channel_opens_it() {
+        let mut state = AppState::Normal {
+            selected: Some(SidebarSelection::OwnPublic),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 0, 0)
+            .unwrap();
+        assert_eq!(
+            action,
+            Some(AppAction::ViewOwnChannel("public".to_string()))
+        );
+    }
+
+    #[test]
+    fn enter_on_subscription_selects_it() {
+        let mut state = AppState::Normal {
+            selected: Some(SidebarSelection::Subscription(0)),
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 0,
+        };
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 0, 1)
+            .unwrap();
+        assert_eq!(action, Some(AppAction::SelectSubscription(0)));
     }
 }

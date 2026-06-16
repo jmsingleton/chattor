@@ -15,7 +15,7 @@ pub use bootstrap::{
     handle_bootstrap_key, render_connecting, render_failure, BootstrapAction, BootstrapPhase,
     BootstrapUpdate,
 };
-pub use state::{AppAction, AppState};
+pub use state::{AppAction, AppState, SidebarSelection};
 pub use theme::Theme;
 
 use crate::app::App;

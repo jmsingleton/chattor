@@ -46,7 +46,7 @@ mod tests {
     fn adding_friend_typing_goes_to_input() {
         let mut state = adding("");
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
             AppState::AddingFriend { input, .. } => assert_eq!(input.text(), "a"),
@@ -58,7 +58,7 @@ mod tests {
     fn adding_friend_enter_sends() {
         let mut state = adding("friend.onion");
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert_eq!(
             action,
             Some(AppAction::SendFriendRequest("friend.onion".to_string()))
@@ -69,7 +69,7 @@ mod tests {
     fn adding_friend_enter_empty_sets_error() {
         let mut state = adding("");
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert!(action.is_none());
         match &state {
             AppState::AddingFriend { error, .. } => assert!(error.is_some()),
@@ -81,7 +81,7 @@ mod tests {
     fn adding_friend_escape_returns_to_normal() {
         let mut state = adding("test");
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        state.handle_key(key, 10).unwrap();
+        state.handle_key(key, 10, 0).unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 }

@@ -133,10 +133,10 @@ mod tests {
     fn test_subscribing_to_channel_typing() {
         let mut state = subscribing("");
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
             AppState::SubscribingToChannel { input, .. } => assert_eq!(input.text(), "ab"),
@@ -148,7 +148,7 @@ mod tests {
     fn test_subscribing_to_channel_enter_submits() {
         let mut state = subscribing("peer.onion");
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert_eq!(
             action,
@@ -160,7 +160,7 @@ mod tests {
     fn test_subscribing_to_channel_enter_empty_shows_error() {
         let mut state = subscribing("");
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(action.is_none());
         match &state {
@@ -173,7 +173,7 @@ mod tests {
     fn test_subscribing_to_channel_escape() {
         let mut state = subscribing("draft");
         state
-            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -189,7 +189,7 @@ mod tests {
             scroll_offset: 0,
         };
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert_eq!(
             action,
@@ -218,7 +218,7 @@ mod tests {
             scroll_offset: 0,
         };
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(action.is_none());
     }
@@ -234,7 +234,7 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -250,7 +250,7 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -266,7 +266,7 @@ mod tests {
             scroll_offset: 0,
         };
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(action.is_none());
         match &state {

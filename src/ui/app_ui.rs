@@ -136,9 +136,9 @@ pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) 
         );
         *scroll_offset = clamped;
     } else {
-        let (selected_idx, input_text, cursor, input_focused, scroll_offset) =
+        let (selected, input_text, cursor, input_focused, scroll_offset) =
             if let AppState::Normal {
-                selected_friend_idx,
+                selected,
                 input,
                 cursor,
                 input_focused,
@@ -147,7 +147,7 @@ pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) 
             } = &*app_state
             {
                 (
-                    *selected_friend_idx,
+                    *selected,
                     input.clone(),
                     *cursor,
                     *input_focused,
@@ -160,7 +160,7 @@ pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) 
         let clamped = render_main_area(
             f,
             chunks[1],
-            selected_idx,
+            selected,
             &input_text,
             cursor,
             input_focused,
@@ -238,7 +238,7 @@ pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) 
 fn render_main_area(
     f: &mut Frame,
     area: ratatui::layout::Rect,
-    selected_idx: Option<usize>,
+    selected: Option<crate::ui::SidebarSelection>,
     input: &str,
     cursor: usize,
     input_focused: bool,
@@ -259,7 +259,7 @@ fn render_main_area(
         f,
         main_chunks[0],
         &ctx.friends,
-        selected_idx,
+        selected,
         !input_focused,
         ctx.pending_request_count,
         &ctx.channel_subscriptions,
@@ -277,7 +277,10 @@ fn render_main_area(
         .split(main_chunks[1]);
 
     // Find the selected friend
-    let selected_friend = selected_idx.and_then(|i| ctx.friends.get(i));
+    let selected_friend = match selected {
+        Some(crate::ui::SidebarSelection::Friend(i)) => ctx.friends.get(i),
+        _ => None,
+    };
 
     // Conversation
     let friend_is_typing = selected_friend
@@ -431,7 +434,7 @@ mod tests {
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         let mut app_state = AppState::Normal {
-            selected_friend_idx: None,
+            selected: None,
             conversation_id: None,
             input: String::new(),
             cursor: 0,

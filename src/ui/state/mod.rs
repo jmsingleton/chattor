@@ -8,10 +8,56 @@ mod normal;
 use crate::error::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+/// What the sidebar cursor is on. Navigation order:
+/// friends[0..n], OwnPublic, OwnFriends, subscriptions[0..m].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarSelection {
+    Friend(usize),
+    OwnPublic,
+    OwnFriends,
+    Subscription(usize),
+}
+
+impl SidebarSelection {
+    pub fn first(friend_count: usize) -> Self {
+        if friend_count > 0 {
+            SidebarSelection::Friend(0)
+        } else {
+            SidebarSelection::OwnPublic
+        }
+    }
+
+    pub fn next(self, friend_count: usize, sub_count: usize) -> Self {
+        use SidebarSelection::*;
+        match self {
+            Friend(i) if i + 1 < friend_count => Friend(i + 1),
+            Friend(_) => OwnPublic,
+            OwnPublic => OwnFriends,
+            OwnFriends if sub_count > 0 => Subscription(0),
+            OwnFriends => OwnFriends,
+            Subscription(i) if i + 1 < sub_count => Subscription(i + 1),
+            Subscription(i) => Subscription(i),
+        }
+    }
+
+    pub fn prev(self, friend_count: usize, _sub_count: usize) -> Self {
+        use SidebarSelection::*;
+        match self {
+            Friend(i) if i > 0 => Friend(i - 1),
+            Friend(i) => Friend(i),
+            OwnPublic if friend_count > 0 => Friend(friend_count - 1),
+            OwnPublic => OwnPublic,
+            OwnFriends => OwnPublic,
+            Subscription(0) => OwnFriends,
+            Subscription(i) => Subscription(i - 1),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum AppState {
     Normal {
-        selected_friend_idx: Option<usize>,
+        selected: Option<SidebarSelection>,
         conversation_id: Option<i64>,
         input: String,
         cursor: usize,
@@ -60,7 +106,7 @@ pub enum AppState {
 impl Default for AppState {
     fn default() -> Self {
         AppState::Normal {
-            selected_friend_idx: None,
+            selected: None,
             conversation_id: None,
             input: String::new(),
             cursor: 0,
@@ -82,9 +128,8 @@ pub enum AppAction {
     ViewFriendRequests,
     PublishChannelPost(String, String), // (content, channel_type)
     SubscribeToChannel(String),         // publisher .onion address
-    #[allow(dead_code)]
-    SelectChannel(String, String, bool), // (publisher_onion, channel_type, is_own)
-    ViewOwnChannel,
+    SelectSubscription(usize),          // index into cached subscriptions
+    ViewOwnChannel(String),             // channel_type ("public" or "friends_only")
     ToggleNotifications,
     #[allow(dead_code)]
     SendPresence(crate::protocol::message::PresenceType),
@@ -92,14 +137,19 @@ pub enum AppAction {
 }
 
 impl AppState {
-    pub fn handle_key(&mut self, key: KeyEvent, friend_count: usize) -> Result<Option<AppAction>> {
+    pub fn handle_key(
+        &mut self,
+        key: KeyEvent,
+        friend_count: usize,
+        sub_count: usize,
+    ) -> Result<Option<AppAction>> {
         // Check global keys first
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Ok(Some(AppAction::Quit));
         }
 
         match self {
-            AppState::Normal { .. } => self.handle_normal_key(key, friend_count),
+            AppState::Normal { .. } => self.handle_normal_key(key, friend_count, sub_count),
 
             AppState::AddingFriend { .. } => self.handle_adding_friend_key(key),
 
@@ -124,18 +174,45 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
+    fn sidebar_selection_walks_friends_then_channels() {
+        use SidebarSelection::*;
+        assert_eq!(Friend(0).next(2, 1), Friend(1));
+        assert_eq!(Friend(1).next(2, 1), OwnPublic);
+        assert_eq!(OwnPublic.next(2, 1), OwnFriends);
+        assert_eq!(OwnFriends.next(2, 1), Subscription(0));
+        assert_eq!(Subscription(0).next(2, 1), Subscription(0)); // bottom stop
+        assert_eq!(OwnFriends.next(2, 0), OwnFriends); // no subs
+    }
+
+    #[test]
+    fn sidebar_selection_walks_back_up() {
+        use SidebarSelection::*;
+        assert_eq!(Subscription(0).prev(2, 1), OwnFriends);
+        assert_eq!(OwnFriends.prev(2, 1), OwnPublic);
+        assert_eq!(OwnPublic.prev(2, 1), Friend(1));
+        assert_eq!(Friend(0).prev(2, 1), Friend(0)); // top stop
+        assert_eq!(OwnPublic.prev(0, 1), OwnPublic); // no friends
+    }
+
+    #[test]
+    fn sidebar_selection_first() {
+        assert_eq!(SidebarSelection::first(3), SidebarSelection::Friend(0));
+        assert_eq!(SidebarSelection::first(0), SidebarSelection::OwnPublic);
+    }
+
+    #[test]
     fn default_state_is_normal() {
         let state = AppState::default();
         match &state {
             AppState::Normal {
-                selected_friend_idx,
+                selected,
                 conversation_id,
                 input,
                 cursor,
                 input_focused,
                 scroll_offset,
             } => {
-                assert_eq!(*selected_friend_idx, None);
+                assert_eq!(*selected, None);
                 assert_eq!(*conversation_id, None);
                 assert_eq!(input, "");
                 assert_eq!(*cursor, 0);
@@ -151,7 +228,7 @@ mod tests {
         // From Normal
         let mut state = AppState::default();
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert_eq!(action, Some(AppAction::Quit));
 
         // From AddingFriend
@@ -160,7 +237,7 @@ mod tests {
             error: None,
         };
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert_eq!(action, Some(AppAction::Quit));
 
         // From ViewingMyIdentity
@@ -170,7 +247,7 @@ mod tests {
             copied_field: None,
         };
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert_eq!(action, Some(AppAction::Quit));
     }
 }

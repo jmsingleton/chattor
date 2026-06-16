@@ -53,7 +53,7 @@ mod tests {
             copied_field: None,
         };
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        state.handle_key(key, 10).unwrap();
+        state.handle_key(key, 10, 0).unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
 }
