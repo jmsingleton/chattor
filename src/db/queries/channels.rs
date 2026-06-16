@@ -91,11 +91,13 @@ pub fn store_channel_post(
     Ok(())
 }
 
-/// Posts from one remote publisher, newest first (subscription feed view).
-#[allow(dead_code)]
+/// Posts from one remote publisher's channel, newest first (subscription feed
+/// view). Filtered by both publisher and channel_type so a publisher with both
+/// a public and a friends_only subscription doesn't show their posts mixed.
 pub fn get_publisher_channel_posts(
     db: &Database,
     publisher_onion: &str,
+    channel_type: &str,
     limit: usize,
 ) -> Result<Vec<ChannelPost>> {
     let conn = db.connection();
@@ -103,25 +105,28 @@ pub fn get_publisher_channel_posts(
         .prepare(
             "SELECT id, channel_id, content, post_id, created_at, signature
          FROM channel_posts
-         WHERE channel_id = 0 AND publisher_onion = ?1
+         WHERE channel_id = 0 AND publisher_onion = ?1 AND channel_type = ?2
          ORDER BY created_at DESC, id DESC
-         LIMIT ?2",
+         LIMIT ?3",
         )
         .map_err(|e| {
             ChattorError::Database(format!("Failed to prepare publisher posts query: {}", e))
         })?;
 
     let posts = stmt
-        .query_map(params![publisher_onion, limit as i64], |row| {
-            Ok(ChannelPost {
-                id: row.get(0)?,
-                channel_id: row.get(1)?,
-                content: row.get(2)?,
-                post_id: row.get(3)?,
-                created_at: row.get(4)?,
-                signature: row.get(5)?,
-            })
-        })
+        .query_map(
+            params![publisher_onion, channel_type, limit as i64],
+            |row| {
+                Ok(ChannelPost {
+                    id: row.get(0)?,
+                    channel_id: row.get(1)?,
+                    content: row.get(2)?,
+                    post_id: row.get(3)?,
+                    created_at: row.get(4)?,
+                    signature: row.get(5)?,
+                })
+            },
+        )
         .map_err(|e| ChattorError::Database(format!("Failed to query publisher posts: {}", e)))?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| ChattorError::Database(format!("Failed to collect publisher posts: {}", e)))?;
@@ -650,10 +655,26 @@ mod tests {
             Some("public"),
         )
         .unwrap();
+        // Same publisher, different channel_type — must not bleed into the public feed.
+        store_channel_post(
+            &db,
+            0,
+            "alice friends-only",
+            "post-a2",
+            150,
+            "sig",
+            Some("alice.onion"),
+            Some("friends_only"),
+        )
+        .unwrap();
         store_channel_post(&db, 1, "my own", "post-me", 300, "sig", None, None).unwrap();
 
-        let posts = get_publisher_channel_posts(&db, "alice.onion", 100).unwrap();
+        let posts = get_publisher_channel_posts(&db, "alice.onion", "public", 100).unwrap();
         assert_eq!(posts.len(), 1);
         assert_eq!(posts[0].content, "from alice");
+
+        let fo = get_publisher_channel_posts(&db, "alice.onion", "friends_only", 100).unwrap();
+        assert_eq!(fo.len(), 1);
+        assert_eq!(fo[0].content, "alice friends-only");
     }
 }

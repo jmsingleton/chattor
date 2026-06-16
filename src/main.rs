@@ -613,6 +613,7 @@ async fn run_tui(
                     let posts = db::queries::get_publisher_channel_posts(
                         &app_lock.db,
                         publisher_onion,
+                        channel_type,
                         100,
                     )
                     .unwrap_or_default();
