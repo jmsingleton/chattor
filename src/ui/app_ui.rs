@@ -32,7 +32,7 @@ pub struct RenderContext {
 }
 
 /// Render the application UI based on current state
-pub fn render_app(f: &mut Frame, app_state: &AppState, ctx: &RenderContext) {
+pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) {
     let size = f.size();
     if size.width < MIN_WIDTH || size.height < MIN_HEIGHT {
         let lines = vec![
@@ -380,9 +380,9 @@ mod tests {
     fn tiny_terminal_renders_guard_instead_of_app() {
         let backend = ratatui::backend::TestBackend::new(40, 10);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let app_state = AppState::default();
+        let mut app_state = AppState::default();
         terminal
-            .draw(|f| render_app(f, &app_state, &test_ctx()))
+            .draw(|f| render_app(f, &mut app_state, &test_ctx()))
             .unwrap();
         let text = buffer_text(&terminal);
         assert!(text.contains("Terminal too small"));
@@ -393,9 +393,9 @@ mod tests {
     fn normal_terminal_renders_app() {
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let app_state = AppState::default();
+        let mut app_state = AppState::default();
         terminal
-            .draw(|f| render_app(f, &app_state, &test_ctx()))
+            .draw(|f| render_app(f, &mut app_state, &test_ctx()))
             .unwrap();
         assert!(buffer_text(&terminal).contains("chattor"));
     }

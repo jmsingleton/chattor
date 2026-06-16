@@ -649,7 +649,7 @@ async fn run_tui(
 
         // Render current state
         if let Err(e) = terminal.draw(|f| {
-            ui::render_app(f, &app_state, &ctx);
+            ui::render_app(f, &mut app_state, &ctx);
         }) {
             break Err(e.into());
         }
