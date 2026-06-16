@@ -6,12 +6,16 @@ use ratatui::{
 };
 
 use crate::ui::theme::Theme;
+use crate::ui::widgets::text_input::TextInput;
 
 /// Render "Add Friend" modal
-pub fn render_add_friend_modal(f: &mut Frame, input: &str, error: Option<&str>, theme: &Theme) {
+pub fn render_add_friend_modal(
+    f: &mut Frame,
+    input: &mut TextInput,
+    error: Option<&str>,
+    theme: &Theme,
+) {
     let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 40, 50, 12);
-
-    // Clear background
     f.render_widget(Clear, area);
 
     let block = Block::default()
@@ -31,21 +35,11 @@ pub fn render_add_friend_modal(f: &mut Frame, input: &str, error: Option<&str>, 
         ])
         .split(area);
 
-    // Prompt
     let prompt = Paragraph::new("Enter their .onion address or friend code:");
     f.render_widget(prompt, chunks[0]);
 
-    // Input field
-    let input_widget = Paragraph::new(format!("{}_", input))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded),
-        )
-        .style(Style::default().fg(theme.input_fg));
-    f.render_widget(input_widget, chunks[1]);
+    input.render(f, chunks[1], true, theme);
 
-    // Help text or error
     let help = if let Some(err) = error {
         Paragraph::new(err).style(Style::default().fg(theme.error))
     } else {
@@ -54,7 +48,6 @@ pub fn render_add_friend_modal(f: &mut Frame, input: &str, error: Option<&str>, 
     };
     f.render_widget(help, chunks[2]);
 
-    // Controls
     let controls = Paragraph::new("[Enter] Send    [Esc] Cancel")
         .alignment(Alignment::Center)
         .style(Style::default().fg(theme.fg_dim));

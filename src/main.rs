@@ -675,8 +675,11 @@ async fn run_tui(
                                 }
                                 Err(e) => {
                                     app_state = AppState::AddingFriend {
-                                        input: code,
-                                        cursor: 0,
+                                        input:
+                                            crate::ui::widgets::text_input::TextInput::single_line(
+                                                "Paste .onion or friend code",
+                                            )
+                                            .with_text(&code),
                                         error: Some(format!("Failed: {}", e)),
                                     };
                                 }

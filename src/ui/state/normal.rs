@@ -94,8 +94,9 @@ impl AppState {
                         KeyCode::Char('q') => Ok(Some(AppAction::Quit)),
                         KeyCode::Char('a') => {
                             *self = AppState::AddingFriend {
-                                input: String::new(),
-                                cursor: 0,
+                                input: crate::ui::widgets::text_input::TextInput::single_line(
+                                    "Paste .onion or friend code",
+                                ),
                                 error: None,
                             };
                             Ok(None)

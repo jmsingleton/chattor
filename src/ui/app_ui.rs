@@ -243,8 +243,9 @@ pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) 
 
     // Modal overlays
     match app_state {
-        AppState::AddingFriend { input, error, .. } => {
-            crate::ui::modals::render_add_friend_modal(f, input, error.as_deref(), &ctx.theme);
+        AppState::AddingFriend { input, error } => {
+            let err = error.clone();
+            crate::ui::modals::render_add_friend_modal(f, input, err.as_deref(), &ctx.theme);
         }
         AppState::ViewingFriendRequests {
             requests,
