@@ -4,11 +4,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
-/// Render the channel feed view
+/// Render the channel feed view. Returns the clamped scroll offset.
 #[allow(clippy::too_many_arguments)]
 pub fn render_channel_feed(
     f: &mut Frame,
@@ -22,7 +22,7 @@ pub fn render_channel_feed(
     posts: &[ChannelPost],
     read_counts: &std::collections::HashMap<String, i64>,
     theme: &Theme,
-) {
+) -> usize {
     let ch_label = if channel_type == "public" {
         "Public"
     } else {
@@ -47,7 +47,7 @@ pub fn render_channel_feed(
             ])
             .split(area);
 
-        render_posts(
+        let clamped = render_posts(
             f,
             chunks[0],
             &title,
@@ -57,8 +57,9 @@ pub fn render_channel_feed(
             theme,
         );
         render_channel_input(f, chunks[1], input, cursor, theme);
+        clamped
     } else {
-        render_posts(f, area, &title, posts, read_counts, scroll_offset, theme);
+        render_posts(f, area, &title, posts, read_counts, scroll_offset, theme)
     }
 }
 
@@ -70,7 +71,7 @@ fn render_posts(
     read_counts: &std::collections::HashMap<String, i64>,
     scroll_offset: usize,
     theme: &Theme,
-) {
+) -> usize {
     let block = Block::default()
         .title(title.to_string())
         .borders(Borders::ALL)
@@ -93,7 +94,7 @@ fn render_posts(
             ])
             .split(inner);
         f.render_widget(text, v_layout[1]);
-        return;
+        return 0;
     }
 
     let mut lines: Vec<Line> = Vec::new();
@@ -124,19 +125,7 @@ fn render_posts(
         lines.push(Line::from(""));
     }
 
-    // Apply scroll offset
-    let skip = if scroll_offset > 0 && lines.len() > inner.height as usize {
-        lines
-            .len()
-            .saturating_sub(inner.height as usize + scroll_offset)
-    } else {
-        lines.len().saturating_sub(inner.height as usize)
-    };
-
-    let visible_lines: Vec<Line> = lines.into_iter().skip(skip).collect();
-
-    let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
-    f.render_widget(paragraph, inner);
+    crate::ui::widgets::scroll_view::render_scrollable(f, inner, lines, scroll_offset, theme)
 }
 
 fn render_channel_input(f: &mut Frame, area: Rect, input: &str, cursor: usize, theme: &Theme) {

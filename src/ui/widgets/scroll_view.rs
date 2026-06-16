@@ -13,7 +13,6 @@ use crate::ui::theme::Theme;
 ///
 /// Returns the clamped offset actually applied — callers must write it back
 /// to their state so PageUp can't scroll past the top of history.
-#[allow(dead_code)]
 pub fn render_scrollable(
     f: &mut Frame,
     area: Rect,

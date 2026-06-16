@@ -4,11 +4,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
-/// Render the conversation area
+/// Render the conversation area. Returns the clamped scroll offset.
 #[allow(clippy::too_many_arguments)]
 pub fn render_conversation(
     f: &mut Frame,
@@ -20,7 +20,7 @@ pub fn render_conversation(
     ephemeral_ttl: Option<i64>,
     friend_is_typing: bool,
     theme: &Theme,
-) {
+) -> usize {
     let title = if let (Some(friend_entry), Some(ttl)) = (friend, ephemeral_ttl) {
         format!(" {} [⏱ {}] ", friend_entry.display(), format_ttl(ttl))
     } else if let Some(friend_entry) = friend {
@@ -85,6 +85,7 @@ pub fn render_conversation(
                 ])
                 .split(padded);
             f.render_widget(text, v_layout[1]);
+            0
         }
         Some(friend_entry) => {
             // Reserve a dedicated line for the typing indicator so it
@@ -107,7 +108,7 @@ pub fn render_conversation(
                 (padded, None)
             };
 
-            if messages.is_empty() {
+            let clamped = if messages.is_empty() {
                 let text = Paragraph::new("No messages yet. Say hello!")
                     .alignment(Alignment::Center)
                     .style(Style::default().fg(theme.fg_dim));
@@ -120,6 +121,7 @@ pub fn render_conversation(
                     ])
                     .split(msg_area);
                 f.render_widget(text, v_layout[1]);
+                0
             } else {
                 render_messages(
                     f,
@@ -129,8 +131,8 @@ pub fn render_conversation(
                     &friend_entry.display(),
                     scroll_offset,
                     theme,
-                );
-            }
+                )
+            };
 
             if let Some(typing_rect) = typing_area {
                 let typing_text = format!("{} is typing\u{2026}", friend_entry.display());
@@ -141,11 +143,13 @@ pub fn render_conversation(
                 );
                 f.render_widget(typing_line, typing_rect);
             }
+
+            clamped
         }
     }
 }
 
-/// Render message list
+/// Render message list. Returns the clamped scroll offset.
 fn render_messages(
     f: &mut Frame,
     area: Rect,
@@ -154,7 +158,7 @@ fn render_messages(
     friend_name: &str,
     scroll_offset: usize,
     theme: &Theme,
-) {
+) -> usize {
     let mut lines: Vec<Line> = Vec::new();
     let mut last_day: Option<i64> = None;
 
@@ -228,19 +232,7 @@ fn render_messages(
         lines.push(Line::from(""));
     }
 
-    // Apply scroll offset
-    let skip = if scroll_offset > 0 && lines.len() > area.height as usize {
-        lines
-            .len()
-            .saturating_sub(area.height as usize + scroll_offset)
-    } else {
-        lines.len().saturating_sub(area.height as usize)
-    };
-
-    let visible_lines: Vec<Line> = lines.into_iter().skip(skip).collect();
-
-    let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
-    f.render_widget(paragraph, area);
+    crate::ui::widgets::scroll_view::render_scrollable(f, area, lines, scroll_offset, theme)
 }
 
 /// Render the message input area

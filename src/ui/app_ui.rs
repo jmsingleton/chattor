@@ -113,15 +113,15 @@ pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) 
 
     // Main area -- depends on state
     if let AppState::ViewingChannel {
-        ref publisher_onion,
-        ref channel_type,
+        publisher_onion,
+        channel_type,
         is_own,
-        ref input,
+        input,
         cursor,
         scroll_offset,
     } = app_state
     {
-        crate::ui::channel_feed::render_channel_feed(
+        let clamped = crate::ui::channel_feed::render_channel_feed(
             f,
             chunks[1],
             publisher_onion,
@@ -134,94 +134,43 @@ pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) 
             &ctx.channel_post_read_counts,
             &ctx.theme,
         );
+        *scroll_offset = clamped;
     } else {
-        // Split into sidebar + conversation
-        let main_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(24), // Sidebar
-                Constraint::Min(0),     // Conversation
-            ])
-            .split(chunks[1]);
-
-        // Extract state from Normal variant
-        let (selected_idx, _conv_id, input, cursor, input_focused, scroll_offset) =
+        let (selected_idx, input_text, cursor, input_focused, scroll_offset) =
             if let AppState::Normal {
                 selected_friend_idx,
-                conversation_id,
                 input,
                 cursor,
                 input_focused,
                 scroll_offset,
-            } = app_state
+                ..
+            } = &*app_state
             {
                 (
                     *selected_friend_idx,
-                    *conversation_id,
-                    input.as_str(),
+                    input.clone(),
                     *cursor,
                     *input_focused,
                     *scroll_offset,
                 )
             } else {
-                (None, None, "", 0, false, 0)
+                (None, String::new(), 0, false, 0)
             };
 
-        // Sidebar (with channels)
-        crate::ui::sidebar::render_sidebar_with_channels(
+        let clamped = render_main_area(
             f,
-            main_chunks[0],
-            &ctx.friends,
+            chunks[1],
             selected_idx,
-            !input_focused,
-            ctx.pending_request_count,
-            &ctx.channel_subscriptions,
-            &ctx.presence,
-            &ctx.theme,
-        );
-
-        // Right panel: conversation + input
-        let right_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),    // Messages
-                Constraint::Length(3), // Input
-            ])
-            .split(main_chunks[1]);
-
-        // Find the selected friend
-        let selected_friend = selected_idx.and_then(|i| ctx.friends.get(i));
-
-        // Conversation
-        let friend_is_typing = selected_friend
-            .map(|f| {
-                ctx.presence
-                    .get(&f.onion_address)
-                    .is_some_and(|(_, typing)| *typing)
-            })
-            .unwrap_or(false);
-
-        crate::ui::conversation::render_conversation(
-            f,
-            right_chunks[0],
-            selected_friend,
-            &ctx.messages,
-            ctx.own_onion.as_deref(),
-            scroll_offset,
-            ctx.conversation_ephemeral_ttl,
-            friend_is_typing,
-            &ctx.theme,
-        );
-
-        // Input
-        crate::ui::conversation::render_input(
-            f,
-            right_chunks[1],
-            input,
+            &input_text,
             cursor,
             input_focused,
-            &ctx.theme,
+            scroll_offset,
+            ctx,
         );
+
+        if let AppState::Normal { scroll_offset, .. } = app_state {
+            *scroll_offset = clamped;
+        }
     }
 
     // Footer
@@ -282,6 +231,86 @@ pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) 
         }
         _ => {}
     }
+}
+
+/// Render sidebar + conversation + input. Returns the clamped scroll offset.
+#[allow(clippy::too_many_arguments)]
+fn render_main_area(
+    f: &mut Frame,
+    area: ratatui::layout::Rect,
+    selected_idx: Option<usize>,
+    input: &str,
+    cursor: usize,
+    input_focused: bool,
+    scroll_offset: usize,
+    ctx: &RenderContext,
+) -> usize {
+    // Split into sidebar + conversation
+    let main_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(24), // Sidebar
+            Constraint::Min(0),     // Conversation
+        ])
+        .split(area);
+
+    // Sidebar (with channels)
+    crate::ui::sidebar::render_sidebar_with_channels(
+        f,
+        main_chunks[0],
+        &ctx.friends,
+        selected_idx,
+        !input_focused,
+        ctx.pending_request_count,
+        &ctx.channel_subscriptions,
+        &ctx.presence,
+        &ctx.theme,
+    );
+
+    // Right panel: conversation + input
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),    // Messages
+            Constraint::Length(3), // Input
+        ])
+        .split(main_chunks[1]);
+
+    // Find the selected friend
+    let selected_friend = selected_idx.and_then(|i| ctx.friends.get(i));
+
+    // Conversation
+    let friend_is_typing = selected_friend
+        .map(|f| {
+            ctx.presence
+                .get(&f.onion_address)
+                .is_some_and(|(_, typing)| *typing)
+        })
+        .unwrap_or(false);
+
+    let clamped = crate::ui::conversation::render_conversation(
+        f,
+        right_chunks[0],
+        selected_friend,
+        &ctx.messages,
+        ctx.own_onion.as_deref(),
+        scroll_offset,
+        ctx.conversation_ephemeral_ttl,
+        friend_is_typing,
+        &ctx.theme,
+    );
+
+    // Input
+    crate::ui::conversation::render_input(
+        f,
+        right_chunks[1],
+        input,
+        cursor,
+        input_focused,
+        &ctx.theme,
+    );
+
+    clamped
 }
 
 fn format_footer_spans<'a>(state: &AppState, theme: &'a Theme) -> Vec<Span<'a>> {
@@ -395,5 +424,26 @@ mod tests {
             .draw(|f| render_app(f, &mut app_state, &test_ctx()))
             .unwrap();
         assert!(buffer_text(&terminal).contains("chattor"));
+    }
+
+    #[test]
+    fn scrolled_offset_gets_clamped_back_into_state() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut app_state = AppState::Normal {
+            selected_friend_idx: None,
+            conversation_id: None,
+            input: String::new(),
+            cursor: 0,
+            input_focused: false,
+            scroll_offset: 9999,
+        };
+        terminal
+            .draw(|f| render_app(f, &mut app_state, &test_ctx()))
+            .unwrap();
+        match app_state {
+            AppState::Normal { scroll_offset, .. } => assert_eq!(scroll_offset, 0),
+            _ => panic!("state changed unexpectedly"),
+        }
     }
 }
