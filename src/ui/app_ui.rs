@@ -276,13 +276,9 @@ pub fn render_app(f: &mut Frame, app_state: &mut AppState, ctx: &RenderContext) 
         AppState::SettingEphemeral { selected_idx, .. } => {
             crate::ui::modals::render_ephemeral_modal(f, *selected_idx, &ctx.theme);
         }
-        AppState::SubscribingToChannel { input, error, .. } => {
-            crate::ui::modals::render_subscribe_channel_modal(
-                f,
-                input,
-                error.as_deref(),
-                &ctx.theme,
-            );
+        AppState::SubscribingToChannel { input, error } => {
+            let err = error.clone();
+            crate::ui::modals::render_subscribe_channel_modal(f, input, err.as_deref(), &ctx.theme);
         }
         _ => {}
     }

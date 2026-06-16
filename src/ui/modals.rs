@@ -375,12 +375,11 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize, theme: &Theme)
 /// Render "Subscribe to Channel" modal
 pub fn render_subscribe_channel_modal(
     f: &mut Frame,
-    input: &str,
+    input: &mut TextInput,
     error: Option<&str>,
     theme: &Theme,
 ) {
     let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 40, 50, 12);
-
     f.render_widget(Clear, area);
 
     let block = Block::default()
@@ -403,14 +402,7 @@ pub fn render_subscribe_channel_modal(
     let prompt = Paragraph::new("Enter publisher's .onion address:");
     f.render_widget(prompt, chunks[0]);
 
-    let input_widget = Paragraph::new(format!("{}_", input))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded),
-        )
-        .style(Style::default().fg(theme.input_fg));
-    f.render_widget(input_widget, chunks[1]);
+    input.render(f, chunks[1], true, theme);
 
     let help = if let Some(err) = error {
         Paragraph::new(err).style(Style::default().fg(theme.error))

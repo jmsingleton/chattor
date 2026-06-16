@@ -52,8 +52,7 @@ pub enum AppState {
         scroll_offset: usize,
     },
     SubscribingToChannel {
-        input: String,
-        cursor: usize,
+        input: Box<crate::ui::widgets::text_input::TextInput>,
         error: Option<String>,
     },
 }

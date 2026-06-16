@@ -116,8 +116,11 @@ impl AppState {
                         }
                         KeyCode::Char('s') => {
                             *self = AppState::SubscribingToChannel {
-                                input: String::new(),
-                                cursor: 0,
+                                input: Box::new(
+                                    crate::ui::widgets::text_input::TextInput::single_line(
+                                        "Publisher's .onion address",
+                                    ),
+                                ),
                                 error: None,
                             };
                             Ok(None)
