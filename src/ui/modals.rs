@@ -26,14 +26,14 @@ pub fn render_add_friend_modal(
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(2)
+        .margin(1)
         .constraints([
             Constraint::Length(1),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(1),
         ])
-        .split(area);
+        .split(block.inner(area));
 
     let prompt = Paragraph::new("Enter their .onion address or friend code:");
     f.render_widget(prompt, chunks[0]);
@@ -394,7 +394,7 @@ pub fn render_subscribe_channel_modal(
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(2)
+        .margin(1)
         .constraints([
             Constraint::Length(1), // prompt
             Constraint::Length(3), // input
@@ -402,7 +402,7 @@ pub fn render_subscribe_channel_modal(
             Constraint::Length(1), // help/error
             Constraint::Length(1), // controls
         ])
-        .split(area);
+        .split(block.inner(area));
 
     let prompt = Paragraph::new("Enter publisher's .onion or friend code:");
     f.render_widget(prompt, chunks[0]);
