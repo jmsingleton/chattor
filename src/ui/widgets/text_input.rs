@@ -50,11 +50,6 @@ impl TextInput {
         self.textarea.lines().join("\n")
     }
 
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.textarea.lines().iter().all(|l| l.is_empty())
-    }
-
     /// Render with a rounded border. `&mut self` because tui-textarea
     /// stores block/style on the widget itself.
     pub fn render(&mut self, f: &mut Frame, area: Rect, focused: bool, theme: &Theme) {
@@ -108,7 +103,6 @@ mod tests {
         assert!(input.handle_key(key(KeyCode::Char('h'))));
         assert!(input.handle_key(key(KeyCode::Char('i'))));
         assert_eq!(input.text(), "hi");
-        assert!(!input.is_empty());
     }
 
     #[test]
