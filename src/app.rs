@@ -169,23 +169,27 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn temp_settings(temp_dir: &TempDir) -> crate::config::Settings {
+        crate::config::Settings {
+            config_dir: temp_dir.path().to_path_buf(),
+            data_dir: temp_dir.path().to_path_buf(),
+            db_path: temp_dir.path().join("messages.db"),
+            debug: false,
+            tor_socks_port: 9050,
+        }
+    }
+
     #[test]
     fn test_app_creation_with_temp_dirs() {
         let temp_dir = TempDir::new().unwrap();
-
-        // Override HOME for test
-        std::env::set_var("HOME", temp_dir.path());
-
-        let app = App::new(None);
+        let app = App::new_with_settings(temp_settings(&temp_dir), None);
         assert!(app.is_ok());
     }
 
     #[test]
     fn test_app_has_phase2_components() {
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("HOME", temp_dir.path());
-
-        let app = App::new(None).unwrap();
+        let app = App::new_with_settings(temp_settings(&temp_dir), None).unwrap();
 
         // Verify Phase 2 components exist
         assert!(app.tor_client.is_none()); // Not initialized by default
