@@ -36,6 +36,16 @@ pub fn initialize_channels(db: &Database) -> Result<()> {
         .unwrap_or_default()
         .as_secs() as i64;
 
+    // Sentinel "remote" channel (id=0) that all subscriber-side posts hang off.
+    // channel_posts.channel_id has a FOREIGN KEY into channels(id), and the
+    // bundled SQLCipher build enforces foreign keys (PRAGMA foreign_keys=ON by
+    // default), so this parent row must exist or remote ChannelPost inserts fail.
+    conn.execute(
+        "INSERT OR IGNORE INTO channels (id, channel_type, created_at) VALUES (0, 'remote', ?1)",
+        rusqlite::params![now],
+    )
+    .map_err(|e| ChattorError::Database(format!("Failed to create remote channel: {}", e)))?;
+
     conn.execute(
         "INSERT OR IGNORE INTO channels (id, channel_type, created_at) VALUES (1, 'public', ?1)",
         rusqlite::params![now],
@@ -422,7 +432,8 @@ mod tests {
             .connection()
             .query_row("SELECT COUNT(*) FROM channels", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(count, 2);
+        // remote (id=0) + public (id=1) + friends_only (id=2)
+        assert_eq!(count, 3);
 
         // Calling again should be idempotent
         initialize_channels(&db).unwrap();
@@ -430,7 +441,7 @@ mod tests {
             .connection()
             .query_row("SELECT COUNT(*) FROM channels", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
     }
 
     #[test]
@@ -613,17 +624,9 @@ mod tests {
     fn test_publisher_channel_posts_filtered() {
         let temp = NamedTempFile::new().unwrap();
         let db = Database::open(temp.path()).unwrap();
+        // initialize_channels seeds the id=0 "remote" parent channel that
+        // subscriber-side posts (channel_id=0) require under FK enforcement.
         initialize_channels(&db).unwrap();
-
-        // Insert a sentinel channel with id=0 for remote (subscriber-side) posts.
-        // In production, FK enforcement is off so channel_id=0 works without this row;
-        // but the bundled SQLCipher in tests enforces FKs, so we seed it explicitly.
-        db.connection()
-            .execute(
-                "INSERT OR IGNORE INTO channels (id, channel_type, created_at) VALUES (0, 'remote', 0)",
-                [],
-            )
-            .unwrap();
 
         store_channel_post(
             &db,
