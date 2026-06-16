@@ -89,11 +89,14 @@ pub fn friend_code_to_onion(code: &str) -> Result<String> {
 }
 
 /// Resolve a subscribe/add target that may be either a raw `.onion` address or
-/// a 32-word friend code. `.onion` inputs pass through unchanged; anything else
-/// is treated as a friend code and converted.
+/// a 32-word friend code. A `.onion` input is validated as a well-formed v3
+/// address (length + base32 + version) and passed through; anything else is
+/// treated as a friend code and converted. Malformed `.onion` strings are
+/// rejected rather than accepted as silently-undeliverable targets.
 pub fn resolve_onion_or_friend_code(input: &str) -> Result<String> {
     let trimmed = input.trim();
     if trimmed.ends_with(".onion") {
+        onion_to_pubkey(trimmed)?;
         Ok(trimmed.to_string())
     } else {
         friend_code_to_onion(trimmed)
@@ -345,6 +348,14 @@ mod tests {
     #[test]
     fn resolve_rejects_garbage() {
         assert!(resolve_onion_or_friend_code("not a real code").is_err());
+    }
+
+    #[test]
+    fn resolve_rejects_malformed_onion() {
+        // Right suffix, wrong everything else — must be rejected, not accepted
+        // as a silently-undeliverable subscription.
+        assert!(resolve_onion_or_friend_code("garbage.onion").is_err());
+        assert!(resolve_onion_or_friend_code(".onion").is_err());
     }
 
     #[test]
