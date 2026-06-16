@@ -122,7 +122,7 @@ mod tests {
             return_to_list: false,
         };
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert_eq!(action, Some(AppAction::AcceptFriendRequest(42)));
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -150,7 +150,7 @@ mod tests {
 
         // Down
         state
-            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, 0)
             .unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 1);
@@ -160,7 +160,7 @@ mod tests {
 
         // Down at bottom stays at bottom
         state
-            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, 0)
             .unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 1);
@@ -170,7 +170,7 @@ mod tests {
 
         // Up
         state
-            .handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), 10, 0)
             .unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 0);
@@ -193,7 +193,7 @@ mod tests {
         };
 
         state
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
             AppState::ViewingFriendRequest {
@@ -216,7 +216,7 @@ mod tests {
         };
 
         state
-            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -232,7 +232,7 @@ mod tests {
         };
 
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert_eq!(action, Some(AppAction::AcceptFriendRequest(42)));
         assert!(matches!(state, AppState::ViewingFriendRequests { .. }));
@@ -267,7 +267,7 @@ mod tests {
 
         // j moves down
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 1);
@@ -277,7 +277,7 @@ mod tests {
 
         // k moves up
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         if let AppState::ViewingFriendRequests { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 0);

@@ -1,17 +1,21 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::Style,
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 
 use crate::ui::theme::Theme;
+use crate::ui::widgets::text_input::TextInput;
 
 /// Render "Add Friend" modal
-pub fn render_add_friend_modal(f: &mut Frame, input: &str, error: Option<&str>, theme: &Theme) {
-    let area = centered_rect(60, 40, f.size());
-
-    // Clear background
+pub fn render_add_friend_modal(
+    f: &mut Frame,
+    input: &mut TextInput,
+    error: Option<&str>,
+    theme: &Theme,
+) {
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 40, 50, 12);
     f.render_widget(Clear, area);
 
     let block = Block::default()
@@ -22,30 +26,20 @@ pub fn render_add_friend_modal(f: &mut Frame, input: &str, error: Option<&str>, 
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(2)
+        .margin(1)
         .constraints([
             Constraint::Length(1),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(1),
         ])
-        .split(area);
+        .split(block.inner(area));
 
-    // Prompt
     let prompt = Paragraph::new("Enter their .onion address or friend code:");
     f.render_widget(prompt, chunks[0]);
 
-    // Input field
-    let input_widget = Paragraph::new(format!("{}_", input))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded),
-        )
-        .style(Style::default().fg(theme.input_fg));
-    f.render_widget(input_widget, chunks[1]);
+    input.render(f, chunks[1], true, theme);
 
-    // Help text or error
     let help = if let Some(err) = error {
         Paragraph::new(err).style(Style::default().fg(theme.error))
     } else {
@@ -54,7 +48,6 @@ pub fn render_add_friend_modal(f: &mut Frame, input: &str, error: Option<&str>, 
     };
     f.render_widget(help, chunks[2]);
 
-    // Controls
     let controls = Paragraph::new("[Enter] Send    [Esc] Cancel")
         .alignment(Alignment::Center)
         .style(Style::default().fg(theme.fg_dim));
@@ -70,7 +63,7 @@ pub fn render_friend_request_modal(
     friend_code: &str,
     theme: &Theme,
 ) {
-    let area = centered_rect(60, 50, f.size());
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 50, 54, 14);
 
     f.render_widget(Clear, area);
 
@@ -127,7 +120,7 @@ pub fn render_friend_request_list(
     use ratatui::text::{Line, Span};
     use ratatui::widgets::{List, ListItem};
 
-    let area = centered_rect(60, 50, f.size());
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 50, 50, 12);
     f.render_widget(Clear, area);
 
     let title = format!(" Friend Requests ({} pending) ", requests.len());
@@ -221,7 +214,7 @@ pub fn render_identity_modal(
 ) {
     use ratatui::style::Modifier;
 
-    let area = centered_rect(70, 70, f.size());
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 70, 70, 58, 16);
 
     // Clear area first
     f.render_widget(Clear, area);
@@ -323,7 +316,7 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize, theme: &Theme)
     use ratatui::text::{Line, Span};
     use ratatui::widgets::{List, ListItem};
 
-    let area = centered_rect(50, 40, f.size());
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 50, 40, 30, 11);
     f.render_widget(Clear, area);
 
     let block = Block::default()
@@ -382,12 +375,15 @@ pub fn render_ephemeral_modal(f: &mut Frame, selected_idx: usize, theme: &Theme)
 /// Render "Subscribe to Channel" modal
 pub fn render_subscribe_channel_modal(
     f: &mut Frame,
-    input: &str,
+    input: &mut TextInput,
+    channel_type: &str,
     error: Option<&str>,
     theme: &Theme,
 ) {
-    let area = centered_rect(60, 40, f.size());
+    use ratatui::style::Modifier;
+    use ratatui::text::{Line, Span};
 
+    let area = crate::ui::widgets::modal_frame::modal_area(f.size(), 60, 40, 50, 13);
     f.render_widget(Clear, area);
 
     let block = Block::default()
@@ -398,60 +394,67 @@ pub fn render_subscribe_channel_modal(
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(2)
+        .margin(1)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(1),
+            Constraint::Length(1), // prompt
+            Constraint::Length(3), // input
+            Constraint::Length(1), // channel-type selector
+            Constraint::Length(1), // help/error
+            Constraint::Length(1), // controls
         ])
-        .split(area);
+        .split(block.inner(area));
 
-    let prompt = Paragraph::new("Enter publisher's .onion address:");
+    let prompt = Paragraph::new("Enter publisher's .onion or friend code:");
     f.render_widget(prompt, chunks[0]);
 
-    let input_widget = Paragraph::new(format!("{}_", input))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded),
-        )
-        .style(Style::default().fg(theme.input_fg));
-    f.render_widget(input_widget, chunks[1]);
+    input.render(f, chunks[1], true, theme);
+
+    let public_active = channel_type == "public";
+    let active_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let inactive_style = Style::default().fg(theme.fg_dim);
+    let selector = Line::from(vec![
+        Span::styled("Channel:  ", Style::default().fg(theme.fg_dim)),
+        Span::styled(
+            if public_active {
+                "\u{25b8} Public"
+            } else {
+                "  Public"
+            },
+            if public_active {
+                active_style
+            } else {
+                inactive_style
+            },
+        ),
+        Span::raw("    "),
+        Span::styled(
+            if public_active {
+                "  Friends-only"
+            } else {
+                "\u{25b8} Friends-only"
+            },
+            if public_active {
+                inactive_style
+            } else {
+                active_style
+            },
+        ),
+    ]);
+    f.render_widget(Paragraph::new(selector), chunks[2]);
 
     let help = if let Some(err) = error {
         Paragraph::new(err).style(Style::default().fg(theme.error))
     } else {
-        Paragraph::new("Subscribes to their public channel")
-            .style(Style::default().fg(theme.fg_dim))
+        Paragraph::new("[Tab] switch channel type").style(Style::default().fg(theme.fg_dim))
     };
-    f.render_widget(help, chunks[2]);
+    f.render_widget(help, chunks[3]);
 
     let controls = Paragraph::new("[Enter] Subscribe    [Esc] Cancel")
         .alignment(Alignment::Center)
         .style(Style::default().fg(theme.fg_dim));
-    f.render_widget(controls, chunks[3]);
+    f.render_widget(controls, chunks[4]);
 
     f.render_widget(block, area);
-}
-
-/// Helper to center a rect
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }

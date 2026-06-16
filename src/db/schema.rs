@@ -1,5 +1,5 @@
 /// SQL schema for chattor database
-pub const SCHEMA_VERSION: i32 = 10;
+pub const SCHEMA_VERSION: i32 = 11;
 
 pub const CREATE_TABLES: &str = r#"
 -- Schema version tracking
@@ -139,6 +139,8 @@ CREATE TABLE IF NOT EXISTS channel_posts (
     post_id TEXT NOT NULL UNIQUE,
     created_at INTEGER NOT NULL,
     signature TEXT NOT NULL,
+    publisher_onion TEXT,
+    channel_type TEXT,
     FOREIGN KEY (channel_id) REFERENCES channels(id)
 );
 
@@ -172,6 +174,7 @@ CREATE INDEX IF NOT EXISTS idx_channel_posts_post_id ON channel_posts(post_id);
 CREATE INDEX IF NOT EXISTS idx_channel_posts_created ON channel_posts(created_at);
 CREATE INDEX IF NOT EXISTS idx_channel_subs_onion ON channel_subscribers(subscriber_onion);
 CREATE INDEX IF NOT EXISTS idx_channel_subscriptions_publisher ON channel_subscriptions(publisher_onion);
+CREATE INDEX IF NOT EXISTS idx_channel_posts_publisher ON channel_posts(publisher_onion);
 "#;
 
 pub const CREATE_APP_SETTINGS: &str = "
@@ -188,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_schema_version_defined() {
-        assert_eq!(SCHEMA_VERSION, 10);
+        assert_eq!(SCHEMA_VERSION, 11);
     }
 
     #[test]

@@ -62,10 +62,10 @@ mod tests {
         };
         // Down twice to select "1 hour" (index 2)
         state
-            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, 0)
             .unwrap();
         state
-            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
             AppState::SettingEphemeral { selected_idx, .. } => {
@@ -75,7 +75,7 @@ mod tests {
         }
         // Enter to confirm
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert_eq!(action, Some(AppAction::SetEphemeralTtl(42, Some(3600))));
         assert!(matches!(state, AppState::Normal { .. }));
@@ -88,7 +88,7 @@ mod tests {
             selected_idx: 2,
         };
         let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        let action = state.handle_key(key, 10).unwrap();
+        let action = state.handle_key(key, 10, 0).unwrap();
         assert!(action.is_none());
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -102,7 +102,7 @@ mod tests {
 
         // j moves down
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         if let AppState::SettingEphemeral { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 1);
@@ -112,7 +112,7 @@ mod tests {
 
         // j again
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         if let AppState::SettingEphemeral { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 2);
@@ -122,7 +122,7 @@ mod tests {
 
         // k moves up
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         if let AppState::SettingEphemeral { selected_idx, .. } = &state {
             assert_eq!(*selected_idx, 1);

@@ -91,58 +91,37 @@ impl AppState {
         match self {
             AppState::SubscribingToChannel {
                 input,
-                cursor,
+                channel_type,
                 error,
             } => match key.code {
-                KeyCode::Home => {
-                    crate::ui::input::move_to_start(cursor);
-                    Ok(None)
-                }
-                KeyCode::End => {
-                    crate::ui::input::move_to_end(input, cursor);
-                    Ok(None)
-                }
-                KeyCode::Delete => {
-                    crate::ui::input::delete_forward(input, cursor);
-                    Ok(None)
-                }
-                KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    crate::ui::input::move_to_start(cursor);
-                    Ok(None)
-                }
-                KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    crate::ui::input::move_to_end(input, cursor);
-                    Ok(None)
-                }
-                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    crate::ui::input::delete_word_backward(input, cursor);
-                    Ok(None)
-                }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    crate::ui::input::delete_to_start(input, cursor);
-                    Ok(None)
-                }
-                KeyCode::Char(c) => {
-                    crate::ui::input::insert_char(input, cursor, c);
-                    Ok(None)
-                }
-                KeyCode::Backspace => {
-                    crate::ui::input::backspace(input, cursor);
+                KeyCode::Tab => {
+                    *channel_type = if channel_type == "public" {
+                        "friends_only".to_string()
+                    } else {
+                        "public".to_string()
+                    };
                     Ok(None)
                 }
                 KeyCode::Enter => {
-                    if input.is_empty() {
+                    let text = input.text().trim().to_string();
+                    if text.is_empty() {
                         *error = Some("Please enter a channel address".to_string());
                         Ok(None)
                     } else {
-                        Ok(Some(AppAction::SubscribeToChannel(input.clone())))
+                        Ok(Some(AppAction::SubscribeToChannel(
+                            text,
+                            channel_type.clone(),
+                        )))
                     }
                 }
                 KeyCode::Esc => {
                     *self = AppState::default();
                     Ok(None)
                 }
-                _ => Ok(None),
+                _ => {
+                    input.handle_key(key);
+                    Ok(None)
+                }
             },
             _ => unreachable!(
                 "handle_subscribing_to_channel_key requires AppState::SubscribingToChannel"
@@ -156,72 +135,105 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+    fn subscribing(text: &str) -> AppState {
+        AppState::SubscribingToChannel {
+            input: Box::new(
+                crate::ui::widgets::text_input::TextInput::single_line("").with_text(text),
+            ),
+            channel_type: "public".to_string(),
+            error: None,
+        }
+    }
+
     #[test]
     fn test_subscribing_to_channel_typing() {
-        let mut state = AppState::SubscribingToChannel {
-            input: String::new(),
-            cursor: 0,
-            error: None,
-        };
+        let mut state = subscribing("");
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         state
-            .handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         match &state {
-            AppState::SubscribingToChannel { input, cursor, .. } => {
-                assert_eq!(input, "ab");
-                assert_eq!(*cursor, 2);
-            }
+            AppState::SubscribingToChannel { input, .. } => assert_eq!(input.text(), "ab"),
             _ => panic!("Expected SubscribingToChannel state"),
         }
     }
 
     #[test]
     fn test_subscribing_to_channel_enter_submits() {
-        let mut state = AppState::SubscribingToChannel {
-            input: "peer.onion".to_string(),
-            cursor: 10,
-            error: None,
-        };
+        let mut state = subscribing("peer.onion");
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert_eq!(
             action,
-            Some(AppAction::SubscribeToChannel("peer.onion".to_string()))
+            Some(AppAction::SubscribeToChannel(
+                "peer.onion".to_string(),
+                "public".to_string()
+            ))
         );
     }
 
     #[test]
-    fn test_subscribing_to_channel_enter_empty_shows_error() {
-        let mut state = AppState::SubscribingToChannel {
-            input: String::new(),
-            cursor: 0,
-            error: None,
-        };
-        let action = state
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+    fn test_subscribing_tab_toggles_channel_type() {
+        let mut state = subscribing("peer.onion");
+        state
+            .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), 10, 0)
             .unwrap();
-        assert!(action.is_none());
         match &state {
-            AppState::SubscribingToChannel { error, .. } => {
-                assert!(error.is_some());
+            AppState::SubscribingToChannel { channel_type, .. } => {
+                assert_eq!(channel_type, "friends_only")
+            }
+            _ => panic!("Expected SubscribingToChannel state"),
+        }
+        state
+            .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), 10, 0)
+            .unwrap();
+        match &state {
+            AppState::SubscribingToChannel { channel_type, .. } => {
+                assert_eq!(channel_type, "public")
             }
             _ => panic!("Expected SubscribingToChannel state"),
         }
     }
 
     #[test]
-    fn test_subscribing_to_channel_escape() {
-        let mut state = AppState::SubscribingToChannel {
-            input: "draft".to_string(),
-            cursor: 5,
-            error: None,
-        };
+    fn test_subscribing_friends_only_submit() {
+        let mut state = subscribing("peer.onion");
         state
-            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), 10, 0)
+            .unwrap();
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
+            .unwrap();
+        assert_eq!(
+            action,
+            Some(AppAction::SubscribeToChannel(
+                "peer.onion".to_string(),
+                "friends_only".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_subscribing_to_channel_enter_empty_shows_error() {
+        let mut state = subscribing("");
+        let action = state
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
+            .unwrap();
+        assert!(action.is_none());
+        match &state {
+            AppState::SubscribingToChannel { error, .. } => assert!(error.is_some()),
+            _ => panic!("Expected SubscribingToChannel state"),
+        }
+    }
+
+    #[test]
+    fn test_subscribing_to_channel_escape() {
+        let mut state = subscribing("draft");
+        state
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -237,7 +249,7 @@ mod tests {
             scroll_offset: 0,
         };
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert_eq!(
             action,
@@ -266,7 +278,7 @@ mod tests {
             scroll_offset: 0,
         };
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(action.is_none());
     }
@@ -282,7 +294,7 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -298,7 +310,7 @@ mod tests {
             scroll_offset: 0,
         };
         state
-            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(matches!(state, AppState::Normal { .. }));
     }
@@ -314,7 +326,7 @@ mod tests {
             scroll_offset: 0,
         };
         let action = state
-            .handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), 10)
+            .handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), 10, 0)
             .unwrap();
         assert!(action.is_none());
         match &state {

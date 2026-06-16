@@ -72,7 +72,7 @@ pub(super) async fn handle_channels_publish(
 
     // Store locally
     if let Err(e) = crate::db::queries::store_channel_post(
-        &app.db, channel_id, &content, &post_id, now, &signature,
+        &app.db, channel_id, &content, &post_id, now, &signature, None, None,
     ) {
         return RpcResponse::error(id, -32000, format!("{}", e));
     }

@@ -63,7 +63,7 @@ rm -rf ~/.local/share/chattor/
 sqlite3 ~/Library/Application\ Support/chattor/messages.db
 # .schema messages       # View table structure
 # .tables                # List all tables
-# SELECT * FROM schema_version;  # Current schema version (should be 9)
+# SELECT * FROM schema_version;  # Current schema version (should be 11)
 ```
 
 ### Linting & Formatting
@@ -110,12 +110,12 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - `App::new()` initializes everything synchronously (Tor init is async via `init_tor()`)
 
 **2. Database Layer (`src/db/`)**
-- Schema version 9 - see `src/db/schema.rs`
-- SQLCipher for at-rest encryption (bundled via rusqlite)
+- Schema version 11 - see `src/db/schema.rs`
+- SQLCipher for at-rest encryption (bundled via rusqlite). NOTE: the bundled-sqlcipher build runs with `PRAGMA foreign_keys=ON` by default, so FK parent rows must exist (e.g. `initialize_channels` seeds a sentinel `channels(id=0,'remote')` row that subscriber-side posts hang off).
 - Key tables: `friends`, `conversations`, `messages`, `message_queue`, `signal_sessions`, `blocked_onions`
-- Channel tables: `channels`, `channel_posts`, `channel_subscribers`, `channel_subscriptions`, `channel_post_receipts`
+- Channel tables: `channels`, `channel_posts` (with `publisher_onion`/`channel_type` for remote-post attribution), `channel_subscribers`, `channel_subscriptions`, `channel_post_receipts`
 - FTS5 virtual table (`messages_fts`) for full-text search with auto-sync triggers
-- Automatic migrations from v2 through v9 in `src/db/connection.rs`
+- Automatic migrations from v2 through v11 in `src/db/connection.rs`
 
 **3. Identity & Crypto (`src/crypto/`)**
 - Ed25519 keypair for identity and signing (`identity.rs`)
@@ -166,9 +166,12 @@ User → TUI (ratatui) → App State → Database (SQLCipher)
 - Modals: add friend, friend requests, identity, ephemeral settings, channel subscribe
 - Channel feed view with post composition (own channels) and read-only view (subscriptions)
 - Sidebar shows friends list + channels section (own channels + subscriptions)
+- Sidebar navigation (↑↓/j/k/Tab) spans friends AND channels via `SidebarSelection` enum; Enter opens a friend conversation, an own-channel feed, or a subscribed-channel feed
 - Dynamic sidebar status icons: ● online, ✎ typing, ○ offline
 - "is typing..." indicator in conversation view
 - Theme struct provides consistent colors across all UI components
+- Reusable widgets under `src/ui/widgets/`: ModalFrame (min-size-clamped centered modals), TextInput (tui-textarea-backed single-line inputs used by the add-friend + subscribe modals), ScrollView (wrap-aware bottom-anchored scroller with scrollbar + offset clamping, used by conversation + channel feed)
+- Small-terminal guard: `render_app` shows a "Terminal too small" message below 60×16 instead of rendering a broken layout
 
 **9. Broadcast Channels (`src/ui/channel_feed.rs`, `src/db/queries.rs`)**
 - Two auto-created channels per user: Public and Friends Only
@@ -325,14 +328,14 @@ Database path: `{data_dir}/messages.db`
 - Message handlers extracted from main.rs into reusable `src/handlers/` module
 
 ### Future Work
-- TOFU continuity checking: verify stored Ed25519 pubkey on subsequent messages, warn on key change (SSH-style)
+- TOFU continuity checking: the peer's Ed25519 pubkey is captured + verified at friend-request time and stored (`friends.ed25519_pubkey`, schema v10), but subsequent messages are not yet checked against it — still TODO: verify on every inbound message, warn on key change (SSH-style)
 - Backup/restore functionality
 - File transfer support
 
 ## Important Technical Details
 
 ### Database Schema Migrations
-- Automatic migrations from v2 through v9 in `src/db/connection.rs::Database::initialize()`
+- Automatic migrations from v2 through v11 in `src/db/connection.rs::Database::initialize()`
 - Each version has a `migrate_to_vN()` method that checks current version and applies changes
 - Migrations run before `CREATE_TABLES` (which uses `IF NOT EXISTS` for idempotency)
 - v3: Clear old Signal sessions (production crypto migration)
@@ -342,6 +345,8 @@ Database path: `{data_dir}/messages.db`
 - v7: Add 5 broadcast channel tables
 - v8: Add `app_settings` key-value table for .onion address persistence
 - v9: Wipe signal_sessions (libsignal-dezire format incompatible with old hand-rolled crypto)
+- v10: Add `ed25519_pubkey` column on `friends` (TOFU identity binding)
+- v11: Add `publisher_onion` + `channel_type` columns on `channel_posts` (remote-post publisher attribution + per-publisher subscription feeds)
 
 ### Tor Hidden Service Identity
 - .onion address generated and managed by arti (v3 onion format, persistent via arti state dir)
@@ -377,13 +382,14 @@ Database path: `{data_dir}/messages.db`
 ## Key Files to Understand
 
 - `src/app.rs` - Central application state and initialization
-- `src/db/schema.rs` - Complete database schema (version 9)
+- `src/db/schema.rs` - Complete database schema (version 11)
 - `src/db/queries.rs` - All database queries including channel operations
 - `src/protocol/message.rs` - All message types and wire format (13 types)
 - `src/net/queue.rs` - Offline message delivery queue with exponential backoff
 - `src/net/pool.rs` - Connection pool with per-peer Tor circuit caching
 - `src/ui/channel_feed.rs` - Channel post feed rendering
 - `src/ui/theme.rs` - Theme struct, 7 preset definitions, hex color parsing, TOML config loading
+- `src/ui/widgets/` - Reusable widgets: `modal_frame.rs` (min-size clamping), `text_input.rs` (tui-textarea wrapper), `scroll_view.rs` (wrap-aware scroller)
 - `src/tor/hidden_service.rs` - Real arti onion service hosting
 - `src/presence.rs` - Peer presence tracker (online/typing state, heartbeat constants)
 - `src/notifications.rs` - Desktop notifications with notify-rust and global toggle

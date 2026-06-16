@@ -61,6 +61,7 @@ impl Database {
                 self.migrate_to_v8()?;
                 self.migrate_to_v9()?;
                 self.migrate_to_v10()?;
+                self.migrate_to_v11()?;
             }
             Err(_) => {
                 // Fresh database - will set version after creating tables
@@ -429,6 +430,39 @@ impl Database {
                 .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
 
             info!("Migration to schema v10 complete");
+        }
+
+        Ok(())
+    }
+
+    /// Migrate database from v10 to v11 (channel post publisher attribution)
+    fn migrate_to_v11(&self) -> Result<()> {
+        let version = self.get_schema_version()?;
+
+        if version < 11 {
+            info!("Migrating database to schema v11 (channel post publisher attribution)");
+
+            let conn = self.connection();
+
+            let has_column: bool = conn
+                .prepare("SELECT publisher_onion FROM channel_posts LIMIT 0")
+                .is_ok();
+
+            if !has_column {
+                conn.execute_batch(
+                    "ALTER TABLE channel_posts ADD COLUMN publisher_onion TEXT;
+                     ALTER TABLE channel_posts ADD COLUMN channel_type TEXT;
+                     CREATE INDEX IF NOT EXISTS idx_channel_posts_publisher ON channel_posts(publisher_onion);",
+                )
+                .map_err(|e| {
+                    ChattorError::Database(format!("Failed to add publisher columns: {}", e))
+                })?;
+            }
+
+            conn.execute("UPDATE schema_version SET version = 11", [])
+                .map_err(|e| ChattorError::Database(format!("Failed to update version: {}", e)))?;
+
+            info!("Migration to schema v11 complete");
         }
 
         Ok(())
