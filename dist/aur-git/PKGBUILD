@@ -1,4 +1,4 @@
-# Maintainer: John Singleton <john@example.com>
+# Maintainer: John Singleton <js@johnsingleton.me>
 pkgname=chattor-git
 pkgver=0.1.0
 pkgrel=1
@@ -19,12 +19,12 @@ pkgver() {
 }
 
 build() {
-    cd chattor/chattor
+    cd chattor
     cargo build --release --locked
 }
 
 package() {
-    cd chattor/chattor
+    cd chattor
     install -Dm755 target/release/chattor -t "${pkgdir}/usr/bin/"
     install -Dm644 man/chattor.1 "${pkgdir}/usr/share/man/man1/chattor.1"
     install -Dm644 completions/chattor.bash "${pkgdir}/usr/share/bash-completion/completions/chattor"
