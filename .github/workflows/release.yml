@@ -132,7 +132,11 @@ jobs:
           cd /tmp/chattor-bin
           sed -i "s/pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           sed -i "s/sha256sums=.*/sha256sums=('${SHA256}')/" PKGBUILD
-          docker run --rm -v /tmp/chattor-bin:/pkg archlinux bash -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO"
+          # makepkg refuses to run as root, so build .SRCINFO as an unprivileged user
+          docker run --rm -v /tmp/chattor-bin:/pkg archlinux bash -c \
+            "useradd -m builder && chown -R builder /pkg && su builder -c 'cd /pkg && makepkg --printsrcinfo' > /pkg/.SRCINFO"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add PKGBUILD .SRCINFO
           git commit -m "Update to v${VERSION}"
           git push
@@ -143,7 +147,11 @@ jobs:
           cp dist/aur-git/PKGBUILD /tmp/chattor-git/PKGBUILD
           cd /tmp/chattor-git
           sed -i "s/pkgver=.*/pkgver=${VERSION}/" PKGBUILD
-          docker run --rm -v /tmp/chattor-git:/pkg archlinux bash -c "cd /pkg && makepkg --printsrcinfo > .SRCINFO"
+          # makepkg refuses to run as root, so build .SRCINFO as an unprivileged user
+          docker run --rm -v /tmp/chattor-git:/pkg archlinux bash -c \
+            "useradd -m builder && chown -R builder /pkg && su builder -c 'cd /pkg && makepkg --printsrcinfo' > /pkg/.SRCINFO"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add PKGBUILD .SRCINFO
           git commit -m "Update to v${VERSION}"
           git push
@@ -166,12 +174,14 @@ jobs:
 
       - name: Update Homebrew tap
         run: |
-          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/jmsingleton/homebrew-chattor.git /tmp/tap
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/jmsingleton/homebrew-tap.git /tmp/tap
           mkdir -p /tmp/tap/Formula
           cp dist/homebrew/chattor.rb /tmp/tap/Formula/chattor.rb
           cd /tmp/tap
           sed -i "s|url \".*\"|url \"${URL}\"|" Formula/chattor.rb
           sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Formula/chattor.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/chattor.rb
           git commit -m "chattor ${VERSION}"
           git push

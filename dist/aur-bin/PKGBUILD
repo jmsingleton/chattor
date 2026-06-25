@@ -1,4 +1,4 @@
-# Maintainer: John Singleton <john@example.com>
+# Maintainer: John Singleton <js@johnsingleton.me>
 pkgname=chattor-bin
 pkgver=0.1.0
 pkgrel=1
