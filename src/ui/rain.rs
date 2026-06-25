@@ -55,6 +55,24 @@ const HEAD_SALT: u32 = 0x0202_0202;
 const SPEED_SALT: u32 = 0x0303_0303;
 const LEN_SALT: u32 = 0x0404_0404;
 
+/// Per-cell brightness produced by `render_grid`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    Empty,
+    Trail,
+    Body,
+    Head,
+}
+
+fn level_rank(l: Level) -> u8 {
+    match l {
+        Level::Empty => 0,
+        Level::Trail => 1,
+        Level::Body => 2,
+        Level::Head => 3,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct DropState {
     col: u16,
@@ -125,6 +143,37 @@ impl RainField {
         self.drops.len()
     }
 
+    /// Compose all drops into a `rows × cols` grid of `(glyph, level)`.
+    /// Where drops overlap, the brighter level wins.
+    pub fn render_grid(&self, tick: u64) -> Vec<Vec<(char, Level)>> {
+        let mut grid = vec![vec![(' ', Level::Empty); self.cols as usize]; self.rows as usize];
+        for d in &self.drops {
+            for k in 0..d.length {
+                let row_f = d.head - k as f32;
+                if row_f < 0.0 {
+                    continue;
+                }
+                let row = row_f as usize;
+                if row >= self.rows as usize {
+                    continue;
+                }
+                let level = if k == 0 {
+                    Level::Head
+                } else if k <= 2 {
+                    Level::Body
+                } else {
+                    Level::Trail
+                };
+                let cell = &mut grid[row][d.col as usize];
+                if level_rank(level) >= level_rank(cell.1) {
+                    let ch = glyph_at(d.col as u32, row as u32, tick);
+                    *cell = (ch, level);
+                }
+            }
+        }
+        grid
+    }
+
     // --- test accessors ---
     #[cfg(test)]
     fn drops_in_col(&self, col: u16) -> u8 {
@@ -134,6 +183,17 @@ impl RainField {
     #[cfg(test)]
     fn head_positions(&self) -> Vec<f32> {
         self.drops.iter().map(|d| d.head).collect()
+    }
+
+    #[cfg(test)]
+    fn force_single_drop(&mut self, col: u16, head: f32, speed: f32, length: u16) {
+        self.drops = vec![DropState {
+            col,
+            head,
+            speed,
+            length,
+            respawns: 0,
+        }];
     }
 }
 
@@ -230,5 +290,33 @@ mod tests {
         assert_eq!(field.head_positions(), snapshot);
         field.resize(20, 24); // changed: rebuild
         assert_eq!(field.cols, 20);
+    }
+
+    #[test]
+    fn render_grid_has_area_dimensions() {
+        let field = RainField::new(12, 6);
+        let grid = field.render_grid(0);
+        assert_eq!(grid.len(), 6, "rows");
+        assert_eq!(grid[0].len(), 12, "cols");
+    }
+
+    #[test]
+    fn drop_head_is_brightest_cell_in_its_trail() {
+        // A single hand-built column: head at row 4, length 5.
+        let mut field = RainField::new(1, 8);
+        field.force_single_drop(0, 4.0, 1.0, 5);
+        let grid = field.render_grid(0);
+        // Row 4 = Head, rows 3..=2 = Body, rows below = Trail, others Empty.
+        assert_eq!(grid[4][0].1, Level::Head);
+        assert_eq!(grid[3][0].1, Level::Body);
+        assert_eq!(grid[0][0].1, Level::Trail);
+    }
+
+    #[test]
+    fn empty_cells_render_space() {
+        let mut field = RainField::new(1, 8);
+        field.force_single_drop(0, 1.0, 1.0, 2); // only rows 0,1 lit
+        let grid = field.render_grid(0);
+        assert_eq!(grid[7][0], (' ', Level::Empty));
     }
 }
