@@ -8,6 +8,24 @@ use ratatui::{
     Frame,
 };
 
+/// How far the displayed progress may lead the real Tor value during stalls.
+#[allow(dead_code)]
+pub const PROGRESS_LEAD: f32 = 0.08;
+
+/// Ease `shown` toward `target` (both in `0.0..=1.0`).
+///
+/// Exponential approach plus a tiny minimum creep so the bar keeps drifting
+/// even when Tor stalls at a fixed percentage. Hard-capped at `target +
+/// PROGRESS_LEAD` and at `0.99`, so easing alone never claims completion —
+/// only the real `Connected` event drives it to 1.0 (see `force_shown_full`).
+#[allow(dead_code)]
+pub fn ease_progress(shown: f32, target: f32) -> f32 {
+    let step = ((target - shown) * 0.08).max(0.0008);
+    let next = shown + step;
+    let cap = (target + PROGRESS_LEAD).min(0.99);
+    next.min(cap).max(shown)
+}
+
 /// Status updates sent from the Tor bootstrap process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapUpdate {
@@ -627,5 +645,49 @@ mod tests {
         let phase = BootstrapPhase::new();
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
         assert_eq!(handle_bootstrap_key(&phase, key), None);
+    }
+
+    #[test]
+    fn ease_never_exceeds_cap_below_one() {
+        // Even when target is 1.0, easing alone never reaches 1.0.
+        let mut shown = 0.0;
+        for _ in 0..10_000 {
+            shown = ease_progress(shown, 1.0);
+        }
+        assert!(
+            shown <= 0.99,
+            "easing reached completion on its own: {shown}"
+        );
+        assert!(shown > 0.95, "easing stalled short: {shown}");
+    }
+
+    #[test]
+    fn ease_creeps_forward_when_target_is_static() {
+        // Tor stalled at 38%. Shown should still drift up (then plateau near lead cap).
+        let target = 0.38;
+        let a = ease_progress(0.38, target);
+        let b = ease_progress(a, target);
+        assert!(a > 0.38, "did not creep past a stalled target");
+        assert!(b >= a, "not monotonic");
+        // ...but capped so it never overruns the real value by much.
+        let mut shown = 0.38;
+        for _ in 0..1000 {
+            shown = ease_progress(shown, target);
+        }
+        assert!(
+            shown <= 0.38 + PROGRESS_LEAD + 1e-3,
+            "led target too far: {shown}"
+        );
+    }
+
+    #[test]
+    fn ease_is_monotonic_nondecreasing() {
+        let mut shown = 0.0;
+        for step in 0..100 {
+            let target = (step as f32) / 100.0;
+            let next = ease_progress(shown, target);
+            assert!(next >= shown, "decreased: {shown} -> {next}");
+            shown = next;
+        }
     }
 }
