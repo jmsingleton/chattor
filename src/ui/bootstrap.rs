@@ -26,6 +26,32 @@ pub fn ease_progress(shown: f32, target: f32) -> f32 {
     next.min(cap).max(shown)
 }
 
+/// Small onion sprite that resolves above the wordmark.
+#[allow(dead_code)]
+pub const ONION_ART: [&str; 5] = ["  ▄██▄  ", "▄██████▄", "████████", " ▀████▀ ", "  ▀██▀  "];
+
+/// Wordmark that resolves below the onion.
+#[allow(dead_code)]
+pub const WORDMARK: &str = "chattor";
+
+/// The `progress_shown` value at which a logo cell locks to its true glyph.
+/// Onion cells occupy a lower band (0.00..0.45) than wordmark cells
+/// (0.55..0.90), so the onion always resolves before the wordmark.
+#[allow(dead_code)]
+pub fn logo_threshold(x: u32, y: u32, is_wordmark: bool) -> f32 {
+    let salt: u32 = if is_wordmark {
+        0x0042_0000
+    } else {
+        0x0000_0411
+    };
+    let r = crate::ui::rain::rng_unit(x, y, salt);
+    if is_wordmark {
+        0.55 + r * 0.35 // 0.55..0.90
+    } else {
+        r * 0.45 // 0.00..0.45
+    }
+}
+
 /// Status updates sent from the Tor bootstrap process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapUpdate {
@@ -688,6 +714,45 @@ mod tests {
             let next = ease_progress(shown, target);
             assert!(next >= shown, "decreased: {shown} -> {next}");
             shown = next;
+        }
+    }
+
+    #[test]
+    fn onion_locks_before_wordmark() {
+        // Every onion threshold is strictly below every wordmark threshold,
+        // so the onion always resolves first.
+        let mut max_onion = 0.0f32;
+        let mut min_word = 1.0f32;
+        for y in 0..8 {
+            for x in 0..16 {
+                max_onion = max_onion.max(logo_threshold(x, y, false));
+                min_word = min_word.min(logo_threshold(x, y, true));
+            }
+        }
+        assert!(
+            max_onion < min_word,
+            "onion {max_onion} not below wordmark {min_word}"
+        );
+    }
+
+    #[test]
+    fn at_half_progress_onion_locked_wordmark_not() {
+        let shown = 0.5f32;
+        // All onion cells locked (max onion threshold < 0.45 < 0.5).
+        for y in 0..8 {
+            for x in 0..16 {
+                assert!(
+                    shown > logo_threshold(x, y, false),
+                    "onion cell not locked at 0.5"
+                );
+            }
+        }
+        // No wordmark cell locked (min wordmark threshold >= 0.55 > 0.5).
+        for x in 0..16 {
+            assert!(
+                shown <= logo_threshold(x, 0, true),
+                "wordmark cell locked too early"
+            );
         }
     }
 }
