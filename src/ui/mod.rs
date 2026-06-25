@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod error;
 pub mod input;
 pub mod modals;
+pub mod rain;
 pub mod sidebar;
 pub mod state;
 pub mod theme;
