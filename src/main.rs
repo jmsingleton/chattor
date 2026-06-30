@@ -306,7 +306,7 @@ async fn run_tui(
     // Run bootstrap animation loop
     let mut continued_offline = false;
     let mut phase = ui::BootstrapPhase::new();
-    let bootstrap_start = std::time::Instant::now();
+    let mut bootstrap_start = std::time::Instant::now();
     let bootstrap_timeout = std::time::Duration::from_secs(60);
 
     let mut connect_flash: Option<u8> = None; // countdown of bright "connected" frames
@@ -419,6 +419,7 @@ async fn run_tui(
                             connect_flash = None;
                             glitch_rain = None;
                             glitch_ticks = 0;
+                            bootstrap_start = std::time::Instant::now();
                             let (new_tx, new_rx) =
                                 tokio::sync::watch::channel(ui::BootstrapUpdate::Progress(0));
                             bootstrap_rx = new_rx;
