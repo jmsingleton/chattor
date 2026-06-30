@@ -366,6 +366,53 @@ pub fn render_failure_glitch(f: &mut Frame, rain: &RainField, theme: &Theme) {
     f.render_widget(Paragraph::new(lines), area);
 }
 
+/// Render the connect-success flash: the fully-resolved logo pops in bold,
+/// reverse-video accent over dimmed, frozen rain. Shown for a brief beat the
+/// moment Tor connects, before entering the app.
+pub fn render_connect_flash(f: &mut Frame, rain: &RainField, theme: &Theme) {
+    use crate::ui::rain::Level;
+    let area = f.size();
+    f.render_widget(Clear, area);
+
+    let cols = area.width;
+    let rows = area.height;
+    // Frozen rain backdrop (tick 0): glyphs stop mutating for the beat.
+    let grid = rain.render_grid(0);
+
+    let show_onion = rows >= ONION_ART.len() as u16 + 4;
+    // progress_shown = 1.0 → every logo cell is locked to its true glyph.
+    let overlay = logo_overlay(cols, rows, 1.0, show_onion);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(rows as usize);
+    for y in 0..rows as usize {
+        let mut spans: Vec<Span> = Vec::with_capacity(cols as usize);
+        for x in 0..cols as usize {
+            if let Some(Some((ch, _locked))) = overlay.get(y).map(|r| r[x]) {
+                // Logo pops: bold accent, reverse-video block.
+                spans.push(Span::styled(
+                    ch.to_string(),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+                ));
+            } else {
+                // Rain dimmed to the faintest tone so the logo dominates.
+                let (gch, _level) = grid
+                    .get(y)
+                    .and_then(|r| r.get(x))
+                    .copied()
+                    .unwrap_or((' ', Level::Empty));
+                spans.push(Span::styled(
+                    gch.to_string(),
+                    Style::default().fg(theme.fg_dim),
+                ));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+    f.render_widget(Paragraph::new(lines), area);
+}
+
 /// Render the failure screen.
 ///
 /// Shows the chattor title (dimmed), a sad onion sprite, the error message,
@@ -805,6 +852,18 @@ mod tests {
         let theme = Theme::preset("dark");
         let rain = RainField::new(80, 24);
         term.draw(|f| render_failure_glitch(f, &rain, &theme))
+            .unwrap();
+    }
+
+    #[test]
+    fn render_connect_flash_smoke() {
+        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let theme = Theme::preset("dark");
+        let mut rain = RainField::new(80, 24);
+        for _ in 0..10 {
+            rain.step();
+        }
+        term.draw(|f| render_connect_flash(f, &rain, &theme))
             .unwrap();
     }
 }

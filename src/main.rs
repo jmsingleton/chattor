@@ -331,8 +331,13 @@ async fn run_tui(
                 let t = *tick;
                 let ps = *progress_shown;
                 let rain = rain.clone();
+                let flashing = connect_flash.is_some();
                 terminal.draw(|fr| {
-                    ui::render_connecting(fr, &rain, t, ps, &theme);
+                    if flashing {
+                        ui::render_connect_flash(fr, &rain, &theme);
+                    } else {
+                        ui::render_connecting(fr, &rain, t, ps, &theme);
+                    }
                 })?;
             }
             ui::BootstrapPhase::Failed { ref error, .. } => {
@@ -447,8 +452,11 @@ async fn run_tui(
             }
         }
 
-        // Advance animation tick
-        phase.advance_tick();
+        // Advance animation tick (frozen during the connect flash so the
+        // dimmed rain holds still behind the logo pop).
+        if connect_flash.is_none() {
+            phase.advance_tick();
+        }
     }
 
     // --- Main App Phase ---
