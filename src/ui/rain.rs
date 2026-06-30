@@ -2,8 +2,6 @@
 //! No ratatui, no theme, no clock — every output is a function of its inputs,
 //! so the whole engine is reproducible and unit-testable.
 
-#![allow(dead_code)]
-
 /// Base32 `.onion` alphabet — the authentic Tor address charset.
 pub const RAIN_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
 /// Token woven vertically into ~1-in-7 columns.
@@ -137,10 +135,6 @@ impl RainField {
                 d.respawns = respawns;
             }
         }
-    }
-
-    pub fn drop_count(&self) -> usize {
-        self.drops.len()
     }
 
     /// Compose all drops into a `rows × cols` grid of `(glyph, level)`.

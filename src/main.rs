@@ -309,26 +309,47 @@ async fn run_tui(
     let bootstrap_start = std::time::Instant::now();
     let bootstrap_timeout = std::time::Duration::from_secs(60);
 
+    let mut connect_flash: Option<u8> = None; // countdown of bright "connected" frames
+    let mut glitch_rain: Option<crate::ui::rain::RainField> = None;
+    let mut glitch_ticks: u8 = 0;
+    const FLASH_FRAMES: u8 = 8; // ~0.4s at 50ms
+    const GLITCH_FRAMES: u8 = 6; // ~0.3s at 50ms
+
     loop {
+        // Size the rain field to the terminal before drawing.
+        let size = terminal.size()?;
+        phase.resize_rain(size.width, size.height);
+
         // Render current bootstrap frame
         match &phase {
             ui::BootstrapPhase::Connecting {
-                frame,
                 tick,
-                progress,
+                progress_shown,
+                rain,
+                ..
             } => {
-                let f = *frame;
                 let t = *tick;
-                let p = *progress;
+                let ps = *progress_shown;
+                let rain = rain.clone();
                 terminal.draw(|fr| {
-                    ui::render_connecting(fr, f, t, p, &theme);
+                    ui::render_connecting(fr, &rain, t, ps, &theme);
                 })?;
             }
             ui::BootstrapPhase::Failed { ref error, .. } => {
-                let err = error.clone();
-                terminal.draw(|fr| {
-                    ui::render_failure(fr, &err, &theme);
-                })?;
+                if glitch_ticks > 0 {
+                    if let Some(ref rain) = glitch_rain {
+                        let rain = rain.clone();
+                        terminal.draw(|fr| {
+                            ui::render_failure_glitch(fr, &rain, &theme);
+                        })?;
+                        glitch_ticks -= 1;
+                    }
+                } else {
+                    let err = error.clone();
+                    terminal.draw(|fr| {
+                        ui::render_failure(fr, &err, &theme);
+                    })?;
+                }
             }
             ui::BootstrapPhase::Done => {
                 break;
@@ -339,6 +360,8 @@ async fn run_tui(
         if matches!(phase, ui::BootstrapPhase::Connecting { .. })
             && bootstrap_start.elapsed() > bootstrap_timeout
         {
+            glitch_rain = phase.rain().cloned();
+            glitch_ticks = GLITCH_FRAMES;
             phase.fail("connection timed out after 60 seconds".to_string());
             continue;
         }
@@ -351,17 +374,28 @@ async fn run_tui(
                     phase.set_progress(p);
                 }
                 ui::BootstrapUpdate::Connected => {
-                    phase.done();
-                    continue;
+                    phase.force_shown_full();
+                    connect_flash = Some(FLASH_FRAMES);
                 }
                 ui::BootstrapUpdate::Failed(e) => {
+                    glitch_rain = phase.rain().cloned();
+                    glitch_ticks = GLITCH_FRAMES;
                     phase.fail(e);
                 }
             }
         }
 
+        // Connect-success flash: hold the fully-resolved bright frame briefly.
+        if let Some(n) = connect_flash {
+            if n == 0 {
+                phase.done();
+                continue;
+            }
+            connect_flash = Some(n - 1);
+        }
+
         // Handle key events
-        if event::poll(Duration::from_millis(100))? {
+        if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if let Some(action) = ui::handle_bootstrap_key(&phase, key) {
                     match action {
@@ -382,6 +416,9 @@ async fn run_tui(
                         }
                         ui::BootstrapAction::Retry => {
                             phase = ui::BootstrapPhase::new();
+                            connect_flash = None;
+                            glitch_rain = None;
+                            glitch_ticks = 0;
                             let (new_tx, new_rx) =
                                 tokio::sync::watch::channel(ui::BootstrapUpdate::Progress(0));
                             bootstrap_rx = new_rx;
