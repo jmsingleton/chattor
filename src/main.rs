@@ -337,12 +337,12 @@ async fn run_tui(
             }
             ui::BootstrapPhase::Failed { ref error, .. } => {
                 if glitch_ticks > 0 {
+                    glitch_ticks -= 1;
                     if let Some(ref rain) = glitch_rain {
                         let rain = rain.clone();
                         terminal.draw(|fr| {
                             ui::render_failure_glitch(fr, &rain, &theme);
                         })?;
-                        glitch_ticks -= 1;
                     }
                 } else {
                     let err = error.clone();
