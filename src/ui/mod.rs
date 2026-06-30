@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod error;
 pub mod input;
 pub mod modals;
+pub mod rain;
 pub mod sidebar;
 pub mod state;
 pub mod theme;
@@ -12,8 +13,8 @@ pub mod widgets;
 
 pub use app_ui::{render_app, RenderContext};
 pub use bootstrap::{
-    handle_bootstrap_key, render_connecting, render_failure, BootstrapAction, BootstrapPhase,
-    BootstrapUpdate,
+    handle_bootstrap_key, render_connect_flash, render_connecting, render_failure,
+    render_failure_glitch, BootstrapAction, BootstrapPhase, BootstrapUpdate,
 };
 pub use state::{AppAction, AppState, SidebarSelection};
 pub use theme::Theme;
